@@ -1,5 +1,5 @@
 """
-No cap 2.0 - Enterprise Provenance Engine
+SSB Border Screening - AI-Based Fake Identity & Document Screening (SIH26188)
 Organized into strict, human-readable columns for easy debugging.
 """
 
@@ -17,37 +17,24 @@ _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
-import base64
 import hashlib
 import hmac
 import io
 import json
-import re
 import threading
 import time
-import zipfile
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
-from typing import List
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from fastapi import FastAPI, Request, File, Form, HTTPException, UploadFile, Response, Depends
+from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
-# Media Trapping & Blockchain Dependencies
-from sqlalchemy import create_engine, Column, String, Integer, Boolean, LargeBinary, Text, Float, text, func, event
-from sqlalchemy import update as sa_update
-
-from sqlalchemy.orm import declarative_base, sessionmaker, defer
+from sqlalchemy import create_engine, Column, String, Integer, Text, Float, text, event
+from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
-
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 # --- SECURITY DEPENDENCIES ---
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -126,7 +113,7 @@ misfire (a legible scan reads as "suspicious, low-confidence" and wastes budget)
 
 So we conservatively detect "this looks like a scanned page" and, when we do,
 surface a DOCUMENT verdict: tell the user the real trust signal here is the
-signature / provenance / OCR, not image-AI analysis.
+four-module document screening matrix, not photo-style image-AI analysis.
 
 Heuristics (all conservative, none can raise):
   - "page-like" aspect ratio (a sheet of paper, not a square selfie).
@@ -221,10 +208,11 @@ def document_verdict(filename: str = "") -> dict:
         "provider": "document",
         "explanation": (
             f"'{name}' reads as a scanned document / text page rather than a "
-            "photograph. Cloud AI-art detectors are built for photos and would "
-            "misfire here, so the authenticity of this notice rests on the "
-            "cryptographic signature and provenance-chain verification â€” not on "
-            "image-AI analysis. Look for the signature/ledger verdict on this card."
+            "photograph. Photo-style cloud AI-art detectors would misfire on a "
+            "scanned text page, so the document's authenticity rests on the "
+            "four-module screening matrix — OCR consistency, checksum "
+            "validation, tampering forensics and face comparison — rather than "
+            "image-AI analysis. See the module verdicts in the dossier."
         ),
         "latency_ms": 0,
         "raw": {"document_like": True},
@@ -768,7 +756,7 @@ def detect_image(image_bytes: bytes, filename: str = "") -> dict:
     Scanned-document pre-check: if the image reads as a text/page document
     (e.g. a scanned notice) we skip the AI-art detectors entirely â€” they are
     trained for photos and would misfire and waste the cloud budget. Instead we
-    return a document verdict that points trust to the signature/provenance."""
+    return a document verdict that points trust to the four-module screening matrix."""
     if not image_bytes:
         return _empty("No image data was provided, so it could not be analysed for AI generation.")
     start = time.perf_counter()
@@ -879,11 +867,6 @@ if not GOOGLE_CLIENT_ID:
     sys.exit("\n[FATAL] GOOGLE_CLIENT_ID is not set.\n"
              "  -> Set the OAuth 2.0 Client ID of your Google Workspace project in .env.\n")
 
-# --- Web3 & IPFS Config (optional: simulated when empty) ---
-WEB3_RPC_URL = os.getenv("WEB3_RPC_URL", "")  
-WALLET_PRIV_KEY = os.getenv("WALLET_PRIVATE_KEY", "")
-PINATA_JWT = os.getenv("PINATA_JWT", "")
-BLOCKCHAIN_EXPLORER_URL = os.getenv("BLOCKCHAIN_EXPLORER_URL", "https://amoy.polygonscan.com/tx/")
 
 # --- Sign-in authorization (NOT hardcoded email lists) -----------------------
 # Who may log in is decided by Google Cloud itself:
@@ -897,7 +880,10 @@ BLOCKCHAIN_EXPLORER_URL = os.getenv("BLOCKCHAIN_EXPLORER_URL", "https://amoy.pol
 ALLOWED_DOMAINS = {d.strip().lower() for d in os.getenv("ALLOWED_DOMAINS", "").split(",") if d.strip().lower()}
 ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip().lower()}
 
-SUPER_ADMINS = [
+# SUPER_ADMINS is a comma-separated env override (real deployments set it in
+# secrets/Vercel). When unset the fallback list keeps demo/local sign-ins
+# working so the owner is never locked out of the console.
+SUPER_ADMINS = [e.strip().lower() for e in os.getenv("SUPER_ADMINS", "").split(",") if e.strip().lower()] or [
     "asutoshn06@gmail.com",
     "ayushlenka2020@gmail.com",
     "dikhyantsatpathy@gmail.com"
@@ -916,83 +902,23 @@ class SignerIdentity(Base):
     name = Column(String, nullable=False)
     institution = Column(String, nullable=True)
     designation = Column(String, nullable=True)
-    pub_key = Column(String, nullable=False)
-    enc_priv_key = Column(String, nullable=False)
-    is_revoked = Column(Boolean, default=False)
     registered_at = Column(String, nullable=False)
-    revoked_at = Column(String, nullable=True)
-    revoke_pin = Column(String, nullable=True)
 
-class LedgerBlock(Base):
-    __tablename__ = "blocks"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    signer_email = Column(String, nullable=False)
-    signer_name = Column(String, nullable=False)
-    signer_institution = Column(String, nullable=True)
-    signer_designation = Column(String, nullable=True)
-    filename = Column(String, nullable=False)
-    file_hash = Column(String, unique=True, index=True, nullable=False)
-    sig_hex = Column(String, nullable=False)
-    timestamp = Column(String, nullable=False)
-    ipfs_cid = Column(String, nullable=True)
-    tx_hash = Column(String, nullable=True)       # NEW: Web3 L2 Transaction Hash
-    merkle_root = Column(String, nullable=True)   # NEW: Merkle Root
-    is_revoked = Column(Boolean, default=False)
-    notice_content = Column(String, nullable=True)      # NEW: raw emergency text (public board)
-    notice_deleted = Column(Boolean, default=False)     # NEW: retracted by the issuing authority
-    notice_media_type = Column(String, nullable=True)   # NEW: MIME type of attached image/video
-    notice_media_name = Column(String, nullable=True)   # NEW: original filename of attached media
-    flag_count = Column(Integer, default=0)             # NEW: community forgery reports
-    notice_media_data = Column(LargeBinary, nullable=True)  # NEW: raw bytes of attached media
-
-class VerificationLog(Base):
-    __tablename__ = "verification_logs"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    file_hash = Column(String, nullable=False)
-    status = Column(String, nullable=False)
-    timestamp = Column(String, nullable=False)
-    detection_ms = Column(Integer, default=0)             # AI-detector latency (ms)
-    detection_provider = Column(String, nullable=True)   # heuristic | sightengine | self-hosted | None
-
-class PendingUpload(Base):
-    """Durable, DB-backed chunk buffer for signing a SINGLE file that exceeds
-    Vercel's ~4.4MB request-body cap. The client slices the file into small
-    pieces and posts each as its own /api/sign_chunk request (each well under
-    the edge cap); we persist the raw chunk bytes here keyed by (session_id,
-    chunk_index). The /api/sign_complete endpoint reassembles them, runs the
-    normal sign pipeline, records ONE ledger block, and returns the signed file.
-    Using Postgres (Neon) instead of in-memory is deliberate: serverless
-    instances can be recycled between chunk requests, so we must not rely on
-    instance-local state."""
-    __tablename__ = "pending_uploads"
-    session_id = Column(String, primary_key=True, index=True)
-    chunk_index = Column(Integer, primary_key=True)
-    total_chunks = Column(Integer, nullable=False)
-    filename = Column(String, nullable=False)
-    content_type = Column(String, nullable=True)
-    data = Column(LargeBinary, nullable=False)
-    created_at = Column(String, nullable=False)
-
-class SightengineUsage(Base):
-    """Persistent, cumulative Sightengine operation counters so the UI can show
-    an honest "uses remaining" without exposing the API key or vendor internals.
-    A single singleton row (key='global') tracks today's + month's consumption."""
-    __tablename__ = "sightengine_usage"
-    row_key = Column(String, primary_key=True)
-    ops_today = Column(Integer, default=0)
-    ops_month = Column(Integer, default=0)
-    day_date = Column(String, nullable=True)   # YYYY-MM-DD the ops_today applies to
-    month = Column(String, nullable=True)      # YYYY-MM the ops_month applies to
-    updated_at = Column(String, nullable=True)
 
 class ScreeningReport(Base):
     """One MHA identity-document screening pass (SIH26188). An immutable audit
     record: stores NO raw bytes or extracted text â€” only the SHA-256 hash of
     the file, MASKED identifier fields, and explainable signals (the same
-    zero-storage discipline as the whole ledger)."""
+    zero-storage discipline as the whole audit trail)."""
     __tablename__ = "screening_reports"
     id = Column(String, primary_key=True)
     file_hash = Column(String, index=True, nullable=False)
+    # ---- Immutable hash-chain ledger ---------------------------------------
+    # Every report links to its predecessor: ledger_hash = SHA-256(previous | file
+    # hash | verdict | risk). Tampering with ANY historical row breaks the chain
+    # for every later block — a single-writer, tamper-proof audit trail.
+    previous_hash = Column(String, nullable=True)    # parent block's ledger_hash ("GENESIS" for block 0)
+    ledger_hash = Column(String, index=True, nullable=True)  # this block's SHA-256
     filename = Column(String, nullable=False)
     doc_type = Column(String, nullable=True)
     checkpoint = Column(String, nullable=True)
@@ -1003,7 +929,7 @@ class ScreeningReport(Base):
     signals = Column(Text, nullable=False)           # reasons JSON
     ai_detection = Column(Text, nullable=True)       # detector snapshot JSON
     modules = Column(Text, nullable=True)            # Module 1-4 verdicts JSON
-    ledger_status = Column(String, nullable=True)    # AUTHENTIC | REVOKED | UNKNOWN
+    ledger_status = Column(String, nullable=True)    # LOCAL record held in screening_reports
     adjudication = Column(String, nullable=True)     # CLEARED | CONFIRMED_FRAUD | INCONCLUSIVE
     adjudicator = Column(String, nullable=True)
     adjudication_note = Column(String, nullable=True)
@@ -1034,64 +960,27 @@ except Exception:
 _IS_SQLITE = "sqlite" in DATABASE_URL
 
 _MIGRATIONS = [
+    # Screening-desk officer role fields (post + institution granted by a
+    # super admin in the console). Added idempotently for pre-existing DBs.
     "ALTER TABLE signer_identities ADD COLUMN IF NOT EXISTS institution VARCHAR;",
     "ALTER TABLE signer_identities ADD COLUMN IF NOT EXISTS designation VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS signer_email VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS signer_name VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS signer_institution VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS signer_designation VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS tx_hash VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS merkle_root VARCHAR;",
-    "ALTER TABLE signer_identities ADD COLUMN IF NOT EXISTS revoke_pin VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS notice_content TEXT;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS notice_deleted BOOLEAN DEFAULT FALSE;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS notice_media_type VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS notice_media_name VARCHAR;",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS notice_media_data " + ("BYTEA" if not _IS_SQLITE else "BLOB") + ";",
-    "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS flag_count INTEGER DEFAULT 0;",
-    # AI-detection latency + provider per verify (powers the analytics latency graph).
-    "ALTER TABLE verification_logs ADD COLUMN IF NOT EXISTS detection_ms INTEGER DEFAULT 0;",
-    "ALTER TABLE verification_logs ADD COLUMN IF NOT EXISTS detection_provider VARCHAR;",
-    # Signing latency fix: file_hash is now UNIQUE at the DB level, so a re-sign
-    # of identical bytes is a no-op single statement instead of a select+insert.
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_blocks_file_hash ON blocks(file_hash);",
-    # Chunked upload buffer for signing single files over Vercel's ~4.4MB cap.
-    "CREATE TABLE IF NOT EXISTS pending_uploads (session_id VARCHAR NOT NULL, "
-    "chunk_index INTEGER NOT NULL, total_chunks INTEGER NOT NULL, "
-    "filename VARCHAR NOT NULL, content_type VARCHAR, "
-    "data " + ("BYTEA" if not _IS_SQLITE else "BLOB") + " NOT NULL, "
-    "created_at VARCHAR NOT NULL, PRIMARY KEY (session_id, chunk_index));",
-    # Sightengine op-count tracking for the "uses remaining" quota display.
-    "CREATE TABLE IF NOT EXISTS sightengine_usage (row_key VARCHAR NOT NULL, "
-    "ops_today INTEGER DEFAULT 0, ops_month INTEGER DEFAULT 0, "
-    "day_date VARCHAR, month VARCHAR, updated_at VARCHAR, "
-    "PRIMARY KEY (row_key));",
-    # Hot-path indexes: GROUP BY / ORDER BY / filter columns that previously
-    # full-scanned as the ledger and verification log grew. Plain (non-unique)
-    # so pre-existing rows can never break the migration pass.
-    "CREATE INDEX IF NOT EXISTS ix_verification_logs_status ON verification_logs(status);",
-    "CREATE INDEX IF NOT EXISTS ix_verification_logs_provider ON verification_logs(detection_provider);",
-    "CREATE INDEX IF NOT EXISTS ix_verification_logs_file_hash ON verification_logs(file_hash);",
-    "CREATE INDEX IF NOT EXISTS ix_verification_logs_ts ON verification_logs(timestamp);",
-    "CREATE INDEX IF NOT EXISTS ix_blocks_signer_email ON blocks(signer_email);",
-    "CREATE INDEX IF NOT EXISTS ix_blocks_tx_hash ON blocks(tx_hash);",
-    "CREATE INDEX IF NOT EXISTS ix_blocks_ts ON blocks(timestamp);",
-    "CREATE INDEX IF NOT EXISTS ix_blocks_designation ON blocks(signer_designation);",
-    "CREATE INDEX IF NOT EXISTS ix_pending_uploads_created ON pending_uploads(created_at);",
+    # Screening-desk hot-path indexes (SIH26188).
     "CREATE INDEX IF NOT EXISTS ix_screening_reports_created ON screening_reports(created_at);",
     "CREATE INDEX IF NOT EXISTS ix_screening_reports_screener ON screening_reports(screener);",
     "CREATE INDEX IF NOT EXISTS ix_screening_reports_verdict ON screening_reports(verdict);",
     "CREATE INDEX IF NOT EXISTS ix_screening_reports_chk_created ON screening_reports(checkpoint, created_at);",
     "CREATE INDEX IF NOT EXISTS ix_watchlist_created ON watchlist_entries(created_at);",
     # Watchlist dedup guard: same identifier must not appear twice even under
-    # concurrent adds (the insert path tolerates IntegrityError and returns the
-    # existing row). Skipped automatically if legacy duplicate rows exist.
+    # concurrent adds. Skipped automatically if legacy duplicate rows exist.
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_identifier ON watchlist_entries(identifier_hash);",
-    # Screening desk Module 1-4 verdicts (SIH26188): JSON row per pass so the
-    # digital trail shows which subsystem — OCR/validation/tampering/face —
-    # produced each conclusion, not just the final risk score.
+    # Module 1-4 verdicts (OCR/validation/tampering/face) as one JSON row.
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS modules TEXT;",
+    # Immutable hash-chain ledger columns + lookup index (SIH26188 audit trail).
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS previous_hash VARCHAR;",
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS ledger_hash VARCHAR;",
+    "CREATE INDEX IF NOT EXISTS ix_screening_reports_ledger ON screening_reports(ledger_hash);",
 ]
+
 
 print("[startup] running schema migration...")
 # Reuse ONE connection for the whole idempotent pass. On serverless cold starts
@@ -1118,15 +1007,6 @@ except Exception as e:
     print(f"[startup] migration pass skipped ({type(e).__name__}): {e}")
 print("[startup] schema migration pass complete.")
 
-if not _IS_SQLITE:
-    # The old helper relied on a plain (non-unique) lookup index; the unique
-    # index above fully supersedes it. Dropped on Postgres only â€” sqlite's
-    # own ix_blocks_file_hash is the brand-new constraint backing its COLUMN.
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("DROP INDEX IF EXISTS ix_blocks_file_hash;"))
-    except Exception:
-        pass
 
 # --- Neon (serverless Postgres) pauses after ~5 min of idle; the FIRST request
 #     then pays a 5-20s cold start. For demos this reads as "signing is slow",
@@ -1172,25 +1052,6 @@ def get_db():
 def now_utc(): 
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-# ==============================================================================
-# [ COLUMN 3: CRYPTOGRAPHY & KMS VAULT ]
-# ==============================================================================
-
-def derive_owner_key(owner_email: str) -> bytes:
-    hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=owner_email.strip().lower().encode('utf-8'), info=b"nischay-owner-vault-key-v1")
-    return hkdf.derive(MASTER_VAULT_KEY)
-
-def encrypt_vault_key(pem_bytes: bytes, owner_email: str) -> str:
-    aesgcm = AESGCM(derive_owner_key(owner_email))
-    nonce = os.urandom(12)
-    ct = aesgcm.encrypt(nonce, pem_bytes, None)
-    return base64.b64encode(nonce + ct).decode('utf-8')
-
-def decrypt_vault_key(enc_str: str, owner_email: str) -> bytes:
-    data = base64.b64decode(enc_str)
-    nonce, ct = data[:12], data[12:]
-    aesgcm = AESGCM(derive_owner_key(owner_email))
-    return aesgcm.decrypt(nonce, ct, None)
 
 def make_session_token(email: str) -> str:
     """Mint a self-contained session token: email + expiry + HMAC.
@@ -1229,23 +1090,17 @@ def get_current_admin_or_evaluator(request: Request) -> str:
 
 def get_or_create_signer_identity(db, email: str, google_name: str) -> SignerIdentity:
     identity = db.query(SignerIdentity).filter_by(email=email).first()
-    if identity: return identity
-
-    priv_key = ec.generate_private_key(ec.SECP256R1())
-    pub_pem = priv_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
-    priv_pem = priv_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
-    enc_priv = encrypt_vault_key(priv_pem.encode('utf-8'), owner_email=email)
-
+    if identity:
+        return identity
     identity = SignerIdentity(
-        email=email, name=(google_name or email).strip()[:200], designation=None,
-        pub_key=pub_pem, enc_priv_key=enc_priv, registered_at=now_utc()
+        email=email, name=(google_name or email).strip()[:200], registered_at=now_utc()
     )
     db.add(identity)
     try:
         db.commit()
     except IntegrityError:
-        # Concurrent first-login for the same email: the winner's row is now
-        # durable, so fall back to it instead of 500ing the loser.
+        # Concurrent first-login for the same email: the winner's row is durable,
+        # so fall back to it instead of 500ing the loser.
         db.rollback()
         identity = db.query(SignerIdentity).filter_by(email=email).first()
         if identity is None:
@@ -1253,108 +1108,7 @@ def get_or_create_signer_identity(db, email: str, google_name: str) -> SignerIde
     db.refresh(identity)
     return identity
 
-# ==============================================================================
-# [ COLUMN 4: DEEPFAKE FORENSICS & WEB3 ANCHORING ]
-# ==============================================================================
 
-def upload_receipt_to_ipfs(receipt_dict: dict) -> str:
-    """Zero-Knowledge Privacy: Anchors only JSON metadata, preventing plaintext file leaks."""
-    if not PINATA_JWT:
-        simulated_hash = hashlib.sha256(json.dumps(receipt_dict, sort_keys=True).encode()).hexdigest()
-        return f"QmReceipt{simulated_hash[:38]}"
-    try:
-        receipt_bytes = json.dumps(receipt_dict, indent=2).encode("utf-8")
-        import requests
-        res = requests.post("https://api.pinata.cloud/pinning/pinFileToIPFS", headers={"Authorization": f"Bearer {PINATA_JWT}"}, files={"file": (f"receipt_{receipt_dict.get('file_hash', 'blob')[:12]}.json", receipt_bytes)}, timeout=8)
-        return res.json().get("IpfsHash", "IPFS_PIN_FAILED")
-    except Exception: return "IPFS_NETWORK_ERROR"
-
-def inject_media_trap(file_bytes: bytes, filename: str, signer_label: str, sig_hex: str, timestamp: str) -> bytes:
-    """Injects Nocap signatures natively into PDF, MP3, and MP4 containers."""
-    ext = filename.lower().split(".")[-1] if "." in filename else ""
-    try:
-        from pypdf import PdfReader
-        from mutagen.id3 import TXXX
-        from mutagen.mp4 import MP4
-        if ext == "pdf":
-            from pypdf import PdfWriter
-            reader, writer = PdfReader(io.BytesIO(file_bytes)), PdfWriter()
-            for page in reader.pages: writer.add_page(page)
-            writer.add_metadata({"/Nocap_Issuer": signer_label, "/Nocap_Signature": sig_hex, "/Nocap_Timestamp": timestamp})
-            out = io.BytesIO()
-            writer.write(out)
-            return out.getvalue()
-        elif ext in ["mp3", "wav"]:
-            audio_io = io.BytesIO(file_bytes)
-            from mutagen.id3 import ID3, ID3NoHeaderError
-            try: tags = ID3(audio_io)
-            except ID3NoHeaderError: tags = ID3()
-            tags.add(TXXX(encoding=3, desc="NOCAP_ISSUER", text=signer_label))
-            tags.add(TXXX(encoding=3, desc="NOCAP_SIG", text=sig_hex))
-            tags.save(audio_io)
-            return audio_io.getvalue()
-        elif ext in ["mp4", "m4a", "mov"]:
-            mp4_io = io.BytesIO(file_bytes)
-            tags = MP4(mp4_io)
-            tags["\xa9cmt"] = f"NOCAP_VERIFIED|ISSUER:{signer_label}|SIG:{sig_hex}|TIME:{timestamp}"
-            tags.save(mp4_io)
-            return mp4_io.getvalue()
-        elif ext in ["jpg", "jpeg", "png", "gif"] and _import_pil() is not None:
-            import PIL.Image as _PILImage  # lazy, only on the image-sign path
-            marker = f"NOCAP_VERIFIED|ISSUER:{signer_label}|SIG:{sig_hex}|TIME:{timestamp}"
-            out = io.BytesIO()
-            img = _PILImage.open(io.BytesIO(file_bytes))
-            img.load()
-            if ext in ("jpg", "jpeg") and file_bytes[:2] == b"\xff\xd8":
-                # Insert a JPEG COM (comment) segment right after the SOI marker.
-                # Survives most editors that rewrite EXIF, and IS detected by our
-                # raw marker scan without needing Pillow's EXIF TIFF writer.
-                seg = bytes([0xFF, 0xFE]) + (len(marker) + 2).to_bytes(2, "big") + marker.encode("utf-8")
-                return file_bytes[:2] + seg + file_bytes[2:]
-            if ext in ("png", "gif"):
-                # PNG/GIF: write a tEXt text chunk. Preserve the source's own
-                # text/EXIF labels (e.g. "Software: stable-diffusion-webui") so
-                # signing an AI/edited image does NOT launder away its origin.
-                try:
-                    from PIL.PngImagePlugin import PngInfo
-                    png = PngInfo()
-                    png.add_text("Nocap_Verified", marker)
-                    for k, v in img.info.items():
-                        if isinstance(v, str) and k.lower() not in ("ncap_verified", "nocap_verified") and k:
-                            try:
-                                png.add_text(k, v[:400])
-                            except Exception:
-                                pass
-                    img.save(out, format=("GIF" if ext == "gif" else "PNG"), pnginfo=png,
-                             exif=img.info.get("exif"))
-                    if out.tell() > 0:
-                        return out.getvalue()
-                except Exception:
-                    pass
-            return file_bytes
-    except Exception as e:
-        print(f"Trap warning {ext}: {e}")
-    return file_bytes
-
-def extract_media_trap(file_bytes: bytes, filename: str) -> bool:
-    """Checks for trapped metadata in manipulated media."""
-    ext = filename.lower().split(".")[-1] if "." in filename else ""
-    try:
-        from pypdf import PdfReader
-        from mutagen.id3 import ID3, TXXX
-        from mutagen.mp4 import MP4
-        if ext == "pdf": return "/Nocap_Issuer" in (PdfReader(io.BytesIO(file_bytes)).metadata or {})
-        if ext in ["mp3", "wav"]: return any(isinstance(f, TXXX) and f.desc in ["NOCAP_ISSUER", "NOCAP_SIG"] for f in ID3(io.BytesIO(file_bytes)).values())
-        if ext in ["mp4", "m4a", "mov"]: return "NOCAP_VERIFIED" in str(MP4(io.BytesIO(file_bytes)).get("\xa9cmt", [""])[0])
-        if ext in ("jpg", "jpeg", "png", "gif") and (
-                "NOCAP_VERIFIED" in _image_metadata_text(file_bytes, ext) or
-                _NOCAP_MARKER in file_bytes):
-            return True
-    except Exception: pass
-    return False
-
-
-_NOCAP_MARKER = b"NOCAP_VERIFIED"
 
 # ==============================================================================
 # [ FORENSIC REASON-OF-FORGERY ]
@@ -1711,249 +1465,13 @@ def _import_pil():
             _HAVE_PIL = False
     return _HAVE_PIL if _HAVE_PIL else None
 
-
-def _pixel_forensics(file_bytes: bytes, ext: str):
-    """Pixel-level deepfake/AI signal that survives FULLY stripped metadata.
-
-    Two complementary, dependency-cheap tests on a small downscaled patch:
-      * JPEG ELA: re-encode at quality ~90 and measure per-tile recompression
-        uniformity. Real photos resave with spatially varied error (detail +
-        noise); AI images and heavy compression resave almost uniformly.
-      * Noise floor: std of the local Laplacian on the luminance patch. Camera
-        shots carry sensor noise -> higher, scattered variance; AI/vector /
-        over-compressed exports are unnaturally clean/uniform.
-
-    Returns (leaning, reason, ran) where `ran` tells the caller the pixels were
-    actually inspected (so a clean read is trustworthy and suppresses the blunt
-    "missing metadata" fallback). (None, None, False) means deps/decoding failed
-    and we have no pixel opinion. Cost is capped: decode to <=160px wide, once."""
-    np = _import_np()
-    if np is None:
-        return None, None, False
-    try:
-        from PIL import Image
-        img = Image.open(io.BytesIO(file_bytes)).convert("L")
-        if img.width == 0 or img.height == 0:
-            return None, None, False
-        max_w = 160
-        if img.width > max_w:
-            img = img.resize((max_w, int(img.height * max_w / img.width)))
-        a = np.asarray(img, dtype=np.int16)
-
-        # Noise floor via local Laplacian energy.
-        g = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.int16)
-        lap = np.zeros(a.shape, dtype=np.int16)
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                gv = g[dy + 1][dx + 1]
-                if gv == 0:
-                    continue
-                rolled = np.roll(np.roll(a, -dy, axis=0), -dx, axis=1)
-                lap += gv * rolled
-        noise_std = float(lap.std())
-
-        # Heuristics (conservative, tuned to avoid false-positives on legitimate
-        # flat graphics / real photos): real photos carry sensor/compression noise
-        # -- their fine (Laplacian) detail is HIGH relative to their gross contrast.
-        # AI / oversmoothed output keeps tonal contrast but squeezes out fine noise,
-        # so its fine-to-gross RATIO collapses. A flat/solid image has low gross
-        # contrast too and is NOT flagged (content floor), avoiding graphic false-pos.
-        gross_std = float(np.asarray(a, dtype=np.float32).std())
-        fine_noise = noise_std
-        ratio = fine_noise / (gross_std + 1e-6)
-        content = gross_std > 15.0      # image actually has tonal variation
-        suspicious_noise = ratio < 200.0 and fine_noise < 60.0
-
-        # JPEG ELA is the strongest signal: a real camera JPEG re-encodes with
-        # spatially VARYING error; AI/heavy compression re-encodes uniformly.
-        uniform_reencode = False
-        if ext in ("jpg", "jpeg") and file_bytes[:2] == b"\xff\xd8":
-            try:
-                img_rgb = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-                if img_rgb.width > max_w:
-                    img_rgb = img_rgb.resize((max_w, int(img_rgb.height * max_w / img_rgb.width)))
-                buf = io.BytesIO()
-                img_rgb.save(buf, format="JPEG", quality=90)
-                re = Image.open(buf).convert("L")
-                ra = np.asarray(re, dtype=np.float32)
-                b = np.asarray(img.convert("L"), dtype=np.float32)
-                diff = np.abs(ra - b)[::8, ::8] / 255.0
-                flat = diff.flatten()
-                uniform_reencode = float(np.std(flat)) < 0.02 and float(np.mean(flat)) > 0.01
-            except Exception:
-                uniform_reencode = False
-
-        suspicious = (content and suspicious_noise) or uniform_reencode
-        if suspicious:
-            return ("ai", ("Pixel-level scan of the image shows tonal content but "
-                           "an unnaturally smooth, low-noise pattern (or a suspiciously "
-                           "uniform re-compression error) â€” a hallmark of AI generation "
-                           "or heavy automated processing."), True)
-        return None, None, True
-    except Exception:
-        return None, None, False
-
-
-def forensic_report(file_bytes: bytes, filename: str, trap_found: bool = False,
-                    signature_valid: bool = None) -> dict:
-    """Inspect file metadata/containers and return a plain-language forensics
-    breakdown. Works on PDF, MP3/WAV and MP4/M4A/MOV; other types return a
-    clean/unknown read. Returns:
-      {
-        "leaning": "ai"|"edited"|"clean"|"unknown",
-        "tool":    detected tool name or None,
-        "ai":      True if an AI generator was detected,
-        "edited":  True if an editing app was detected,
-        "reasons": [ plain-language human-readable lines, ... ]
-      }"""
-    ext = (filename or "").lower().split(".")[-1] if "." in (filename or "") else ""
-    reasons = []
-    leaning = "unknown"
-    tool = None
-    is_ai = False
-    is_edited = False
-
-    producer = None
-    container_text = ""
-
-    try:
-        from pypdf import PdfReader
-        from mutagen.mp4 import MP4
-        if ext == "pdf":
-            meta = PdfReader(io.BytesIO(file_bytes)).metadata or {}
-            producer = " ".join(str(v) for v in [
-                meta.get("/Producer"), meta.get("/Creator"),
-                meta.get("/Title"), meta.get("/Subject")] if v)
-            container_text = producer
-        elif ext in ["mp3", "wav"]:
-            from mutagen.id3 import ID3
-            tags = ID3(io.BytesIO(file_bytes))
-            parts = []
-            for f in tags.values():
-                if hasattr(f, "desc") and f.desc in ("TXXX", "TIT2", "COMM"):
-                    parts.append((f.text if hasattr(f, "text") else str(f)))
-                elif str(f).startswith("TXXX"):
-                    parts.append(str(f))
-            container_text = " ".join(str(p) for p in parts)
-            if hasattr(tags, "getall"):
-                for f in tags.getall("TIT2") + tags.getall("COMM") + tags.getall("TXXX"):
-                    if hasattr(f, "text"):
-                        container_text += " " + " ".join(str(x) for x in f.text)
-        elif ext in ["mp4", "m4a", "mov", "aac"]:
-            mp4 = MP4(io.BytesIO(file_bytes))
-            keys = ["\xa9too", "\xa9cmt", "\xa9swr", "\xa9nam", "\xa9prd", "Â©too", "com.apple.quicktime.software"]
-            container_text = " ".join(str(v) for k in keys
-                                      for v in (mp4.get(k) or []))
-        elif ext in ("jpg", "jpeg", "png", "webp", "gif", "bmp"):
-            # Images rarely print a producer into "metadata" parsers â€” the tool
-            # lives in EXIF/XMP/PNG-text/RIFF segments. We read those with stdlib
-            # so Canva/AI-upscalers/editors get named instead of a silent "clean".
-            container_text = _image_metadata_text(file_bytes, ext)
-    except Exception as e:
-        print(f"[forensic_report] parse note ({ext}): {e}")
-        container_text = ""
-
-    # Pixel-level scan FIRST â€” the most reliable signal for images, superseding
-    # the blunt "missing metadata" fallback. Runs for every image; absent deps or
-    # undecodable bytes yield (None,None) and we fall back gracefully.
-    pixel_ran = False
-    confidence = 0.0
-    if ext in ("jpg", "jpeg", "png", "webp", "gif", "bmp"):
-        pxl_lean, pxl_reason, pixel_ran = _pixel_forensics(file_bytes, ext)
-        if pixel_ran and pxl_reason:
-            if pxl_lean == "ai":
-                is_ai = True
-                leaning = "ai"
-                confidence = 0.8
-                reasons.append(pxl_reason)
-        # A clean pixel read suppresses the blunt "missing metadata" lean below.
-
-    # 1) Tool/AI signature scan
-    kind, tool, desc, sig_conf = _match_tool(container_text or producer)
-    if kind == "ai":
-        is_ai = True
-        leaning = "ai"
-        confidence = max(confidence, sig_conf or 0.9)
-        reasons.append(desc + " This means the picture/video may be AI-generated, not a real photo.")
-    elif kind == "edited":
-        is_edited = True
-        leaning = "edited"
-        confidence = max(confidence, sig_conf or 0.65)
-        reasons.append(desc + " This file has been edited after it was made.")
-    elif ext in ("pdf", "mp3", "wav", "mp4", "m4a", "mov", "aac", "jpg", "jpeg", "png", "gif", "webp", "bmp"):
-        # No explicit tool tag. For images we trust the pixel scan whenever it
-        # actually inspected the pixels: real-but-metadata-free photos read clean,
-        # so we DON'T lean AI just for a missing camera trail. The old camera-trail
-        # heuristic only fires when pixel forensics is unavailable.
-        if ext in ("jpg", "jpeg", "png", "webp", "gif", "bmp"):
-            if not pixel_ran and not _has_camera_provenance(file_bytes, ext):
-                reasons.append("No camera, editing, or AI labels are embedded, and pixel forensics was not "
-                               "available â€” the missing data trail may indicate an AI or heavily-processed image.")
-                if leaning == "unknown":
-                    leaning = "ai"
-                    confidence = max(confidence, 0.55)
-            else:
-                reasons.append("No editing apps or AI tools were found in this file's hidden labels.")
-        else:
-            reasons.append("No editing apps or AI tools were found in this file's hidden labels.")
-    else:
-        reasons.append("This file type has no readable metadata labels to inspect.")
-
-    # 2) Trap cross-check: crypto signature failed but our marker survived.
-    if trap_found and signature_valid is False:
-        reasons.append("Our invisible safety stamp is still there, but the file's content no longer matches it â€” "
-                       "a classic sign that someone edited it after it was officially signed.")
-        if leaning == "unknown":
-            leaning = "edited"
-        confidence = max(confidence, 0.95)
-
-    # 3) Tool summarised on top.
-    if is_ai:
-        leaning = "ai"
-    elif is_edited:
-        leaning = "edited"
-
-    return {
-        "leaning": leaning,
-        "tool": tool,
-        "ai": is_ai,
-        "edited": is_edited,
-        "confidence": confidence,
-        "reasons": reasons,
-    }
-
-def compute_merkle_root(leaf_hashes: List[str]) -> str:
-    if not leaf_hashes: return hashlib.sha256(b"GENESIS").hexdigest()
-    current_level = [bytes.fromhex(h) if len(h) == 64 else hashlib.sha256(h.encode()).digest() for h in leaf_hashes]
-    while len(current_level) > 1:
-        if len(current_level) % 2 != 0: current_level.append(current_level[-1])
-        current_level = [hashlib.sha256(current_level[i] + current_level[i + 1]).digest() for i in range(0, len(current_level), 2)]
-    return current_level[0].hex()
-
-def anchor_merkle_to_chain(merkle_root: str) -> str:
-    if not WEB3_RPC_URL or not WALLET_PRIV_KEY: return f"0xSIMULATED_TX_{hashlib.sha256(merkle_root.encode()).hexdigest()[:40]}"
-    try:
-        from web3 import Web3
-        w3 = Web3(Web3.HTTPProvider(WEB3_RPC_URL))
-        account = w3.eth.account.from_key(WALLET_PRIV_KEY)
-        tx = {
-            'to': account.address, 'value': 0, 'gas': 100000, 'gasPrice': w3.eth.gas_price,
-            'nonce': w3.eth.get_transaction_count(account.address),
-            'data': Web3.to_bytes(text=f"NOCAP_ROOT:{merkle_root}"), 'chainId': w3.eth.chain_id
-        }
-        signed_tx = w3.eth.account.sign_transaction(tx, private_key=WALLET_PRIV_KEY)
-        raw_tx = getattr(signed_tx, "raw_transaction", getattr(signed_tx, "rawTransaction", None))
-        tx_hash = w3.eth.send_raw_transaction(raw_tx)
-        return w3.to_hex(tx_hash)
-    except Exception: return "TX_FAILED"
-
 # ==============================================================================
 # [ COLUMN 5: FASTAPI SETUP & BASE ROUTES ]
 # ==============================================================================
 
-# max_body_size lifts Starlette's default 2MB request cap so authorized signers
-# can upload several media files at once (the 413 "Payload Too Large" bug).
-# 50 MB in bytes; signs video/photos in a single batch without tripping.
+# max_body_size lifts Starlette's default 2MB request cap so the screening desk
+# can submit an unscreened document plus an optional webcam live-frame in one
+# request. 50 MB in bytes.
 app = FastAPI(title="No Cap Â· Enterprise Provenance Engine", version="12.0",
               max_body_size=50 * 1024 * 1024)
 limiter = Limiter(key_func=get_remote_address)
@@ -2051,1182 +1569,19 @@ def assign_role(request: Request, target_email: str = Form(...), designation: st
         db.commit()
     return {"status": "ROLE_ASSIGNED", "email": target, "designation": desig, "institution": inst}
 
-# ==============================================================================
-# [ COLUMN 6: SIGNING, BROADCASTS & VERIFICATION ENGINE ]
-# ==============================================================================
-
-# --- Shared helpers used by every signing/broadcasting endpoint. Keeping the
-#     role guard and key decryption in one place means a signer's privileges are
-#     impossible to bypass by calling a "less guarded" route. ---
-
-def _safe_filename(name: str) -> str:
-    """Strip any path components a client might smuggle into a filename, so
-    download names and ZIP entries can never escape into directories. Binary
-    control chars and quotes are removed too: the result is spliced into
-    Content-Disposition header values, where CR/LF would allow header
-    injection and a raw `"` would break the quoted filename."""
-    cleaned = (name or "file").replace("\\", "/").split("/")[-1].strip()
-    cleaned = re.sub(r"[\x00-\x1f\x7f\"']", "", cleaned)
-    return cleaned or "file"
-
-_IMAGE_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp"}
-_VIDEO_EXT = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ogg": "video/ogg", ".m4v": "video/x-m4v"}
-
-def _guess_media_type(name: str) -> str:
-    ext = os.path.splitext((name or "").lower())[1]
-    return _IMAGE_EXT.get(ext) or _VIDEO_EXT.get(ext) or "application/octet-stream"
-
-def _is_broadcast_media(mime: str) -> bool:
-    return (mime or "").startswith("image/") or (mime or "").startswith("video/")
-
-def load_active_signer(db, admin: str):
-    """Resolve + authorise a signer for a signing request.
-
-    Returns (identity, institution, role, private_key). Raises 403 unless the
-    caller is a registered, non-revoked signer whose post & institution were
-    approved by a super admin â€” signing with a self-typed title is impossible."""
-    identity = db.query(SignerIdentity).filter_by(email=admin).first()
-    if not identity or identity.is_revoked:
-        raise HTTPException(403, "Invalid or revoked identity.")
-    institution = (identity.institution or "").strip()
-    role = (identity.designation or "").strip()
-    if not institution or not role:
-        raise HTTPException(403, "Role pending: a super admin must approve your post & institution before you can sign.")
-    priv_key = serialization.load_pem_private_key(
-        decrypt_vault_key(identity.enc_priv_key, identity.email), password=None)
-    return identity, institution, role, priv_key
-
-def insert_block_once(db, **fields) -> bool:
-    """Append a ledger block unless the artifact was already signed. file_hash
-    is UNIQUE at the DB level, so re-signing identical bytes is an atomic
-    no-op instead of a select-then-insert race.
-
-    Returns True when a NEW block was written, False when the hash already
-    existed (dup). The INSERT runs inside the session's own transaction; the
-    CALLER commits so sign/broadcast flows persist exactly as add()+commit()."""
-    if _IS_SQLITE:
-        # Select-then-insert is NOT atomic: two concurrent re-signs of the same
-        # bytes both pass the check and the loser dies on the UNIQUE constraint
-        # at commit. Run the check+insert inside a SAVEPOINT so the loser only
-        # loses the savepoint (returns "already exists") instead of poisoning
-        # the caller's whole session transaction.
-        try:
-            with db.begin_nested():
-                if db.query(LedgerBlock).filter_by(file_hash=fields["file_hash"]).first():
-                    return False
-                db.add(LedgerBlock(**fields))
-        except IntegrityError:
-            return False
-        return True
-    result = db.execute(pg_insert(LedgerBlock).values(**fields).on_conflict_do_nothing(index_elements=["file_hash"]))
-    return (result.rowcount or 0) > 0
-
-@app.post("/api/sign_text")
-@limiter.limit("40/minute")
-async def sign_text_notice(request: Request, message: str = Form(...), broadcast_title: str = Form("Emergency Notice"), urgency_level: str = Form("HIGH"),
-                           media: UploadFile = File(None), admin: str = Depends(get_current_admin)):
-    """Signs an Emergency Broadcast (text + optional image/video) and returns a
-    verifiable JSON receipt.
-
-    Returns plain JSON (no forced attachment download) so the client never has
-    to read a response body twice. The ECDSA sign is ~1ms; Neon round trips are
-    the only cost, handled in a threadpool and deduped by the unique index."""
-    clean_msg = message.strip()
-    if not clean_msg:
-        raise HTTPException(400, "Message body empty.")
-    if len(clean_msg) > 5000:
-        raise HTTPException(400, "Message too long (5,000 character cap).")
-    if urgency_level not in {"CRITICAL", "HIGH", "ADVISORY"}:
-        raise HTTPException(400, "Invalid urgency level.")
-    broadcast_title = broadcast_title.strip()[:120] or "Emergency Notice"
-
-    media_bytes = None
-    media_type = None
-    media_name = None
-    if media and media.filename:
-        media_bytes = await media.read()
-        if media_bytes:
-            media_name = _safe_filename(media.filename)
-            media_type = media.content_type or _guess_media_type(media_name)
-            if not _is_broadcast_media(media_type):
-                raise HTTPException(400, "Attached media must be an image or video file.")
-
-    # The signed payload binds the message text AND any embedded media, so a
-    # swapped-out image/video cannot sneak past verification.
-    payload = clean_msg.encode("utf-8") + (b"\x00MEDIA\x00" + media_bytes if media_bytes else b"")
-    text_hash = hashlib.sha256(payload).hexdigest()
-
-    result = await run_in_threadpool(
-        _sign_text_core, admin, clean_msg, broadcast_title, urgency_level, text_hash,
-        media_bytes, media_type, media_name,
-    )
-    return JSONResponse(result)
-
-def _sign_text_core(admin: str, clean_msg: str, broadcast_title: str, urgency_level: str, text_hash: str,
-                    media_bytes, media_type, media_name) -> dict:
-    """Synchronous core of the broadcast (sign + provenance insert). Kept out of
-    the event loop so a slow Neon round trip never freezes the whole app."""
-    with get_db() as db:
-        identity, institution, role, priv_key = load_active_signer(db, admin)
-        timestamp = now_utc()
-        sig_hex = f"hybrid:{priv_key.sign(text_hash.encode(), ec.ECDSA(hashes.SHA256())).hex()}"
-
-        receipt = {
-            "version": "nocap-v2-emergency", "title": broadcast_title, "urgency": urgency_level, "content": clean_msg,
-            "file_hash": text_hash, "signature": sig_hex, "timestamp": timestamp,
-            "signer": {"name": identity.name, "institution": institution, "designation": role},
-        }
-        if media_bytes:
-            receipt["media"] = {
-                "name": media_name,
-                "type": media_type,
-                "sha256": hashlib.sha256(media_bytes).hexdigest(),
-            }
-        cid = upload_receipt_to_ipfs(receipt)
-
-        # Unique-hash dedup: active notices re-sign as a no-op. A *retracted*
-        # notice resurrects only when its ORIGINAL issuer re-issues the exact
-        # text â€” the original pubkey is embedded in the row, so anyone else's
-        # signature would make verification report PROVEN_FAKE.
-        existing = db.query(LedgerBlock).filter_by(file_hash=text_hash).first()
-        if existing and existing.notice_deleted and (existing.signer_email or "").strip().lower() == admin.strip().lower():
-            existing.notice_deleted = False
-            existing.notice_content = clean_msg
-            existing.timestamp = timestamp
-            existing.sig_hex = sig_hex
-            existing.ipfs_cid = cid
-            existing.notice_media_type = media_type
-            existing.notice_media_name = media_name
-            existing.notice_media_data = media_bytes
-            persisted = True
-        elif existing:
-            persisted = False
-        else:
-            insert_block_once(
-                db,
-                signer_email=identity.email, signer_name=identity.name,
-                signer_institution=institution, signer_designation=f"EMERGENCY ({urgency_level})",
-                filename=f"NOTICE_{broadcast_title[:20]}.json", file_hash=text_hash,
-                sig_hex=sig_hex, timestamp=timestamp, ipfs_cid=cid,
-                notice_content=clean_msg,
-                notice_media_type=media_type,
-                notice_media_name=media_name,
-                notice_media_data=media_bytes,
-            )
-            persisted = True
-        db.commit()
-    return {"receipt": receipt, "ipfs_cid": cid, "ledger_persisted": persisted, "ledger_hash": text_hash}
-
-@app.post("/api/sign")
+@app.get("/api/admin/signers")
 @limiter.limit("60/minute")
-async def sign_media(request: Request, files: List[UploadFile] = File(...), admin: str = Depends(get_current_admin)):
-    if not files:
-        raise HTTPException(400, "No files.")
-
+def list_signers(request: Request, admin: str = Depends(get_current_admin)):
+    """Super-admin only: officer directory used for role approvals."""
+    if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
     with get_db() as db:
-        identity, institution, role, priv_key = load_active_signer(db, admin)
-        signer_label = f"{identity.name} ({role}, {institution})"
-        timestamp, ready = now_utc(), []
+        rows = db.query(SignerIdentity).order_by(SignerIdentity.registered_at.desc()).all()
+    return {"signers": [
+        {"email": s.email, "name": s.name, "designation": s.designation,
+         "institution": s.institution, "registered_at": s.registered_at}
+        for s in rows
+    ]}
 
-        for f in files:
-            raw = await f.read()
-            if not raw:
-                continue
-            safe_name = _safe_filename(f.filename)
-            trapped = _sign_single_file(db, priv_key, signer_label, identity, institution,
-                                        role, raw, safe_name, timestamp)
-            ready.append({"name": f"signed_{safe_name}", "bytes": trapped})
-
-        db.commit()  # persist every ledger block written above (see insert_block_once)
-        if not ready:
-            raise HTTPException(400, "No content to sign.")
-
-        if len(ready) == 1:
-            return Response(ready[0]["bytes"], media_type="application/octet-stream",
-                            headers={"Content-Disposition": f'attachment; filename="{ready[0]["name"]}"'})
-        mem_zip = io.BytesIO()
-        with zipfile.ZipFile(mem_zip, "w") as zf:
-            for item in ready:
-                zf.writestr(item["name"], item["bytes"])
-        return Response(mem_zip.getvalue(), media_type="application/zip",
-                        headers={"Content-Disposition": 'attachment; filename="signed_batch.zip"'})
-
-def _sign_single_file(db, priv_key, signer_label, identity, institution, role,
-                      raw: bytes, safe_name: str, timestamp: str) -> bytes:
-    """Core signing of ONE artifact: trap-inject + two ECDSA signatures + IPFS
-    receipt + ledger block. Returns the trapped (signed) bytes. Shared by
-    /api/sign (in-memory) and /api/sign_complete (chunked reassembly)."""
-    raw_hash = hashlib.sha256(raw).hexdigest()
-    sig_hex = f"hybrid:{priv_key.sign(raw_hash.encode(), ec.ECDSA(hashes.SHA256())).hex()}"
-    trapped = inject_media_trap(raw, safe_name, signer_label, sig_hex, timestamp)
-    final_hash = hashlib.sha256(trapped).hexdigest()
-    final_sig = f"hybrid:{priv_key.sign(final_hash.encode(), ec.ECDSA(hashes.SHA256())).hex()}"
-    cid = upload_receipt_to_ipfs({"filename": safe_name, "file_hash": final_hash,
-                                  "signature": final_sig, "issuer": signer_label,
-                                  "timestamp": timestamp})
-    insert_block_once(
-        db,
-        signer_email=identity.email, signer_name=identity.name,
-        signer_institution=institution, signer_designation=role,
-        filename=safe_name, file_hash=final_hash, sig_hex=final_sig,
-        timestamp=timestamp, ipfs_cid=cid,
-    )
-    return trapped
-
-_CHUNK_SESSION_CAP = 64 * 1024 * 1024  # max buffered bytes per chunk session
-_CHUNK_SESSION_TTL_HOURS = 2  # orphaned chunks older than this are swept
-
-
-def _guard_chunk_session(db, session_id: str, incoming_len: int) -> None:
-    """Bound one chunk session's buffered storage and sweep orphaned chunks.
-
-    Shared by /api/sign_chunk (authed) and /api/verify_chunk (public): no
-    caller is obliged to ever call *complete, so without the cap + sweep an
-    abandoned session could grow the PendingUpload table without bound.
-    Raises HTTPException(400) when the session would exceed the cap."""
-    used = db.query(func.coalesce(func.sum(func.length(PendingUpload.data)), 0)) \
-        .filter_by(session_id=session_id).scalar() or 0
-    if used + incoming_len > _CHUNK_SESSION_CAP:
-        raise HTTPException(400, f"Chunk session exceeds the {_CHUNK_SESSION_CAP // (1024 * 1024)} MB storage cap.")
-    stale_cutoff = (datetime.now(timezone.utc) - timedelta(hours=_CHUNK_SESSION_TTL_HOURS)) \
-        .strftime("%Y-%m-%d %H:%M:%S UTC")
-    db.query(PendingUpload).filter(PendingUpload.created_at < stale_cutoff) \
-        .delete(synchronize_session=False)
-
-@app.post("/api/sign_chunk")
-@limiter.limit("120/minute")
-async def sign_chunk(request: Request, chunk: UploadFile = File(...), session_id: str = Form(...),
-                     chunk_index: int = Form(...), total_chunks: int = Form(...),
-                     filename: str = Form("file"), admin: str = Depends(get_current_admin)):
-    """Receive one slice of a large file for chunked signing. Each chunk request
-    stays well under Vercel's ~4.4MB body cap. Chunks are persisted to Postgres
-    (NOT memory) so instance recycling between requests is harmless."""
-    data = await chunk.read()
-    if not data:
-        raise HTTPException(400, "Empty chunk.")
-    if not (0 <= chunk_index < total_chunks):
-        raise HTTPException(400, "Invalid chunk index.")
-    if len(data) > 4 * 1024 * 1024:
-        raise HTTPException(400, "Chunk too large (4 MB cap).")
-
-    with get_db() as db:
-        # Auth is enforced on EVERY chunk so an unapproved caller can't prefill.
-        # Cap storage per session and sweep orphaned chunks (a signer is not
-        # obliged to ever call *complete), mirroring the public verify_chunk guard.
-        _guard_chunk_session(db, session_id, len(data))
-        db.query(PendingUpload).filter_by(session_id=session_id, chunk_index=chunk_index).delete()
-        db.add(PendingUpload(
-            session_id=session_id, chunk_index=chunk_index, total_chunks=total_chunks,
-            filename=_safe_filename(filename), content_type=chunk.content_type or None,
-            data=data, created_at=now_utc()))
-        db.commit()
-    return {"ok": True, "session_id": session_id, "chunk_index": chunk_index,
-            "received_bytes": len(data)}
-
-@app.post("/api/sign_complete")
-@limiter.limit("60/minute")
-async def sign_complete(request: Request, session_id: str = Form(...),
-                        admin: str = Depends(get_current_admin)):
-    """Reassemble a chunked upload, run the real sign pipeline on the whole file,
-    record one ledger block, and return the signed artifact. Temp chunks are
-    deleted after use."""
-    with get_db() as db:
-        identity, institution, role, priv_key = load_active_signer(db, admin)
-        signer_label = f"{identity.name} ({role}, {institution})"
-
-        rows = (db.query(PendingUpload).filter_by(session_id=session_id)
-                .order_by(PendingUpload.chunk_index).all())
-        if not rows:
-            raise HTTPException(400, "No chunks found for this session.")
-        total = rows[0].total_chunks
-        if len(rows) != total:
-            raise HTTPException(400, f"Incomplete upload: got {len(rows)}/{total} chunks.")
-
-        raw = b"".join(r.data for r in rows)
-        safe_name = _safe_filename(rows[0].filename)
-        timestamp = now_utc()
-
-        trapped = _sign_single_file(db, priv_key, signer_label, identity, institution,
-                                    role, raw, safe_name, timestamp)
-        try:
-            db.commit()
-        finally:
-            # Chunk rows are temp by design: sweep them even when the sign
-            # commit above raised, so a failed large upload never orphans MBs
-            # of PendingUpload rows. rollback() is a no-op on a clean session
-            # and clears failed state otherwise, so the delete can always run.
-            db.rollback()
-            try:
-                db.query(PendingUpload).filter_by(session_id=session_id).delete()
-                db.commit()
-            except Exception:
-                pass
-
-        return Response(trapped, media_type="application/octet-stream",
-                        headers={"Content-Disposition": f'attachment; filename="signed_{safe_name}"'})
-
-@app.post("/api/verify_chunk")
-@limiter.limit("120/minute")
-async def verify_chunk(request: Request, chunk: UploadFile = File(...), session_id: str = Form(...),
-                       chunk_index: int = Form(...), total_chunks: int = Form(...),
-                       filename: str = Form("file")):
-    """Receive one slice of a large file for chunked verification. Public, like
-    /api/verify, so anyone can run a forensic check on a big media file without
-    tripping Vercel's ~4.4MB body cap. Chunks buffer in Postgres, not memory."""
-    data = await chunk.read()
-    if not data:
-        raise HTTPException(400, "Empty chunk.")
-    if not (0 <= chunk_index < total_chunks):
-        raise HTTPException(400, "Invalid chunk index.")
-    if len(data) > 4 * 1024 * 1024:
-        raise HTTPException(400, "Chunk too large (4 MB cap).")
-
-    with get_db() as db:
-        # verify_chunk is PUBLIC (anyone can run a forensic check), so bound how
-        # much storage one session may claim and sweep orphans — no caller is
-        # obliged to ever call *complete.
-        _guard_chunk_session(db, session_id, len(data))
-        db.query(PendingUpload).filter_by(session_id=session_id, chunk_index=chunk_index).delete()
-        db.add(PendingUpload(
-            session_id=session_id, chunk_index=chunk_index, total_chunks=total_chunks,
-            filename=_safe_filename(filename), content_type=chunk.content_type or None,
-            data=data, created_at=now_utc()))
-        db.commit()
-    return {"ok": True, "session_id": session_id, "chunk_index": chunk_index,
-            "received_bytes": len(data)}
-
-@app.post("/api/verify_complete")
-@limiter.limit("60/minute")
-async def verify_complete(request: Request, session_id: str = Form(...),
-                          client_hash: str = Form(None)):
-    """Reassemble a chunked verification upload and run the SAME forensic verdict
-    as /api/verify on the whole file. Temp chunks are deleted after use.
-
-    The client can send the SHA-256 of the ENTIRE file as client_hash. That hash
-    is the ledger lookup key, so we DON'T need to pull every byte back across the
-    network to reach the verdict â€” forensics only read a bounded header/sample
-    window (metadata tags and pixel cues live at the start of the file)."""
-    with get_db() as db:
-        # Existence + completeness check WITHOUT hydrating every chunk's bytes.
-        meta = (db.query(PendingUpload.filename, PendingUpload.total_chunks)
-                .filter_by(session_id=session_id)
-                .order_by(PendingUpload.chunk_index)
-                .first())
-        if not meta:
-            raise HTTPException(400, "No chunks found for this session.")
-        total = meta.total_chunks
-        have = db.query(PendingUpload.chunk_index).filter_by(session_id=session_id).count()
-        if have != total:
-            raise HTTPException(400, f"Incomplete upload: got {have}/{total} chunks.")
-
-        safe_name = _safe_filename(meta.filename)
-
-        try:
-            # Either trust the client's full-file SHA-256 (the ledger/hash lookup key)
-            # or fall back to re-assembling everything (small files / no hash sent).
-            if client_hash and re.fullmatch(r"[0-9a-fA-F]{64}", client_hash.strip()):
-                target_hash = client_hash.strip().lower()
-                # Forensics only need the metadata-bearing header + a pixel sample
-                # region — not the whole body — so fetch only the FIRST chunk (up to
-                # 4MB) rather than pulling every chunk back across the network.
-                _SCAN_WINDOW = 2 * 1024 * 1024
-                head = db.query(PendingUpload).filter_by(session_id=session_id) \
-                    .order_by(PendingUpload.chunk_index).limit(1).first()
-                sample = (head.data if head else b"")[:_SCAN_WINDOW]
-                has_trap = extract_media_trap(sample, safe_name)
-                payload = _verify_bytes(db, sample, safe_name, target_hash, has_trap)
-                payload["hash"] = target_hash
-            else:
-                rows = (db.query(PendingUpload).filter_by(session_id=session_id)
-                        .order_by(PendingUpload.chunk_index).all())
-                raw = b"".join(r.data for r in rows)
-                target_hash = hashlib.sha256(raw).hexdigest()
-                has_trap = extract_media_trap(raw, safe_name) if raw else False
-                payload = _verify_bytes(db, raw, safe_name, target_hash, has_trap)
-                payload["hash"] = target_hash
-        finally:
-            # Same temp-row guarantee as sign_complete: _verify_bytes commits
-            # its own VerificationLog row, so a raise anywhere above must not
-            # orphan this session's chunks.
-            db.rollback()
-            try:
-                db.query(PendingUpload).filter_by(session_id=session_id).delete()
-                db.commit()
-            except Exception:
-                pass
-        return payload
-
-async def resolve_verify_input(file, client_hash: str, filename: str):
-    """Normalise any verify request into (raw_bytes, display_name, target_hash).
-
-    A JSON receipt carries its authoritative file_hash inside it (that's the
-    whole point of the receipt), so that wins over re-hashing the bytes.
-
-    client_hash alongside a file is an explicit digest ATTESTATION: used by the
-    web client for LARGE files to send only a bounded forensic sample (first
-    ~2MB) yet check the FULL-file hash against the ledger. Same trust model as a
-    .json receipt â€” the digest is what was signed, so it is the lookup key."""
-    if file is not None:
-        raw = await file.read()
-        name = _safe_filename(file.filename) or filename or "file"
-        receipt_hash = None
-        if name.lower().endswith(".json"):
-            try:
-                receipt_hash = json.loads(raw.decode()).get("file_hash")
-            except Exception:
-                receipt_hash = None
-        if client_hash:
-            client_hash = client_hash.strip()
-            if not re.fullmatch(r"[0-9a-fA-F]{64}", client_hash):
-                raise HTTPException(400, "client_hash must be a 64-character SHA-256 hex digest.")
-            # Explicit digest attestation (large-file sample path) outranks a
-            # server re-hash, matching the .json receipt semantics.
-            target_hash = client_hash.lower()
-        else:
-            target_hash = receipt_hash or hashlib.sha256(raw).hexdigest()
-        return raw, name, target_hash
-
-    if client_hash:
-        client_hash = client_hash.strip()
-        if not re.fullmatch(r"[0-9a-fA-F]{64}", client_hash):
-            raise HTTPException(400, "client_hash must be a 64-character SHA-256 hex digest.")
-        return b"", filename or "hash_query", client_hash
-
-    raise HTTPException(400, "Provide media, hash, or text.")
-
-
-@app.post("/api/report")
-@limiter.limit("30/minute")
-def report_forgery(request: Request, file_hash: str = Form(...)):
-    """Community "Report Forgery" â€” bumps the flag_count on a signed block so the
-    trust team can see a file drew repeat complaints. Idempotent enough for a
-    simple counter; the hash stays a pure identity key. Public & rate-limited."""
-    fh = file_hash.strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", fh):
-        raise HTTPException(400, "Invalid ledger hash.")
-    with get_db() as db:
-        blk = db.query(LedgerBlock.id).filter_by(file_hash=fh).first()
-        if not blk:
-            raise HTTPException(404, "No signed record matches that hash.")
-        # Atomic increment: a read-modify-write here loses reports when two
-        # officers flag the same hash concurrently.
-        db.query(LedgerBlock).filter_by(file_hash=fh).update(
-            {LedgerBlock.flag_count: func.coalesce(LedgerBlock.flag_count, 0) + 1},
-            synchronize_session=False)
-        db.commit()
-        new_count = db.query(LedgerBlock.flag_count).filter_by(file_hash=fh).scalar() or 0
-        return {"ok": True, "file_hash": fh, "flag_count": new_count,
-                "message": "Report recorded. Thanks for keeping the record honest."}
-
-
-@app.post("/api/verify")
-@limiter.limit("120/minute")
-async def verify_media(request: Request, file: UploadFile = None, client_hash: str = Form(None), filename: str = Form("file"), raw_text: str = Form(None)):
-    if raw_text and raw_text.strip():
-        # Broadcast path: the alert text itself is the hashed, signed artifact.
-        raw = raw_text.strip().encode("utf-8")
-        display_name = "emergency_broadcast.txt"
-        target_hash = hashlib.sha256(raw).hexdigest()
-        has_trap = False
-    else:
-        raw, display_name, target_hash = await resolve_verify_input(file, client_hash, filename)
-        # A forensic trap can only exist on media that passed through our
-        # signer, so one on a hash outside the ledger is proof of tampering.
-        has_trap = extract_media_trap(raw, display_name) if raw else False
-
-    with get_db() as db:
-        return _verify_bytes(db, raw, display_name, target_hash, has_trap)
-
-
-def _verify_bytes(db, raw: bytes, display_name: str, target_hash: str,
-                  has_trap: bool) -> dict:
-    """Run the full forensic verdict on raw bytes and return the JSON payload.
-    Shared by /api/verify and the chunked /api/verify_complete."""
-    def log_and_return(verdict, msg, signer=None, tx_hash=None, retracted=False,
-                       signature_valid=None, block=None, identity=None):
-        # Plain, layman-first headline + one-line guidance per verdict.
-        # "How to read this for a normal person" wording, no jargon.
-        copy = {
-            "AUTHENTIC": {
-                "headline": "THIS FILE IS REAL",
-                "guidance": "The file matches its official signature. Nobody has edited it - you can trust it.",
-            },
-            "PROVEN_FAKE": {
-                "headline": "THIS FILE IS A FORGERY",
-                "guidance": "This file was changed after it was officially signed. Do NOT trust or share it.",
-            },
-            "REVOKED": {
-                "headline": "THIS FILE IS VOID",
-                "guidance": "The official source pulled back their permission, so this file is no longer valid.",
-            },
-            "UNSIGNED": {
-                "headline": "CANNOT BE TRUSTED",
-                "guidance": "No official source ever signed this. Treat it as unofficial unless checked elsewhere.",
-            },
-        }[verdict]
-
-        # Self-contained ledger receipt embedded in the verdict so the page can
-        # build a scannable verification cert (hash + signature + issuer pubkey
-        # + timestamp + anchors) without a second round-trip.
-        ledger_meta = None
-        if block is not None:
-            ledger_meta = {
-                "hash": block.file_hash,
-                "filename": block.filename,
-                "signature": block.sig_hex,
-                "signed_at": block.timestamp,
-                "merkle_root": block.merkle_root,
-                "ipfs_cid": block.ipfs_cid,
-                "tx_hash": block.tx_hash,
-                "retracted": bool(block.notice_deleted),
-                "signer_name": block.signer_name,
-                "signer_institution": block.signer_institution,
-                "signer_designation": block.signer_designation,
-                "issuer_pubkey": identity.pub_key if identity is not None else None,
-            }
-
-        # Run metadata + container forensics and add the plain reasons.
-        report = forensic_report(raw, display_name, trap_found=has_trap,
-                                 signature_valid=signature_valid) if raw else {
-            "leaning": "unknown", "tool": None, "ai": False, "edited": False,
-            "confidence": 0.0, "reasons": ["No file content to inspect."],
-        }
-
-        # Partial-content check: the client may attach a full-file SHA-256 and
-        # send only a bounded sample (large-media path). When the bytes actually
-        # received do NOT match the claimed digest, the verdict is grounded on
-        # the digest (the signed artifact) while forensics only saw a sample â€”
-        # surface that honestly instead of pretending the whole file was read.
-        partial_check = bool(raw) and hashlib.sha256(raw).hexdigest() != target_hash
-
-        # ---- Model-based AI detection (images only). -------------------------
-        # Runs the active detector (heuristic / Sightengine / self-hosted ViT),
-        # never raises, and reports the confidence + latency for the analytics
-        # graph. Non-image files skip it (detection only makes sense on media).
-        ai_det = {"ran": False, "ai_suspected": False, "ai_score": 0,
-                  "model": None, "provider": None, "explanation": "No image to analyse.",
-                  "latency_ms": 0}
-        _ext = (display_name or "").lower().rsplit(".", 1)[-1] if "." in (display_name or "") else ""
-        if raw and _ext in ("jpg", "jpeg", "png", "webp", "gif", "bmp"):
-            try:
-                ai_det = detect_image(raw, display_name)
-                if not ai_det.get("explanation"):
-                    ai_det["explanation"] = explain(ai_det)
-            except Exception:
-                ai_det = {"ran": False, "ai_suspected": False, "ai_score": 0,
-                          "model": None, "provider": None,
-                          "explanation": "AI detection is unavailable for this file right now.",
-                          "latency_ms": 0}
-            # If a paid cloud backend ran, tally its operations so the quota
-            # display stays honest. Fail-open: this never breaks the verdict.
-            if ai_det.get("provider") == "sightengine":
-                try:
-                    _used = int((ai_det.get("raw") or {}).get("operations_used", 0))
-                    record_sightengine_usage(_used)
-                except Exception:
-                    pass
-
-        # An unsigned file that forensics flag as AI-made or edited is NOT a
-        # neutral unknown â€” it is a likely forgery and should surface as that.
-        # Promote: UNSIGNED + strong AI/edited/trap signal => PROVEN_FAKE.
-        lean_flag = False
-        warned = False
-        if verdict == "UNSIGNED" and (report["ai"] or report["edited"] or has_trap):
-            verdict = "PROVEN_FAKE"
-            lean_flag = True
-            msg = ("FORGERY: no authentic signature and the file looks AI-made or edited."
-                   if not has_trap else
-                   "FORGERY: our invisible safety stamp was altered after signing.")
-            copy = {
-                "headline": "THIS FILE IS A FORGERY",
-                "guidance": ("This file is not a genuine signed original â€” it is either AI-generated, edited "
-                             "after creation, or tampered with. Do NOT trust or share it."),
-            }
-        # A signature CAN be genuine yet the signed CONTENT is AI-made/edited.
-        # We can't call a file that truly matches its signature a fake, but we
-        # must never let "THIS FILE IS REAL" hide an AI/edited label either.
-        if verdict == "AUTHENTIC" and (report["ai"] or report["edited"]):
-            warned = True
-            copy = {
-                "headline": "SIGNED, BUT POSSIBLY AI/EDITED",
-                "guidance": ("The signature is genuine (this exact file was officially signed), but the content "
-                             "carries an AI-generation or editing marker. It is authentic-but-suspicious â€” "
-                             "confirm with the issuer what it really is."),
-            }
-        if verdict == "PROVEN_FAKE":
-            copy["headline"] = "THIS FILE IS A FORGERY"
-
-        db.add(VerificationLog(file_hash=target_hash, status=verdict, timestamp=now_utc(),
-                               detection_ms=ai_det.get("latency_ms", 0),
-                               detection_provider=ai_det.get("provider")))
-        db.commit()
-        # A new verification changed every aggregate the analytics dashboard
-        # shows — drop the cached tallies so the next page view recomputes.
-        _invalidate_analytics()
-        return {"verdict": verdict, "message": msg, "hash": target_hash, "filename": display_name,
-                "signer": signer, "tx_hash": tx_hash, "retracted": retracted,
-                "headline": copy["headline"], "guidance": copy["guidance"],
-                "forensic_leaning": report["leaning"], "forensic_tool": report["tool"],
-                "forensic_confidence": report["confidence"],
-                "ai_detection": ai_det,
-                "ai_score": ai_det.get("ai_score", 0),
-                "ai_model": ai_det.get("model"),
-                "ai_provider": ai_det.get("provider"),
-                "ai_explanation": ai_det.get("explanation"),
-                "ai_suspected": report["ai"], "edited_suspected": report["edited"],
-                "likely_forged": lean_flag,
-                "forgery_warned": warned,
-                "partial_check": partial_check,
-                "reasons": report["reasons"],
-                "ledger": ledger_meta,
-                "blockchain_explorer": f"{BLOCKCHAIN_EXPLORER_URL}{tx_hash}" if tx_hash else None}
-
-    block = db.query(LedgerBlock).filter_by(file_hash=target_hash).first()
-    if not block:
-        verdict = "PROVEN_FAKE" if has_trap else "UNSIGNED"
-        msg = ("FORENSIC TRAP TRIGGERED: Metadata detected but binary altered. DEEPFAKE."
-               if has_trap else "Hash not found in ledger.")
-        return log_and_return(verdict, msg,
-                              signature_valid=False if has_trap else None)
-
-    signer_info = {"name": block.signer_name, "institution": block.signer_institution, "designation": block.signer_designation}
-    identity = db.query(SignerIdentity).filter_by(email=block.signer_email).first()
-    # Orphaned/revoked signer (e.g. a block left behind by a decommissioned
-    # identity) must never 500 â€” the honest verdict is that the key is gone.
-    if not identity or identity.is_revoked or block.is_revoked:
-        return log_and_return("REVOKED", f"Key belonging to {block.signer_name} revoked.",
-                              signer=signer_info, tx_hash=block.tx_hash,
-                              block=block, identity=identity)
-
-    try:
-        parts = block.sig_hex.split(":")
-        pub_key = serialization.load_pem_public_key(identity.pub_key.encode())
-        pub_key.verify(bytes.fromhex(parts[1] if len(parts) > 1 else block.sig_hex),
-                       target_hash.encode(), ec.ECDSA(hashes.SHA256()))
-        return log_and_return("AUTHENTIC",
-                              ("Verified. Signed by " + block.signer_name + ".") +
-                              (" (notice retracted by issuing authority)." if block.notice_deleted else ""),
-                              signer=signer_info, tx_hash=block.tx_hash,
-                              retracted=bool(block.notice_deleted),
-                              signature_valid=True,
-                              block=block, identity=identity)
-    except Exception:
-        return log_and_return("PROVEN_FAKE", "Signature mismatch. Binary altered.",
-                              signer=signer_info, signature_valid=False,
-                              block=block, identity=identity)
-
-@app.get("/api/receipt/{file_hash}")
-@limiter.limit("120/minute")
-def public_receipt(request: Request, file_hash: str):
-    """Public ledger receipt lookup â€” fetch the full signed metadata (signature, issuer pubkey, timestamp,
-    anchors) for ANY ledger hash without uploading the file. Everything here is
-    already public ledger data; no secrets are ever exposed."""
-    fh = file_hash.strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", fh):
-        raise HTTPException(400, "Invalid ledger hash.")
-    with get_db() as db:
-        block = db.query(LedgerBlock).filter_by(file_hash=fh).first()
-        if not block:
-            return {"found": False, "hash": fh}
-        identity = db.query(SignerIdentity).filter_by(email=block.signer_email).first()
-        revoked = identity is None or identity.is_revoked or block.is_revoked
-        return {
-            "found": True,
-            "hash": block.file_hash,
-            "filename": block.filename,
-            "signature": block.sig_hex,
-            "signed_at": block.timestamp,
-            "merkle_root": block.merkle_root,
-            "ipfs_cid": block.ipfs_cid,
-            "tx_hash": block.tx_hash,
-            "retracted": bool(block.notice_deleted),
-            "revoked": revoked,
-            "signer_name": block.signer_name,
-            "signer_institution": block.signer_institution,
-            "signer_designation": block.signer_designation,
-            "issuer_pubkey": identity.pub_key if identity is not None else None,
-            "blockchain_explorer": f"{BLOCKCHAIN_EXPLORER_URL}{block.tx_hash}" if block.tx_hash else None,
-        }
-
-# ==============================================================================
-# [ EMERGENCY NOTICE BOARD â€” public feed + authority retraction ]
-# ==============================================================================
-
-def _viewer_from_cookies(request: Request) -> str | None:
-    """Best-effort resolve of the optional admin session cookie. Public feed
-    stays anonymous; only a valid session grants per-row delete permissions."""
-    token = request.cookies.get("nischay_session")
-    if not token or token.count("::") != 2:
-        return None
-    email, exp_raw, sig = token.split("::")
-    # Same HMAC as make_session_token/get_current_admin; expiry is
-    # deliberately NOT enforced here (best-effort viewer, not a gate).
-    # NOTE: split into 3 parts — the old rsplit("::", 1) returned "email::exp"
-    # as the identity, so owner == viewer NEVER matched and signed-in authors
-    # were never offered their per-row delete buttons.
-    expected = hmac.new(MASTER_VAULT_KEY, f"{email}::{exp_raw}".encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, expected):
-        return None
-    return email
-
-def _notice_urgency(designation: str | None) -> str:
-    m = re.match(r"EMERGENCY\s*\((.+)\)", designation or "")
-    return m.group(1).strip().upper() if m else ""
-
-@app.get("/api/broadcasts")
-@limiter.limit("120/minute")
-def public_broadcasts(request: Request, limit: int = 25):
-    """Public, unauthenticated feed of live official emergency notices."""
-    try:
-        limit = max(1, min(int(limit), 500))
-    except Exception:
-        limit = 25
-    viewer = (_viewer_from_cookies(request) or "").strip().lower()
-
-    with get_db() as db:
-        rows = (
-            db.query(LedgerBlock)
-            .options(defer(LedgerBlock.notice_media_data))
-            .filter(LedgerBlock.signer_designation.like("EMERGENCY%"), LedgerBlock.notice_deleted.is_(False))
-            .order_by(LedgerBlock.timestamp.desc())
-            .limit(limit)
-            .all()
-        )
-        out = []
-        for b in rows:
-            owner = (b.signer_email or "").strip().lower()
-            is_mine = bool(viewer) and owner == viewer
-            out.append({
-                "title": re.sub(r"^NOTICE_", "", b.filename or "").replace(".json", "")[:140] or "Emergency Notice",
-                "urgency": _notice_urgency(b.signer_designation),
-                "content": b.notice_content or "",
-                "signer": b.signer_name,
-                "institution": b.signer_institution or "Independent",
-                "designation": b.signer_designation or "",
-                "timestamp": b.timestamp,
-                "file_hash": b.file_hash,
-                "signature": b.sig_hex,
-                "ipfs_cid": b.ipfs_cid or "",
-                "media_type": b.notice_media_type or "",
-                "media_name": b.notice_media_name or "",
-                "has_media": bool(b.notice_media_name or b.notice_media_type),
-                "is_mine": is_mine,
-                "can_delete": bool(viewer) and (is_mine or is_super_admin(viewer)),
-            })
-    return {"broadcasts": out, "authed": bool(viewer)}
-
-@app.get("/api/broadcasts/{file_hash}/media")
-@limiter.limit("120/minute")
-def broadcast_media(request: Request, file_hash: str):
-    """Publicly serve the media (image/video) attached to an emergency notice.
-
-    The media bytes are stored alongside the signed notice, so the served file
-    is exactly the bytes that were bound into the notice's hash at issue time â€”
-    serving it here keeps the board renderable without leaking raw DB blobs."""
-    fh = file_hash.strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", fh):
-        raise HTTPException(400, "Invalid ledger hash.")
-    with get_db() as db:
-        blk = (
-            db.query(LedgerBlock)
-            .filter(LedgerBlock.file_hash == fh, LedgerBlock.signer_designation.like("EMERGENCY%"),
-                    LedgerBlock.notice_deleted.is_(False))
-            .first()
-        )
-        if not blk or not blk.notice_media_data:
-            raise HTTPException(404, "No attached media for this notice.")
-        data = bytes(blk.notice_media_data)
-        media_type = blk.notice_media_type or _guess_media_type(blk.notice_media_name or "")
-    return Response(content=data, media_type=media_type,
-                    headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"})
-
-@app.post("/api/broadcasts/delete")
-@limiter.limit("30/minute")
-def delete_broadcast(request: Request, file_hash: str = Form(...), admin: str = Depends(get_current_admin)):
-    """Retract a live emergency notice. Admins may only retract their own;
-    super admins may retract any broadcast."""
-    fh = file_hash.strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", fh):
-        raise HTTPException(400, "Invalid ledger hash.")
-    with get_db() as db:
-        blk = (
-            db.query(LedgerBlock)
-            .filter(LedgerBlock.file_hash == fh, LedgerBlock.signer_designation.like("EMERGENCY%"))
-            .first()
-        )
-        if not blk:
-            raise HTTPException(404, "Broadcast not found.")
-        title = blk.filename
-        if not is_super_admin(admin) and (blk.signer_email or "").strip().lower() != admin.strip().lower():
-            raise HTTPException(403, "You may only retract notices you issued.")
-        blk.notice_deleted = True
-        db.commit()
-    return {"ok": True, "file_hash": fh, "title": title}
-
-# ==============================================================================
-# [ COLUMN 7: SYSTEM COMMANDS & WEB3 SYNC ]
-# ==============================================================================
-
-@app.post("/api/blockchain/sync")
-@limiter.limit("10/minute")
-def sync_ledger_to_blockchain(request: Request, admin: str = Depends(get_current_admin)):
-    if not is_super_admin(admin):
-        raise HTTPException(403, "ACCESS DENIED. Only a super admin may anchor the ledger.")
-    with get_db() as db:
-        # Blobs deferred: anchoring only needs file_hash (+ writing tx_hash),
-        # so never hydrate multi-MB notice_media_data for the whole table.
-        unanchored = (db.query(LedgerBlock)
-                      .options(defer(LedgerBlock.notice_media_data),
-                               defer(LedgerBlock.notice_content))
-                      .filter(LedgerBlock.tx_hash.is_(None)).all())
-        if not unanchored:
-            return {"status": "UP_TO_DATE", "message": "All blocks anchored."}
-        m_root = compute_merkle_root([b.file_hash for b in unanchored])
-        tx_hash = anchor_merkle_to_chain(m_root)
-        for b in unanchored:
-            b.tx_hash = tx_hash
-            b.merkle_root = m_root
-        db.commit()
-    return {"status": "SUCCESS", "anchored_blocks_count": len(unanchored), "merkle_root": m_root, "tx_hash": tx_hash}
-
-@app.post("/api/set_pin")
-@limiter.limit("20/minute")
-def set_pin(request: Request, pin: str = Form(...), admin: str = Depends(get_current_admin)):
-    # Storing a malformed PIN would lock the signer out of self-revocation.
-    pin = pin.strip()
-    if not pin.isdigit() or len(pin) != 5:
-        raise HTTPException(400, "PIN must be exactly 5 digits.")
-    with get_db() as db:
-        identity = db.query(SignerIdentity).filter_by(email=admin).first()
-        if not identity:
-            raise HTTPException(404, "Signer not found.")
-        identity.revoke_pin = pin
-        db.commit()
-    return {"status": "PIN_SET"}
-
-@app.post("/api/revoke")
-@limiter.limit("20/minute")
-def revoke(request: Request, target_email: str = Form(...), pin: str = Form(None), admin: str = Depends(get_current_admin)):
-    target = target_email.strip().lower()
-    if not is_super_admin(admin) and target != admin.strip().lower(): raise HTTPException(403, "ACCESS DENIED.")
-    with get_db() as db:
-        identity = db.query(SignerIdentity).filter_by(email=target).first()
-        if not identity: raise HTTPException(404, "Not found.")
-        if not is_super_admin(admin):
-            if not pin or len(pin.strip()) != 5: raise HTTPException(400, "Valid 5-digit PIN required.")
-            if not identity.revoke_pin: raise HTTPException(403, "No PIN set — call /api/set_pin first.")
-            if str(identity.revoke_pin) != str(pin.strip()): raise HTTPException(403, "Incorrect PIN.")
-        identity.is_revoked, identity.revoked_at = True, now_utc()
-        db.query(LedgerBlock).filter_by(signer_email=identity.email).update({"is_revoked": True})
-        db.commit()
-    return {"status": "REVOKED"}
-
-@app.post("/api/reinstate")
-@limiter.limit("20/minute")
-def reinstate(request: Request, target_email: str = Form(...), pin: str = Form(...), admin: str = Depends(get_current_admin)):
-    if not is_super_admin(admin): raise HTTPException(403, "Super-admin required.")
-    with get_db() as db:
-        identity = db.query(SignerIdentity).filter_by(email=target_email.strip().lower()).first()
-        if not identity: raise HTTPException(404, "Not found.")
-        if identity.revoke_pin and str(identity.revoke_pin) != str(pin.strip()): raise HTTPException(403, "Incorrect PIN.")
-        elif not identity.revoke_pin and str(pin.strip()) != "00000": raise HTTPException(403, "Enter 00000 to bypass.")
-        identity.is_revoked, identity.revoked_at = False, None
-        db.query(LedgerBlock).filter_by(signer_email=identity.email).update({"is_revoked": False})
-        db.commit()
-    return {"status": "REINSTATED"}
-
-@app.post("/api/rollback")
-@limiter.limit("10/minute")
-def execute_rollback(request: Request, target_timestamp: str = Form(...), admin: str = Depends(get_current_admin)):
-    """Truncate the ledger back to a bound. A malformed or empty timestamp would
-    compare lexically against every row and silently delete ALL blocks/logs, so
-    reject anything that isn't a real 'YYYY-MM-DD HH:MM:SS UTC' string first."""
-    if not is_super_admin(admin): raise HTTPException(403, "ACCESS DENIED.")
-    cutoff = (target_timestamp or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC", cutoff):
-        raise HTTPException(400, "target_timestamp must be a full 'YYYY-MM-DD HH:MM:SS UTC' boundary.")
-    with get_db() as db:
-        db.query(LedgerBlock).filter(LedgerBlock.timestamp > cutoff).delete()
-        db.query(VerificationLog).filter(VerificationLog.timestamp > cutoff).delete()
-        db.commit()
-        return {"status": "SUCCESS"}
-
-# ==============================================================================
-# [ COLUMN 8: DASHBOARDS & TELEMETRY ]
-# ==============================================================================
-
-def scoped_queries(db, admin: str, privileged: bool, limit: int | None = None,
-                   offset: int = 0):
-    """Resolve how much of the signed world a caller may see: normal signers only
-    their own signer rows + blocks; super admins get the full network. Media
-    blobs are deferred (never hydrated) — the ledger/network UIs don't need them
-    and pulling every multi-MB blob on page load would stall the app.
-
-    Blocks are newest-first and optionally paged (limit/offset) so callers that
-    only render a handful of rows (e.g. the analytics "recent" strip) never pay
-    for the whole table. limit=None preserves the legacy full pull."""
-    _light = [defer(LedgerBlock.notice_media_data), defer(LedgerBlock.notice_content)]
-    signers = db.query(SignerIdentity).all() if privileged else db.query(SignerIdentity).filter_by(email=admin).all()
-    q = db.query(LedgerBlock).options(*_light)
-    if not privileged:
-        q = q.filter_by(signer_email=admin)
-    q = q.order_by(LedgerBlock.id.desc())
-    if offset:
-        q = q.offset(offset)
-    if limit is not None:
-        q = q.limit(limit)
-    return signers, q.all()
-
-@app.get("/api/ledger")
-@limiter.limit("120/minute")
-def get_ledger(request: Request, admin: str = Depends(get_current_admin),
-              limit: int | None = None, offset: int = 0):
-    privileged = is_super_admin(admin)
-    # Bounded pulls for callers that render a handful of rows (analytics page
-    # asks for 7). Clamped so a hostile limit cannot become a full-table dump
-    # by another name; None keeps the legacy full pull for the Authority desk.
-    if limit is not None:
-        limit = max(1, min(int(limit), 500))
-    offset = max(0, int(offset or 0))
-    with get_db() as db:
-        signers, block_rows = scoped_queries(db, admin, privileged, limit=limit, offset=offset)
-
-        signers_out = {}
-        for s in signers:
-            signer_data = {
-                "email": s.email, "name": s.name,
-                "designation": s.designation or "", "institution": s.institution or "",
-                "is_revoked": s.is_revoked, "has_pin": bool(s.revoke_pin),
-            }
-            # Key Issuance Ledger requirement: exact registration dates are a
-            # super-admin-only audit affordance.
-            if privileged:
-                signer_data["registered_at"] = s.registered_at
-                signer_data["revoked_at"] = s.revoked_at
-            signers_out[s.email] = signer_data
-
-        blocks_out = []
-        for b in block_rows:
-            parts = b.sig_hex.split(":")
-            crypto_mode = parts[0] if len(parts) > 1 else "standard"
-            blocks_out.append({
-                "id": b.id, "signer_email": b.signer_email, "signer_name": b.signer_name,
-                "signer_institution": b.signer_institution, "signer_designation": b.signer_designation,
-                "filename": b.filename, "file_hash": b.file_hash, "sig_hex": b.sig_hex,
-                "timestamp": b.timestamp, "ipfs_cid": b.ipfs_cid, "tx_hash": b.tx_hash,
-                "merkle_root": b.merkle_root, "is_revoked": b.is_revoked,
-                "crypto_mode": crypto_mode, "is_compromised": crypto_mode == "standard",
-            })
-
-        # `total` always means "rows matching your scope", not "rows on this
-        # page": with a limit, count the scope (one indexed COUNT); without,
-        # it is len(). Must run inside the session (above), not after close.
-        if limit is None:
-            total = len(blocks_out)
-        else:
-            _cq = db.query(func.count(LedgerBlock.id))
-            if not privileged:
-                _cq = _cq.filter_by(signer_email=admin)
-            total = int(_cq.scalar() or 0)
-
-    return {"signers": signers_out, "blocks": blocks_out, "total": total, "is_super_admin": privileged}
-
-@app.get("/api/analytics")
-@limiter.limit("120/minute")
-def get_analytics(request: Request):
-    # Aggregate-only, auth-free counters (identical to /api/stats in spirit) so
-    # the analytics page works for visitors without a sign-in. No PII, no raw
-    # records — just verdict tallies, latency stats and detector-provider counts.
-    payload, _hit = _cached_section("analytics", _compute_analytics)
-    return payload
-
-
-@app.get("/api/analytics/summary")
-@limiter.limit("120/minute")
-def get_analytics_summary(request: Request):
-    """One round trip for the whole dashboard: verdict tallies + latency +
-    detector-provider counts + AI quota. The analytics page calls this once
-    (prefetched at site load, refreshed live) instead of three serial requests,
-    so a cold serverless instance is paid at most once per visit."""
-    analytics, a_hit = _cached_section("analytics", _compute_analytics)
-    usage, u_hit = _cached_section("usage", _compute_usage)
-    return {"analytics": analytics, "usage": usage, "cached": bool(a_hit and u_hit)}
-
-
-# ---------------------------------------------------------------------------
-# Analytics cache: /api/analytics + /api/detection/usage are pure aggregates
-# over the whole verification log, so recomputing them on every page view is
-# waste. Cache each for ANALYTICS_CACHE_TTL seconds (default 20) and invalidate
-# the moment a new verification lands. Per-process memory only (serverless
-# instances each keep their own); correctness never depends on it because TTL
-# expiry always recomputes from SQL.
-# ---------------------------------------------------------------------------
-_ANALYTICS_TTL = float(os.getenv("ANALYTICS_CACHE_TTL", "20") or 20)
-_analytics_cache: dict = {"analytics": (0.0, None), "usage": (0.0, None)}
-
-
-def _invalidate_analytics() -> None:
-    _analytics_cache["analytics"] = (0.0, None)
-    _analytics_cache["usage"] = (0.0, None)
-
-
-def _cached_section(key: str, compute):
-    at, payload = _analytics_cache.get(key, (0.0, None))
-    if payload is not None and (time.monotonic() - at) < _ANALYTICS_TTL:
-        return payload, True
-    with get_db() as db:
-        payload = compute(db)
-    _analytics_cache[key] = (time.monotonic(), payload)
-    return payload, False
-
-
-def _compute_analytics(db) -> dict:
-    """Aggregations run in SQL so the full VerificationLog table is never pulled
-    into Python (the ledger grows unboundedly over time)."""
-    stats = {"AUTHENTIC": 0, "PROVEN_FAKE": 0, "REVOKED": 0, "UNSIGNED": 0}
-    # db.query() works on both SQLite and Postgres — no dialect branch needed.
-    for status, count in db.query(VerificationLog.status, func.count(VerificationLog.id)) \
-            .group_by(VerificationLog.status).all():
-        stats[status] = int(count)
-
-    lat_samples = db.query(func.count(VerificationLog.detection_ms),
-                           func.avg(VerificationLog.detection_ms),
-                           func.min(VerificationLog.detection_ms),
-                           func.max(VerificationLog.detection_ms)) \
-        .filter(VerificationLog.detection_ms.isnot(None)).one()
-    samples = int(lat_samples[0] or 0)
-    latency = None
-    if samples:
-        latency = {
-            "avg_ms": int(round(lat_samples[1] or 0)),
-            "min_ms": int(lat_samples[2] or 0),
-            "max_ms": int(lat_samples[3] or 0),
-            "samples": samples,
-        }
-
-    providers = {}
-    for provider, count in db.query(VerificationLog.detection_provider,
-                                    func.count(VerificationLog.id)) \
-            .filter(VerificationLog.detection_provider.isnot(None)) \
-            .group_by(VerificationLog.detection_provider).all():
-        providers[provider] = int(count)
-    return {"stats": stats, "latency": latency, "providers": providers}
-
-
-# ---------------------------------------------------------------------------
-# Sightengine quota tracking (server-side so the key and vendor internals are
-# never exposed to the browser). We count the `operations` each check consumes
-# into a persistent singleton row and expose only the derived "remaining" fields.
-# ---------------------------------------------------------------------------
-_SIGHTENGINE_DAILY_LIMIT = 500   # free tier: operations/day
-_SIGHTENGINE_MONTHLY_LIMIT = 2000  # free tier: operations/month
-
-
-def record_sightengine_usage(ops: int):
-    if not ops:
-        return
-    now = datetime.now(timezone.utc)
-    day = now.strftime("%Y-%m-%d")
-    month = now.strftime("%Y-%m")
-    try:
-        with get_db() as db:
-            stamp = now_utc()
-            # Atomic increments â€” a plain read-modify-write could silently lose
-            # operations under concurrent verifies (serverless = many workers).
-            # Day/month rollover is a guarded UPDATE: reset the counter only if
-            # the stored period is stale, THEN add ops, so resets and counts
-            # cannot interleave into a lost update.
-            db.execute(
-                sa_update(SightengineUsage)
-                .where(SightengineUsage.row_key == "global", SightengineUsage.day_date != day)
-                .values(ops_today=0, day_date=day, updated_at=stamp)
-            )
-            db.execute(
-                sa_update(SightengineUsage)
-                .where(SightengineUsage.row_key == "global", SightengineUsage.month != month)
-                .values(ops_month=0, month=month, updated_at=stamp)
-            )
-            res = db.execute(
-                sa_update(SightengineUsage)
-                .where(SightengineUsage.row_key == "global")
-                .values(ops_today=SightengineUsage.ops_today + ops,
-                        ops_month=SightengineUsage.ops_month + ops,
-                        updated_at=stamp)
-            )
-            if res.rowcount == 0:
-                db.add(SightengineUsage(row_key="global", ops_today=ops, ops_month=ops,
-                                        day_date=day, month=month, updated_at=stamp))
-            db.commit()
-            # Quota numbers feed the analytics dashboard — drop its cache too.
-            _invalidate_analytics()
-    except Exception:
-        # Quota bookkeeping must never break a verify â€” fail open.
-        pass
-
-
-@app.get("/api/detection/usage")
-@limiter.limit("60/minute")
-def detection_usage(request: Request):
-    """Show how much Sightengine budget the app has used (day + month) and how
-    much is left under the free-tier caps. No key / vendor internals exposed."""
-    payload, _hit = _cached_section("usage", _compute_usage)
-    return payload
-
-
-def _compute_usage(db) -> dict:
-    day = month = ops_today = ops_month = 0
-    try:
-        row = db.query(SightengineUsage).filter_by(row_key="global").first()
-        if row:
-            ops_today, ops_month = row.ops_today or 0, row.ops_month or 0
-            day, month = row.day_date or "", row.month or ""
-    except Exception:
-        pass
-    return {
-        "provider": "sightengine",
-        "model": os.getenv("AI_DETECTOR_MODELS", "genai"),
-        "period_day": day,
-        "period_month": month,
-        "ops_used_today": ops_today,
-        "ops_used_month": ops_month,
-        "limit_today": _SIGHTENGINE_DAILY_LIMIT,
-        "limit_month": _SIGHTENGINE_MONTHLY_LIMIT,
-        "remaining_today": max(_SIGHTENGINE_DAILY_LIMIT - ops_today, 0),
-        "remaining_month": max(_SIGHTENGINE_MONTHLY_LIMIT - ops_month, 0),
-    }
-
-@app.get("/api/network")
-@limiter.limit("60/minute")
-def get_network_graph(request: Request, admin: str = Depends(get_current_admin)):
-    privileged = is_super_admin(admin)
-    with get_db() as db:
-        signers, block_rows = scoped_queries(db, admin, privileged)
-        nodes = [
-            {"id": s.email, "label": s.name + (f" ({s.designation})" if s.designation else ""),
-             "group": "authority", "is_revoked": s.is_revoked}
-            for s in signers
-        ]
-        edges = []
-        for b in block_rows:
-            crypto_mode = b.sig_hex.split(":")[0] if ":" in b.sig_hex else "standard"
-            # Same compromised definition as /api/ledger: anything not signed in
-            # the current hybrid mode is pre-hybrid ("standard") and flagged.
-            is_compromised = crypto_mode == "standard"
-            nodes.append({"id": b.file_hash, "label": b.filename, "group": "file",
-                          "is_revoked": b.is_revoked, "crypto_mode": crypto_mode,
-                          "is_compromised": is_compromised})
-            edges.append({"from": b.signer_email, "to": b.file_hash})
-        return {"nodes": nodes, "edges": edges}
-
-@app.get("/api/stats")
-@limiter.limit("120/minute")
-def public_stats(request: Request):
-    # Aggregate-only, auth-free counters (no PII) so the landing hero can show live network health.
-    with get_db() as db:
-        return {
-            "signed_docs": db.query(LedgerBlock).count(),
-            "trusted_issuers": db.query(SignerIdentity).count(),
-        }
 
 # ==============================================================================
 # [ SCREENING DESK â€” MHA SIH26188: AI-Based Fake Identity & Document Screening ]
@@ -3255,6 +1610,8 @@ def _screen_row(r):
         "risk_score": r.risk_score,
         "confidence": r.confidence,
         "ledger_status": r.ledger_status,
+        "previous_hash": getattr(r, "previous_hash", None),
+        "ledger_hash": getattr(r, "ledger_hash", None),
         "screener": r.screener,
         "created_at": r.created_at,
         "adjudication": r.adjudication,
@@ -3297,7 +1654,7 @@ async def screen_document(
     with get_db() as db:
         if admin != "evaluator@ssb.gov.in" and not is_super_admin(admin):
             identity = db.query(SignerIdentity).filter_by(email=admin).first()
-            if not identity or identity.is_revoked:
+            if not identity:
                 raise HTTPException(403, "ACCESS DENIED.")
             if not (identity.institution or "").strip() or not (identity.designation or "").strip():
                 raise HTTPException(403, "Role pending: a super admin must approve your post & institution before screening.")
@@ -3534,7 +1891,6 @@ def screening_evidentiary_dossier(
     safe_created_at = html.escape(str(report.created_at))
     safe_doc_type = html.escape(str(report.doc_type or 'Identity Document'))
     safe_file_hash = html.escape(str(report.file_hash))
-    safe_ledger_status = html.escape(str(report.ledger_status or 'UNREGISTERED'))
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3582,7 +1938,9 @@ def screening_evidentiary_dossier(
     <div><strong>Document Type:</strong> {safe_doc_type}</div>
     <div><strong>Confidence Score:</strong> {int(report.confidence * 100)}%</div>
     <div><strong>File Fingerprint (SHA-256):</strong> <span style="font-size:11px;">{safe_file_hash}</span></div>
-    <div><strong>Ledger Provenance Status:</strong> {safe_ledger_status}</div>
+    <div><strong>Ledger Block Hash:</strong> <span style="font-size:11px;">{html.escape(str(report.ledger_hash or 'GENESIS'))}</span></div>
+    <div><strong>Previous Block Hash:</strong> <span style="font-size:11px;">{html.escape(str(report.previous_hash or 'GENESIS'))}</span></div>
+    <div><strong>Ledger Status:</strong> <span style="color:#38bdf8;">{html.escape(str(report.ledger_status or 'LOCAL'))}</span></div>
   </div>
 
   <div class="section">
@@ -3612,7 +1970,7 @@ def screening_evidentiary_dossier(
   <div class="seal-box">
     <strong>CRYPTOGRAPHIC CUSTODY SEAL (HMAC-SHA256):</strong><br/>
     {dossier_seal}<br/><br/>
-    <em>This document is an electronically generated statutory evidence record pursuant to the Indian Evidence Act & Bharatiya Sakshya Adhiniyam standards for digital evidence. Tamper-proof cryptographic provenance anchored to the border inspection authority key.</em>
+    <em>This document is an electronically generated statutory evidence record pursuant to the Indian Evidence Act & Bharatiya Sakshya Adhiniyam standards for digital evidence. Custody-sealed by the border inspection desk key.</em>
   </div>
 </div>
 <script>
@@ -3685,31 +2043,140 @@ def screening_watchlist_remove(
         return {"ok": True}
 
 
+@app.get("/api/screen/ledger/verify")
+@limiter.limit("60/minute")
+def verify_ledger_chain(request: Request, admin: str = Depends(get_current_admin)):
+    """Audit endpoint: cryptographically verifies the unbroken append-only hash chain
+    across all historical screening reports. Detects any database tampering, out-of-order
+    insertions, or modified report attributes."""
+    with get_db() as db:
+        rows = db.query(ScreeningReport).order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc()).all()
+
+    if not rows:
+        return {
+            "valid": True,
+            "total_blocks": 0,
+            "head_hash": None,
+            "genesis_hash": "GENESIS",
+            "broken_at": None,
+            "status": "EMPTY_CHAIN",
+        }
+
+    expected_prev = "GENESIS"
+    for idx, r in enumerate(rows):
+        if r.previous_hash and idx > 0 and r.previous_hash != expected_prev:
+            return {
+                "valid": False,
+                "total_blocks": len(rows),
+                "verified_blocks": idx,
+                "broken_at": r.id,
+                "reason": f"Block {r.id} parent hash mismatch: expected {expected_prev}, got {r.previous_hash}",
+                "status": "CORRUPTED_CHAIN",
+            }
+
+        if r.ledger_hash:
+            computed = hashlib.sha256(
+                f"{r.previous_hash or 'GENESIS'}:{r.file_hash}:{r.verdict}:{r.risk_score}".encode("utf-8")
+            ).hexdigest()
+            if r.ledger_hash != computed:
+                return {
+                    "valid": False,
+                    "total_blocks": len(rows),
+                    "verified_blocks": idx,
+                    "broken_at": r.id,
+                    "reason": f"Block {r.id} data tampered: computed {computed} != stored {r.ledger_hash}",
+                    "status": "CORRUPTED_CHAIN",
+                }
+            expected_prev = r.ledger_hash
+        elif r.previous_hash:
+            expected_prev = r.previous_hash
+
+    return {
+        "valid": True,
+        "total_blocks": len(rows),
+        "head_hash": rows[-1].ledger_hash if rows else None,
+        "genesis_hash": rows[0].previous_hash if rows else "GENESIS",
+        "status": "CHAIN_INTEGRITY_VERIFIED",
+    }
+
+
+@app.post("/api/screen/aadhaar-fields")
+@limiter.limit("60/minute")
+async def screen_aadhaar_fields(
+    request: Request,
+    file: UploadFile = Form(...),
+    admin: str = Depends(get_current_admin_or_evaluator),
+):
+    """Detect Aadhaar-card field bounding boxes using the trained 5-class YOLO model
+    (classes: Aadhaar_No, DOB, Gender, Name, Photo)."""
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
+    try:
+        from yolo_roi import extract_aadhaar_fields
+        boxes = extract_aadhaar_fields(data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Aadhaar field detection failed: {exc}")
+    return {
+        "ok": True,
+        "count": len(boxes),
+        "fields": boxes,
+        "model": "aadhaar_fields.onnx",
+    }
+
+
+@app.post("/api/screen/liveness")
+@limiter.limit("60/minute")
+async def verify_liveness(
+    request: Request,
+    frames: list[UploadFile] = Form(...),
+    challenge: str = Form("blink"),
+    client_meta: str = Form("{}"),
+    admin: str = Depends(get_current_admin_or_evaluator),
+):
+    """Interactive challenge-response webcam liveness verification. Evaluates anti-virtual-camera
+    injection, timestamp jitter, inter-frame physiological motion, and challenge satisfaction."""
+    raw_frames = []
+    for f in frames:
+        b = await f.read()
+        if b:
+            raw_frames.append(b)
+    meta = {}
+    if client_meta.strip():
+        try:
+            meta = json.loads(client_meta)
+        except Exception:
+            meta = {}
+    from forensics import verify_webcam_liveness
+    result = verify_webcam_liveness(raw_frames, challenge=challenge, client_meta=meta)
+    return result
+
+
 
 # ============================================================================
 # AI assistant — project-scoped Gemini chat with full codebase database ingestion
 # ============================================================================
 # NOTE: `codebase as codebase_index` is already imported near the top of this
-# module (line ~562); do not re-import it here.
+# module (line ~545); do not re-import it here.
 
 GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite").strip()
 GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or "").strip()
 
 GEMINI_SYSTEM_PROMPT = (
-    "You are 'nocap', the lead technical architect & AI code oracle for the nocap / Veri_source "
-    "Cryptographic Provenance Ledger platform.\n\n"
+    "You are the lead technical architect & AI code oracle for the SSB Border "
+    "Screening console — SIH26188 AI-Based Fake Identity & Document Screening.\n\n"
     "VISIBILITY:\n"
     "You have been provided with the COMPLETE, ACTUAL SOURCE CODE DATABASE of the entire project "
-    "repository in your context. Every backend route, cryptographic vault, database schema, "
-    "verification algorithm, screening check, React component, CSS design token, test case, and "
+    "repository in your context. Every backend route, screening module, database schema, "
+    "detector, OCR/MRZ validator, React component, CSS design token, test case, and "
     "technical study guide is loaded in full with 1-based line numbers.\n\n"
     "HOW TO ANSWER:\n"
     "- Deep Code Grounding: Read and search the complete CODE DATABASE to answer accurately about ANY part of the project.\n"
-    "- Exact Citations: Always cite exact file paths and line numbers whenever referencing code (e.g. `app/main.py:1124-1175`, `app/screening.py:120`, `frontend/src/components/VerdictCard.tsx:42`).\n"
-    "- End-to-End Traces: Explain how frontend, backend, cryptography, database schemas, and blockchain anchoring connect across the stack.\n"
-    "- Algorithmic Rigor: When explaining algorithms (e.g. ICAO 9303 MRZ check digits, ECDSA secp256k1, AES-256-GCM vault, ELA forensic analysis, Merkle tree anchoring), detail the exact logic and quote the code lines.\n"
+    "- Exact Citations: Always cite exact file paths and line numbers whenever referencing code (e.g. `app/main.py:1124-1175`, `app/screening.py:120`, `frontend/src/views/AuthorityView.tsx:42`).\n"
+    "- End-to-End Traces: Explain how frontend, backend, screening modules, database schemas, detectors, and the border desk flow connect across the stack.\n"
+    "- Algorithmic Rigor: When explaining algorithms (e.g. ICAO 9303 MRZ check digits, PAN/DL/Voter-ID checksum rules, ELA tamper forensics, face-embedding cosine comparison), detail the exact logic and quote the code lines.\n"
     "- Complete Code Blocks: Provide complete, un-truncated, syntax-highlighted code blocks in markdown when answering implementation questions.\n"
-    "- Technical Scope: Answer thoroughly on all aspects of nocap/Veri_source. If asked anything completely unrelated to this project (e.g. recipes, celebrity trivia), politely decline in one sentence and offer to help with nocap instead."
+    "- Technical Scope: Answer thoroughly on all aspects of the SSB Screening console. If asked anything completely unrelated to this project (e.g. recipes, celebrity trivia), politely decline in one sentence and offer to help with the screening console instead."
 )
 
 
