@@ -719,6 +719,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         modules=json.dumps({k: report["modules"].get(k, {}).get("verdict")
                             for k in ("validation", "tampering", "face")}),
         ledger_status=ledger_status, screener=screener,
+        latency_ms=report.get("latency_ms"),
         created_at=report["created_at"],
     ))
     db.commit()

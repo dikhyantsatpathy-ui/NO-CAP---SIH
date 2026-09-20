@@ -265,6 +265,7 @@ export const SCREEN_DOC_TYPES = [
   "visa",
   "driving_licence",
   "voter_id",
+  "aadhaar",
   "other",
 ] as const;
 
@@ -272,8 +273,7 @@ export type ScreenDocType = (typeof SCREEN_DOC_TYPES)[number];
 
 /**
  * Backend-aligned document labels. These are the document families the
- * screening pipeline can extract and validate end to end. Aadhaar is
- * intentionally absent: the backend no longer accepts it.
+ * screening pipeline can extract and validate end to end.
  */
 export const SCREEN_DOC_LABELS: Record<ScreenDocType, string> = {
   pan: "PAN",
@@ -281,6 +281,7 @@ export const SCREEN_DOC_LABELS: Record<ScreenDocType, string> = {
   visa: "VISA",
   driving_licence: "DRIVING LICENCE",
   voter_id: "VOTER ID",
+  aadhaar: "AADHAAR",
   other: "OTHER",
 };
 
@@ -290,6 +291,7 @@ export const SCREEN_DOC_NUMBER_PLACEHOLDERS: Record<ScreenDocType, string> = {
   visa: "e.g. V1234567",
   driving_licence: "e.g. KA0120201234567",
   voter_id: "e.g. ABC1234567",
+  aadhaar: "e.g. XXXX-XXXX-XXXX",
   other: "Number printed on the document",
 };
 
@@ -471,4 +473,198 @@ export function verifyLiveness(frames: Blob[], challenge: string = "blink", meta
     method: "POST",
     body: fd,
   });
+}
+
+// ----------------------------------------------------------------------------
+// Public provenance & analytics — the original NoCap surfaces, re-integrated on
+// top of the SIH26188 screening ledger (statistics, notice board, digest
+// verification, analytics).
+// ----------------------------------------------------------------------------
+
+export type VerdictKind = "AUTHENTIC" | "PROVEN_FAKE" | "REVOKED" | "UNSIGNED";
+
+export interface SignerSummary {
+  name?: string;
+  institution?: string;
+  designation?: string;
+  signature_guidance?: string;
+}
+
+export interface LedgerReceipt {
+  found: boolean;
+  hash?: string;
+  filename?: string;
+  signature?: string;
+  signed_at?: string;
+  merkle_root?: string | null;
+  ipfs_cid?: string | null;
+  tx_hash?: string | null;
+  retracted?: boolean;
+  revoked?: boolean;
+  signer_name?: string;
+  signer_institution?: string | null;
+  signer_designation?: string | null;
+  issuer_pubkey?: string | null;
+  blockchain_explorer?: string | null;
+}
+
+export interface VerifyResult {
+  verdict: VerdictKind;
+  message: string;
+  hash: string;
+  filename: string;
+  signer?: SignerSummary;
+  tx_hash: string | null;
+  retracted?: boolean;
+  headline: string;
+  guidance: string;
+  forensic_leaning?: string;
+  forensic_tool?: string | null;
+  forensic_confidence?: number;
+  ai_detection?: AiDetection | null;
+  ai_score?: number;
+  ai_model?: string | null;
+  ai_provider?: string | null;
+  ai_explanation?: string;
+  ai_suspected?: boolean;
+  edited_suspected?: boolean;
+  likely_forged?: boolean;
+  forgery_warned?: boolean;
+  reasons?: string[];
+  ledger?: LedgerReceipt;
+  blockchain_explorer?: string | null;
+}
+
+export interface Broadcast {
+  title: string;
+  urgency: string;
+  content: string;
+  signer: string;
+  institution: string;
+  designation: string;
+  timestamp: string;
+  file_hash: string;
+  signature: string;
+  ipfs_cid: string;
+  media_type: string;
+  media_name: string;
+  has_media: boolean;
+  is_mine: boolean;
+  can_delete: boolean;
+}
+
+export interface Stats {
+  signed_docs: number;
+  trusted_issuers: number;
+}
+
+export interface AnalyticsPayload {
+  stats: Record<VerdictKind, number>;
+  latency: { avg_ms: number; min_ms: number; max_ms: number; samples: number } | null;
+  providers: Record<string, number>;
+}
+
+export interface DetectionUsage {
+  provider: string;
+  model: string;
+  period_day: string;
+  period_month: string;
+  ops_used_today: number;
+  ops_used_month: number;
+  limit_today: number;
+  limit_month: number;
+  remaining_today: number;
+  remaining_month: number;
+}
+
+export interface AnalyticsSummary {
+  analytics: AnalyticsPayload;
+  usage: DetectionUsage | null;
+  cached: boolean;
+}
+
+export interface LedgerBlock {
+  id: string;
+  signer_email: string;
+  signer_name: string;
+  signer_institution: string;
+  signer_designation: string;
+  filename: string;
+  file_hash: string;
+  sig_hex: string;
+  timestamp: string;
+  ipfs_cid: string;
+  tx_hash: string | null;
+  merkle_root: string | null;
+  is_revoked: boolean;
+  crypto_mode: string;
+  is_compromised: boolean;
+}
+
+export interface LedgerPayload {
+  signers: Record<string, unknown>;
+  blocks: LedgerBlock[];
+  total: number;
+  is_super_admin: boolean;
+}
+
+/** Files over ~3.5MB skip the raw upload: the browser sends this sample prefix
+ *  plus the FULL-file digest, keeping the request under the platform cap. */
+export const LARGE_FILE_SAMPLE_BYTES = 2 * 1024 * 1024;
+
+export function getStats() {
+  return request<Stats>("/api/stats");
+}
+
+export function verifyFile(file: Blob, filename: string, clientHash?: string) {
+  const fd = new FormData();
+  fd.append("file", file, filename);
+  if (clientHash) fd.append("client_hash", clientHash);
+  return request<VerifyResult>("/api/verify", { method: "POST", body: fd });
+}
+
+export function verifyText(rawText: string) {
+  const fd = form({ raw_text: rawText });
+  return request<VerifyResult>("/api/verify", { method: "POST", body: fd });
+}
+
+/** Ledger-only check: re-verify a digest with no uploaded content. */
+export function verifyHash(hash: string) {
+  const fd = form({ client_hash: hash });
+  return request<VerifyResult>("/api/verify", { method: "POST", body: fd });
+}
+
+export function getBroadcasts(limit = 200) {
+  return request<{ broadcasts: Broadcast[]; authed: boolean }>(`/api/broadcasts?limit=${limit}`);
+}
+
+export function deleteBroadcast(fileHash: string) {
+  return request<{ status: string }>("/api/broadcasts/delete", {
+    method: "POST",
+    body: form({ file_hash: fileHash }),
+  });
+}
+
+export function createBroadcast(title: string, urgency: string, message: string) {
+  return request<{ ok: boolean; status: string; file_hash: string }>(
+    "/api/broadcasts/create",
+    { method: "POST", body: form({ broadcast_title: title, urgency_level: urgency, message }) },
+  );
+}
+
+export function getAnalytics() {
+  return request<AnalyticsPayload>("/api/analytics");
+}
+
+/** One round trip for the whole dashboard (tallies + latency + quota). */
+export function getAnalyticsSummary() {
+  return request<AnalyticsSummary>("/api/analytics/summary");
+}
+
+export function getLedger(limit?: number, offset?: number) {
+  const params = new URLSearchParams();
+  if (limit != null) params.set("limit", String(limit));
+  if (offset) params.set("offset", String(offset));
+  const q = params.toString();
+  return request<LedgerPayload>(`/api/ledger${q ? `?${q}` : ""}`);
 }

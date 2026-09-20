@@ -4,15 +4,26 @@
 // (Google sign-in gate; signed-out visitors see the login screen).
 // ============================================================================
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth, useToast } from "./app/state";
 import { useExplain } from "./app/explain";
 import { useTheme } from "./app/theme";
 import { useGlobalReveals } from "./app/motion";
+import { prefetchAnalyticsSummary } from "./app/analyticsCache";
 import { initials } from "./app/util";
-import { IconMoon, IconQuestion, IconSun } from "./components/ui";
+import { IconBar, IconMoon, IconQuestion, IconShield, IconSun } from "./components/ui";
 import ProjectChatbot from "./components/ProjectChatbot";
 import { AuthorityView } from "./views/AuthorityView";
+import { PublicView } from "./views/PublicView";
+import { AnalyticsView } from "./views/AnalyticsView";
+
+type ViewKey = "desk" | "public" | "analytics";
+
+const NAV_TABS: { key: ViewKey; label: string; icon: ReactNode }[] = [
+  { key: "desk", label: "Screening Desk", icon: <IconShield size={13} /> },
+  { key: "public", label: "Verify & Notices", icon: <IconShield size={13} /> },
+  { key: "analytics", label: "Analytics", icon: <IconBar size={13} /> },
+];
 
 function BrandMark() {
   // A checkpost seal: a passport-style clipped shield in the seal colour,
@@ -151,6 +162,25 @@ function StatusBand() {
   );
 }
 
+function NavTabs({ view, onView }: { view: ViewKey; onView: (v: ViewKey) => void }) {
+  return (
+    <nav className="shell nav-tabs" aria-label="Console sections">
+      {NAV_TABS.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          className={`nav-tab${view === t.key ? " nav-tab--active" : ""}`}
+          onClick={() => onView(t.key)}
+          aria-pressed={view === t.key}
+        >
+          {t.icon}
+          <span>{t.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 function SiteFooter() {
   return (
     <footer className="site-footer">
@@ -163,20 +193,34 @@ function SiteFooter() {
 }
 
 export function App() {
-  // Scroll-reveals for the console view.
-  useGlobalReveals("authority");
+  const [view, setView] = useState<ViewKey>("desk");
+
+  // Scroll-reveals re-bind for the active section.
+  useGlobalReveals(view);
+
+  // Prefetch the analytics payload once at load so the tab opens instantly.
+  useEffect(() => {
+    void prefetchAnalyticsSummary();
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-  }, []);
+  }, [view]);
+
+  const openView = (v: ViewKey) => {
+    setView(v);
+  };
 
   return (
     <div className="app">
       <ScrollProgress />
       <TopBar />
+      <NavTabs view={view} onView={openView} />
 
       <main className="shell app__main">
-        <AuthorityView />
+        {view === "desk" && <AuthorityView />}
+        {view === "public" && <PublicView />}
+        {view === "analytics" && <AnalyticsView />}
       </main>
 
       <StatusBand />

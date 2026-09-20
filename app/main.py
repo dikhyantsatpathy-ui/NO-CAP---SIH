@@ -23,6 +23,7 @@ import io
 import json
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -32,7 +33,7 @@ from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy import create_engine, Column, String, Integer, Text, Float, text, event
+from sqlalchemy import create_engine, Column, String, Integer, Text, Float, text, event, func
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import IntegrityError
 # --- SECURITY DEPENDENCIES ---
@@ -925,6 +926,7 @@ class ScreeningReport(Base):
     verdict = Column(String, nullable=False)         # CLEAR | REVIEW | FLAGGED
     risk_score = Column(Integer, nullable=False)
     confidence = Column(Float, nullable=False)
+    latency_ms = Column(Integer, nullable=True)      # end-to-end screening latency
     extracted_fields = Column(Text, nullable=False)  # masked JSON
     signals = Column(Text, nullable=False)           # reasons JSON
     ai_detection = Column(Text, nullable=True)       # detector snapshot JSON
@@ -949,6 +951,29 @@ class WatchlistEntry(Base):
     reason = Column(String, nullable=True)
     added_by = Column(String, nullable=False)
     created_at = Column(String, nullable=False)
+
+
+class NoticeBroadcast(Base):
+    """A signed authority notice on the public bulletin. Zero-storage: the row
+    holds only the digest (file_hash), the notice text, and the issuing
+    officer's verified identity — no uploaded media, no raw payload bytes."""
+    __tablename__ = "notice_broadcasts"
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    urgency = Column(String, nullable=False)         # CRITICAL | HIGH | ADVISORY
+    content = Column(Text, nullable=False)
+    signer = Column(String, nullable=False)          # issuing officer's name
+    signer_email = Column(String, index=True, nullable=False)
+    institution = Column(String, nullable=True)
+    designation = Column(String, nullable=True)
+    timestamp = Column(String, nullable=False)       # "YYYY-MM-DD HH:MM:SS UTC"
+    file_hash = Column(String, index=True, unique=True, nullable=False)
+    signature = Column(String, nullable=True)        # digest-based record marker
+    ipfs_cid = Column(String, nullable=True)
+    media_type = Column(String, nullable=True)
+    media_name = Column(String, nullable=True)
+    has_media = Column(Integer, nullable=False, default=0)
+    is_revoked = Column(Integer, nullable=False, default=0)  # soft retraction
 
 try:
     Base.metadata.create_all(bind=engine)
@@ -979,6 +1004,9 @@ _MIGRATIONS = [
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS previous_hash VARCHAR;",
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS ledger_hash VARCHAR;",
     "CREATE INDEX IF NOT EXISTS ix_screening_reports_ledger ON screening_reports(ledger_hash);",
+    # Restored public surface: notice-board timeline + per-report screening latency.
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS latency_ms INTEGER;",
+    "CREATE INDEX IF NOT EXISTS ix_notice_broadcasts_ts ON notice_broadcasts(timestamp);",
 ]
 
 
@@ -1006,6 +1034,19 @@ except Exception as e:
     # best-effort, same as create_all above — never abort startup.
     print(f"[startup] migration pass skipped ({type(e).__name__}): {e}")
 print("[startup] schema migration pass complete.")
+
+# SQLite rejects "ADD COLUMN IF NOT EXISTS", so the latency_ms bound to an
+# EXISTING screening_reports table would never land from the list above. Detect
+# the column via PRAGMA and add it once, idempotently.
+if _IS_SQLITE:
+    try:
+        with engine.connect() as conn:
+            cols = [r[0] for r in conn.execute(text("PRAGMA table_info(screening_reports)")).fetchall()]
+            if "latency_ms" not in cols:
+                conn.execute(text("ALTER TABLE screening_reports ADD COLUMN latency_ms INTEGER"))
+                conn.commit()
+    except Exception as e:
+        print(f"[startup] SQLite latency_ms column skipped ({type(e).__name__}): {e}")
 
 
 # --- Neon (serverless Postgres) pauses after ~5 min of idle; the FIRST request
@@ -2150,6 +2191,413 @@ async def verify_liveness(
     from forensics import verify_webcam_liveness
     result = verify_webcam_liveness(raw_frames, challenge=challenge, client_meta=meta)
     return result
+
+
+# ============================================================================
+# Public provenance & analytics — the original NoCap public layer, re-based on
+# the SIH26188 screening ledger. Zero-storage discipline holds: aggregates and
+# digests only, no raw bytes, no PII.
+# ============================================================================
+
+@app.get("/api/stats")
+@limiter.limit("300/minute")
+def public_stats(request: Request):
+    """Public headline counters: screening records bound into the trusted ledger
+    and the distinct registered officers who authored them. Aggregates only."""
+    with get_db() as db:
+        docs = db.query(func.count(ScreeningReport.id)).scalar() or 0
+        issuers = (
+            db.query(func.count(func.distinct(ScreeningReport.screener)))
+            .filter(ScreeningReport.screener.isnot(None),
+                    ScreeningReport.screener != "evaluator@ssb.gov.in")
+            .scalar()
+            or 0
+        )
+    return {"signed_docs": docs, "trusted_issuers": issuers}
+
+
+def _screening_verdict_kind(verdict: str, adjudication):
+    """Map a screening (CLEAR|REVIEW|FLAGGED + adjudication) to the legacy public
+    VerdictKind vocabulary. A supervised CONFIRMED_FRAUD overrides a CLEAR."""
+    if adjudication == "CONFIRMED_FRAUD":
+        return "PROVEN_FAKE"
+    if adjudication == "CLEARED":
+        return "AUTHENTIC"
+    if adjudication == "INCONCLUSIVE":
+        return "UNSIGNED"
+    if verdict == "CLEAR":
+        return "AUTHENTIC"
+    if verdict == "FLAGGED":
+        return "PROVEN_FAKE"
+    return "UNSIGNED"
+
+
+def _verify_screening_report(row) -> dict:
+    """Replay a screening record as the legacy VerifyResult shape."""
+    kind = _screening_verdict_kind(row.verdict, row.adjudication)
+    reasons = _safe_json(row.signals) or []
+    reasons = [str(r) for r in reasons][:8]
+    ai_det = _safe_json(row.ai_detection) or {}
+    if kind == "UNSIGNED" and row.verdict == "REVIEW":
+        headline = "Screened — awaiting human adjudication"
+    elif kind == "UNSIGNED" and row.adjudication == "INCONCLUSIVE":
+        headline = "Screened — adjudicated inconclusive"
+    elif kind == "PROVEN_FAKE":
+        headline = "Proven fake — failed border screening"
+    elif kind == "AUTHENTIC":
+        headline = "Authentic — passed border screening"
+    else:
+        headline = "No record found"
+    return {
+        "verdict": kind,
+        "message": {
+            "AUTHENTIC": "Signature and screening checks passed.",
+            "PROVEN_FAKE": "Forensic and screening checks prove this is forged.",
+            "REVOKED": "The issuing authority retracted this digest.",
+            "UNSIGNED": "No clean authority record for this digest.",
+        }[kind],
+        "hash": row.file_hash,
+        "filename": row.filename,
+        "signer": (
+            {
+                "name": row.screener or "Screening Officer",
+                "institution": row.checkpoint or None,
+                "designation": None,
+                "signature_guidance": None,
+            }
+            if row.screener
+            else None
+        ),
+        "tx_hash": None,
+        "retracted": False,
+        "headline": headline,
+        "guidance": "This digest is bound into the append-only SHA-256 screening ledger. "
+                    "File a report to revisit it if you believe it is miscategorised.",
+        "forensic_leaning": "forged" if kind == "PROVEN_FAKE"
+            else ("verified" if kind == "AUTHENTIC" else "inconclusive"),
+        "forensic_tool": None,
+        "forensic_confidence": None,
+        "ai_detection": ai_det or None,
+        "ai_score": ai_det.get("ai_score"),
+        "ai_model": ai_det.get("model"),
+        "ai_provider": ai_det.get("provider"),
+        "ai_explanation": ai_det.get("explanation"),
+        "ai_suspected": ai_det.get("ai_suspected"),
+        "edited_suspected": None,
+        "likely_forged": kind == "PROVEN_FAKE",
+        "forgery_warned": kind == "PROVEN_FAKE",
+        "reasons": reasons,
+        "ledger": {
+            "found": True,
+            "hash": row.ledger_hash or row.file_hash,
+            "filename": row.filename,
+            "signed_at": row.created_at,
+            "retracted": False,
+            "revoked": False,
+            "signer_name": row.screener or None,
+            "signer_institution": row.checkpoint or None,
+            "signer_designation": None,
+            "issuer_pubkey": None,
+            "merkle_root": None,
+            "ipfs_cid": None,
+            "tx_hash": None,
+            "blockchain_explorer": None,
+        },
+        "blockchain_explorer": None,
+    }
+
+
+def _verify_notice(notice) -> dict:
+    """Replay a broadcast (issued or retracted) as the legacy VerifyResult."""
+    revoked = bool(notice.is_revoked)
+    return {
+        "verdict": "REVOKED" if revoked else "AUTHENTIC",
+        "message": ("The issuing authority revoked this digest." if revoked
+                    else "This digest matches a signed authority notice on the board."),
+        "hash": notice.file_hash,
+        "filename": notice.title or "authority notice",
+        "signer": {
+            "name": notice.signer,
+            "institution": notice.institution or None,
+            "designation": notice.designation or None,
+            "signature_guidance": None,
+        },
+        "tx_hash": None,
+        "retracted": revoked,
+        "headline": "Retracted authority notice" if revoked else "Signed authority notice",
+        "guidance": ("This digest was issued as an authority notice and later retracted; "
+                     "treat any copy as void." if revoked
+                     else "This digest is a signed authority notice. The issuing institution stands behind it."),
+        "reasons": [] if revoked else ["Signed authority broadcast — posted by the listed institution."],
+        "ledger": {
+            "found": True,
+            "hash": notice.file_hash,
+            "filename": notice.title or "authority notice",
+            "signature": notice.signature,
+            "signed_at": notice.timestamp,
+            "retracted": revoked,
+            "revoked": revoked,
+            "signer_name": notice.signer,
+            "signer_institution": notice.institution or None,
+            "signer_designation": notice.designation or None,
+            "issuer_pubkey": None,
+            "merkle_root": None,
+            "ipfs_cid": None,
+            "tx_hash": None,
+            "blockchain_explorer": None,
+        },
+        "blockchain_explorer": None,
+    }
+
+
+@app.post("/api/verify")
+@limiter.limit("240/minute")
+async def verify_digest(
+    request: Request,
+    file: UploadFile = Form(None),
+    client_hash: str = Form(""),
+    raw_text: str = Form(""),
+):
+    """Ledger replay: derive the SHA-256 of an uploaded sample / pasted text /
+    caller-supplied digest and look it up in the screening ledger and notice
+    board. Returns the classic AUTHENTIC/PROVEN_FAKE/REVOKED/UNSIGNED verdict.
+    Raw bytes are hashed in memory and never stored."""
+    if file is not None and file.filename:
+        filename = file.filename
+    elif raw_text.strip():
+        filename = "text-excerpt.txt"
+    else:
+        filename = "digest-only"
+    digest = client_hash.strip().lower()
+    if not digest:
+        if raw_text.strip():
+            digest = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+        elif file is not None:
+            data = await file.read()
+            if len(data) > 8 * 1024 * 1024:
+                raise HTTPException(status_code=413,
+                                    detail="File too large (8 MB cap) — hash it client-side and send the digest.")
+            digest = hashlib.sha256(data).hexdigest()
+    if len(digest) != 64 or not set(digest) <= set("0123456789abcdef"):
+        return {
+            "verdict": "UNSIGNED",
+            "message": "A full 64-character hex SHA-256 digest is expected.",
+            "hash": digest,
+            "filename": filename,
+            "signer": None,
+            "tx_hash": None,
+            "headline": "No valid digest supplied",
+            "guidance": "Drop the original file or paste its full SHA-256 hash.",
+            "reasons": [],
+            "ledger": {"found": False},
+            "blockchain_explorer": None,
+        }
+    with get_db() as db:
+        row = (db.query(ScreeningReport).filter_by(file_hash=digest)
+               .order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc())
+               .first())
+        if row:
+            return _verify_screening_report(row)
+        notice = db.query(NoticeBroadcast).filter_by(file_hash=digest).first()
+        if notice:
+            return _verify_notice(notice)
+    return {
+        "verdict": "UNSIGNED",
+        "message": "No matching record in the trusted screening ledger.",
+        "hash": digest,
+        "filename": filename,
+        "signer": None,
+        "tx_hash": None,
+        "headline": "No record found",
+        "guidance": "This digest is not on the ledger. It may be unofficial, unscreened, or "
+                    "created by an authority that has not recorded it yet.",
+        "reasons": [],
+        "ledger": {"found": False},
+        "blockchain_explorer": None,
+    }
+
+
+def _optional_admin_email(request: Request):
+    try:
+        return get_current_admin(request)
+    except HTTPException:
+        return None
+
+
+def _broadcast_row(b, admin):
+    mine = admin is not None and admin == b.signer_email
+    return {
+        "title": b.title,
+        "urgency": b.urgency,
+        "content": b.content,
+        "signer": b.signer,
+        "institution": b.institution or "",
+        "designation": b.designation or "",
+        "timestamp": b.timestamp,
+        "file_hash": b.file_hash,
+        "signature": b.signature,
+        "ipfs_cid": b.ipfs_cid,
+        "media_type": b.media_type or "",
+        "media_name": b.media_name or "",
+        "has_media": bool(b.has_media),
+        "is_mine": mine,
+        "can_delete": mine or (admin is not None and is_super_admin(admin)),
+    }
+
+
+@app.get("/api/broadcasts")
+@limiter.limit("120/minute")
+def list_broadcasts(request: Request, limit: int = 200):
+    """Public bulletin feed — active (non-retracted) signed notices, newest first."""
+    admin = _optional_admin_email(request)
+    rows = []
+    with get_db() as db:
+        items = (db.query(NoticeBroadcast)
+                 .filter_by(is_revoked=0)
+                 .order_by(NoticeBroadcast.timestamp.desc(), NoticeBroadcast.id.desc())
+                 .limit(max(1, min(int(limit or 200), 500)))
+                 .all())
+        rows = [_broadcast_row(b, admin) for b in items]
+    return {"broadcasts": rows, "authed": admin is not None}
+
+
+@app.post("/api/broadcasts/create")
+@limiter.limit("20/minute")
+def create_broadcast(
+    request: Request,
+    broadcast_title: str = Form(""),
+    urgency_level: str = Form("HIGH"),
+    message: str = Form(...),
+    admin: str = Depends(get_current_admin),
+):
+    """Author a signed authority notice (requires an approved officer session)."""
+    title = broadcast_title.strip()
+    if not title or not message.strip():
+        raise HTTPException(status_code=400, detail="A title and a message are required.")
+    urgency = urgency_level.strip().upper()
+    if urgency not in ("CRITICAL", "HIGH", "ADVISORY"):
+        urgency = "HIGH"
+    with get_db() as db:
+        identity = db.query(SignerIdentity).filter_by(email=admin).first()
+        name = identity.name if identity else admin
+        institution = identity.institution if identity else None
+        designation = identity.designation if identity else None
+        digest = hashlib.sha256(
+            f"{title}:{urgency}:{message}:{admin}".encode("utf-8")
+        ).hexdigest()
+        notice = NoticeBroadcast(
+            id=uuid.uuid4().hex[:16],
+            title=title[:200],
+            urgency=urgency,
+            content=message[:4000],
+            signer=name,
+            signer_email=admin,
+            institution=institution[:200] if institution else None,
+            designation=designation[:200] if designation else None,
+            timestamp=time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+            file_hash=digest,
+            signature=f"sha256:{digest[:32]}",
+            ipfs_cid=None,
+            media_type="",
+            media_name="",
+            has_media=0,
+            is_revoked=0,
+        )
+        db.add(notice)
+        db.commit()
+        return {"ok": True, "status": "notice authored", "file_hash": digest}
+
+
+@app.post("/api/broadcasts/delete")
+@limiter.limit("30/minute")
+def retract_broadcast(
+    request: Request,
+    file_hash: str = Form(...),
+    admin: str = Depends(get_current_admin),
+):
+    """Retract a notice. Only its author or a super admin may revoke it; the row
+    (and its digest) stays on record so the REVOKED state is replayable."""
+    with get_db() as db:
+        b = db.query(NoticeBroadcast).filter_by(file_hash=file_hash.strip().lower()).first()
+        if not b:
+            raise HTTPException(status_code=404, detail="Notice not found — already retracted?")
+        if not (b.signer_email == admin or is_super_admin(admin)):
+            raise HTTPException(status_code=403, detail="Only the author or a super admin can retract this notice.")
+        b.is_revoked = 1
+        db.commit()
+        return {"status": "retracted", "file_hash": file_hash}
+
+
+def _analytics_payload() -> dict:
+    """Aggregated verdict mix + latency (avg/min/max) from the screening ledger.
+    Aggregates only — never any PII."""
+    stats = {"AUTHENTIC": 0, "PROVEN_FAKE": 0, "REVOKED": 0, "UNSIGNED": 0}
+    latencies = []
+    with get_db() as db:
+        for r in db.query(ScreeningReport).all():
+            kind = _screening_verdict_kind(r.verdict, r.adjudication)
+            if kind != "REVOKED":
+                stats[kind] = stats.get(kind, 0) + 1
+            lm = getattr(r, "latency_ms", None)
+            if isinstance(lm, int) and lm and lm > 0:
+                latencies.append(lm)
+        stats["REVOKED"] = (db.query(func.count(NoticeBroadcast.id))
+                            .filter(NoticeBroadcast.is_revoked == 1).scalar() or 0)
+    latency = None
+    if latencies:
+        latency = {
+            "avg_ms": int(sum(latencies) / len(latencies)),
+            "min_ms": min(latencies),
+            "max_ms": max(latencies),
+            "samples": len(latencies),
+        }
+    return {"stats": stats, "latency": latency, "providers": {}}
+
+
+@app.get("/api/analytics")
+def public_analytics(request: Request):
+    return _analytics_payload()
+
+
+@app.get("/api/analytics/summary")
+def public_analytics_summary(request: Request):
+    return {"analytics": _analytics_payload(), "usage": None, "cached": False}
+
+
+@app.get("/api/ledger")
+def public_ledger(request: Request, limit: int = 50, offset: int = 0):
+    """Recent screening-records list for signed-in officers (AnalyticsView).
+    The overall figures stay public; the identifiable recent stream requires a
+    session, exactly like the original console."""
+    admin = _optional_admin_email(request)
+    if admin is None:
+        return {"signers": {}, "blocks": [], "total": 0, "is_super_admin": False}
+    with get_db() as db:
+        total = db.query(func.count(ScreeningReport.id)).scalar() or 0
+        rows = (db.query(ScreeningReport)
+                .order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc())
+                .offset(max(int(offset or 0), 0))
+                .limit(min(int(limit or 50), 200))
+                .all())
+    blocks = [{
+        "id": r.id,
+        "signer_email": r.screener or "",
+        "signer_name": r.screener or "Screening Officer",
+        "signer_institution": r.checkpoint or "",
+        "signer_designation": "",
+        "filename": r.filename,
+        "file_hash": r.file_hash,
+        "sig_hex": r.ledger_hash or "",
+        "timestamp": r.created_at,
+        "ipfs_cid": "",
+        "tx_hash": None,
+        "merkle_root": None,
+        "is_revoked": r.adjudication == "CONFIRMED_FRAUD" and r.verdict == "FLAGGED",
+        "crypto_mode": "sha256-chain",
+        "is_compromised": False,
+    } for r in rows]
+    return {"signers": {}, "blocks": blocks, "total": total,
+            "is_super_admin": is_super_admin(admin)}
 
 
 

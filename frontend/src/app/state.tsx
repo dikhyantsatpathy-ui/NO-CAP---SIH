@@ -120,3 +120,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   return useContext(AuthContext);
 }
+
+// ----------------------------------------------------------------------------
+// Analytics metric recording (session memory + local history in localStorage)
+// ----------------------------------------------------------------------------
+
+const EMPTY_METRICS: Record<string, number> = {
+  AUTHENTIC: 0,
+  PROVEN_FAKE: 0,
+  REVOKED: 0,
+  UNSIGNED: 0,
+};
+const LOCAL_METRICS_KEY = "nocap_metrics_local";
+
+export type MetricMap = Record<string, number>;
+
+function readLocalMetrics(): MetricMap {
+  try {
+    return { ...EMPTY_METRICS, ...JSON.parse(localStorage.getItem(LOCAL_METRICS_KEY) || "{}") };
+  } catch {
+    return { ...EMPTY_METRICS };
+  }
+}
+
+/** Session counters live in a ref so React re-renders are not required. */
+const sessionMetrics: MetricMap = { ...EMPTY_METRICS };
+
+export function recordMetric(verdict: string) {
+  sessionMetrics[verdict] = (sessionMetrics[verdict] || 0) + 1;
+  const local = readLocalMetrics();
+  local[verdict] = (local[verdict] || 0) + 1;
+  localStorage.setItem(LOCAL_METRICS_KEY, JSON.stringify(local));
+}
+
+export function getSessionMetrics(): MetricMap {
+  return { ...sessionMetrics };
+}
+
+export function getLocalMetrics(): MetricMap {
+  return readLocalMetrics();
+}
