@@ -3,13 +3,13 @@ Codebase-backed context for the nocap guide chatbot.
 
 Scans the project's own repository (lazily, cached in memory) and builds an authoritative,
 full-visibility database of every source file, configuration, database model, API route,
-frontend component, cryptographic routine, and documentation guide.
+frontend component, screening pipeline, and documentation guide.
 
 Every /api/chat query receives the COMPLETE CODEBASE DATABASE in Gemini's 1-million-token
 context window. Files most relevant to the query are prioritized at the top of the context
 block right after the Architectural Blueprint, followed by the rest of the repository.
 Every file is injected with 1-based line numbers, allowing the AI to pinpoint exact lines
-(e.g., `app/main.py:1124`, `frontend/src/components/VerdictCard.tsx:42`).
+(e.g., `app/main.py:1124`, `frontend/src/views/AuthorityView.tsx:42`).
 """
 
 import os
@@ -175,28 +175,23 @@ def _architecture_blueprint() -> str:
     return (
         "### SYSTEM ARCHITECTURE BLUEPRINT & REPOSITORY MAP:\n"
         "The project is structured into clear architectural layers:\n\n"
-        "1. **Core Backend (`app/main.py`)**: Built with FastAPI & SQLAlchemy, organized into 8 strict Columns:\n"
-        "   - Column 1 (Env & DB Config): DB engines (PostgreSQL / SQLite fallback), pooling, secrets.\n"
-        "   - Column 2 (Database Models): `LedgerBlock`, `AuthorityKey`, `RevocationEntry`, `WatchlistEntry`, `AuditLog`.\n"
-        "   - Column 3 (Cryptography & KMS Vault): ECDSA secp256k1 signing, AES-256-GCM vault key encryption, HKDF key derivation.\n"
-        "   - Column 4 (Forensics & Web3 Anchoring): Merkle tree calculation, Sepolia/Polygon L2 anchor broadcasts (`NOCAP_ROOT:<root>`).\n"
-        "   - Forensics Engine: ELA (Error Level Analysis), copy-move detector, JPEG ghosting, metadata traps (ID3/EXIF/PDF).\n"
-        "   - Column 5 (FastAPI Base Routes): CORS, health checks, rate limiting, static file serving.\n"
-        "   - Column 6 (Signing & Verification Engine): `/api/sign`, `/api/verify`, `/api/kill-switch` (authority revocation cascade).\n"
-        "   - Emergency Notice Board: Public signed broadcasts & authority retractions.\n"
-        "   - Column 7 (System Commands & Web3 Sync): Merkle sync, blockchain audit verification.\n"
-        "   - Column 8 (Telemetry & Analytics): Verification metrics, fraud attempt tracking, daily counts.\n"
-"   - Screening Desk (MHA SIH26188): `/api/screen/document`, watchlist lookup, ICAO 9303 MRZ check digits.\n"
-         "   - AI Chatbot: `/api/chat` backed by full-codebase Gemini ingestion with line-numbered citations.\n\n"
-         "2. **Forensic Identity Screening Desk (`app/screening.py`)**:\n"
-         "   - Deterministic identifier validation: Passport (ICAO 9303 TD3 MRZ check digits), PAN/DL/Voter-ID structure rules.\n"
+        "1. **Core Backend (`app/main.py`)**: Built with FastAPI & SQLAlchemy, organized into strict Columns:\n"
+        "   - Env & DB Config: DB engines (PostgreSQL / SQLite fallback), pooling, secrets, OAuth sign-in gate.\n"
+        "   - Database Models: `SignerIdentity` (officer profile + post/institution role), `ScreeningReport` (immutable screening pass), `WatchlistEntry` (hash-only identifier watchlist).\n"
+        "   - AI-content detection layer: heuristic + cloud + self-hosted ONNX detectors folded into `detect_image()` with a document-page pre-check.\n"
+        "   - FastAPI Base Routes: CORS, security headers, rate limiting, static file serving, Google login/logout/me, super-admin role assignment.\n"
+        "   - Forensic metadata engine: reads EXIF/ID3/PDF metadata to name the editing app or AI generator that produced a file.\n"
+        "   - Screening Desk (MHA SIH26188): `/api/screen`, `/api/screen/queue`, `/api/screen/reports/{id}`, adjudication, watchlist add/remove, shift export, syndicate alerts, evidentiary dossier (printable HTML).\n"
+        "   - AI Chatbot: `/api/chat` backed by full-codebase Gemini ingestion with line-numbered citations.\n\n"
+        "2. **Forensic Identity Screening Desk (`app/screening.py`)**:\n"
+        "   - Four explainable modules per pass: M1 OCR extraction (`extraction.py`), M2 document validation incl. ICAO 9303 MRZ check digits / PAN-DL-Voter-ID rules (`validation.py`, `identity.py`, `mrz.py`), M3 tampering & AI forensics (`tampering.py`, `forensics.py`, `detectors/`), M4 face comparison against the live-frame capture (`face.py`, `face_match.py`).\n"
         "   - Multi-provider AI & heuristic content detection (Sightengine, local ONNX, frequency heuristics).\n"
         "   - Privacy-preserving watchlist matching using SHA-256 digests over normalized identifiers (no raw IDs stored).\n\n"
         "3. **Frontend Application (`frontend/src/`)**:\n"
-        "   - `App.tsx`: Main shell, tab navigation, explain-mode toggle, responsive topbar.\n"
-        "   - Views: `PublicView.tsx` (verification portal & notice board), `AuthorityView.tsx` (signing desk, kill-switch, broadcasts), `AnalyticsView.tsx` (telemetry & metrics).\n"
-        "   - Components: `VerifyPanel.tsx` (drag-and-drop verification), `VerdictCard.tsx` (verdict rendering), `NoticeBoard.tsx` (signed alerts), `NetworkMap.tsx`, `Charts.tsx`, `ProjectChatbot.tsx` (AI guide).\n"
-        "   - Utilities: `api.ts` (API client), `explain.tsx` (interactive UI guidance tooltips), `knowledge.ts` (curated offline fallback).\n\n"
+        "   - `App.tsx`: Main shell, explain-mode toggle, responsive topbar.\n"
+        "   - View: `AuthorityView.tsx` (Google sign-in gate, screening desk, shift export, watchlist, role directory, dossier).\n"
+        "   - Components: `ScreeningDesk.tsx` pieces, `ProjectChatbot.tsx` (AI guide), role directory.\n"
+        "   - Utilities: `api.ts` (API client), `app/state.tsx` (auth session + toasts), `explain.tsx` (interactive UI guidance tooltips), `knowledge.ts` (curated offline fallback), `specimens.ts` (sample documents for demo passes).\n\n"
         "4. **Documentation & Study Guides (`scripts/`, `README.md`)**:\n"
         "   - Comprehensive deep-dives: `THE_COMPLETE_GUIDE.md`, `BACKEND_STUDY_GUIDE.md`, `CODE_WALKTHROUGH.md`, `SIH_PRESENTATION.md`, `MHA_SCREENING.md`.\n"
     )
@@ -232,7 +227,7 @@ def codebase_context(question: str) -> str:
         "identity screening algorithms, verification pipelines, configuration, and documentation "
         "guides is included in full below with 1-based line numbers. "
         "Every single file is accessible to you. When answering, search and cite exact file paths "
-        "and line numbers (e.g. `app/main.py:1124-1140` or `frontend/src/components/VerdictCard.tsx:35`). "
+        "and line numbers (e.g. `app/main.py:1124-1140` or `frontend/src/views/AuthorityView.tsx:35`). "
         "Be technically rigorous, precise, and directly quote code snippets when explaining logic.\n\n"
         + "\n\n".join(parts)
     )

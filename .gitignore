@@ -32,6 +32,16 @@ data/models/
 data/datasets/
 models/
 
+# ---- YOLO training corpora & artifacts (local GPU runs, never committed) ----
+data/AADHAR/
+data/IDcard/
+data/card_synth/
+data/logs/
+runs/
+weights/
+*.pt
+*.onnx
+
 # ---- Study scripts & local helper tools (kept local, not on GitHub) ----
 scripts/
 

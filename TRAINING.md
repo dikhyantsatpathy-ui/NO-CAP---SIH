@@ -1,4 +1,4 @@
-# Training Runbook — No Cap identity & deepfake models
+# Training Runbook — fake-document AI & ROI detector models
 
 Everything you run, in order, for training a replacement fake-image classifier
 (or the optional ROI detector), with the exact commands, the dataset/"database"
@@ -183,6 +183,6 @@ is absent (which is the default commit state).
   the ONNX file via `AI_DETECTOR_MODEL_URL`, never a venv-packaged giant.
 - **EPIC/Voter ID**: ECI publishes the structure (3-letter FUSN + 7 digits,
   7th digit = checksum) but **not** the checksum formula — the suite
-  intentionally validates structure + a live electoral-roll name match via the
-  `epic_ec` registry adapter rather than a fabricated checksum (see
-  `VERIFICATION_PROVIDERS.md`). Same honesty rule as the PAN check character.
+  intentionally validates structure + format rules only rather than a
+  fabricated checksum (same honesty rule as the PAN check character — it is
+  computed internally, never claimed from a live registry).

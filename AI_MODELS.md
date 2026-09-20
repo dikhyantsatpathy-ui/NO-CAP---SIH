@@ -1,7 +1,7 @@
-# AI Models - No Cap identity suite & deepfake detection
+# AI Models — fake-document & face-AI detectors
 
 This file is the authoritative inventory of every trained model that touches the
-verification pipeline, how each is wired in, and **how to train/replace your own**.
+screening pipeline, how each is wired in, and **how to train/replace your own**.
 It intentionally ships **no weight files** - the repo stays under Vercel's 128 MB
 serverless bundle and git stays clean. Weights appear at runtime (auto-download, or
 a path you set) and are gitignored (`data/models/`, `app/models/`).
@@ -16,7 +16,7 @@ a path you set) and are gitignored (`data/models/`, `app/models/`).
 | 2 | **YOLOv8-Nano ROI detector** | Find face/document/QR/MRZ/signature zones on IDs | Optional (drop-in, ~6 MB) | `app/yolo_roi.py`, `app/models/yolov8n.onnx` | ONNX file present + `onnxruntime` |
 | 3 | Sightengine (cloud API) | AI-image detection | No (hosted, proprietary) | `app/main.py` -> `sightengine_detect()` | `AI_DETECTOR_PROVIDER=sightengine` + key |
 | 4 | Heuristic v2 (rule engine) | Cheap AI/edit flags + AI-tool attribution | No | `app/main.py` (document-aware pre-check, metadata tables) | always |
-| 5 | Identity suite heuristics | ELA, checksums, Verhoeff/MRZ, crop analysis | No | `app/forensics.py`, `app/identity.py` | always |
+| 5 | Screening heuristics | ELA, checksums, MRZ check-digits, crop analysis, serial plausibility | No | `app/forensics.py`, `app/identity.py`, `app/validation.py` | always |
 
 The identity-suite forensics calls `app/yolo_roi.py` for the **ROI boxes** you see
 overlaid on the document photo (`app/forensics.py:234`), so model #2 feeds directly
@@ -36,8 +36,7 @@ gracefully without it.
   synthetic images generated with Stable Diffusion), Apache-2.0.
 - **ONNX export:** `onnx-community/ai-image-detection-ONNX` (what this repo
   downloads), Apache-2.0.
-- **Lineage:** google ViT-Base -> dima806 CIFAKE fine-tune -> capcheck repack ->
-  onnx-community ONNX export.
+- **Lineage:** google ViT-Base -> dima806 CIFAKE fine-tune -> onnx-community ONNX export.
 
 ### 2.2 Input / output contract (this repo)
 
@@ -278,4 +277,4 @@ deploy bundle and bloat the repo. Standard options instead:
 - **"What are its limits?"** -> Trained mostly on pre-2024 generators;
   weak on heavily compressed images and images under 224x224; never make a
   consequential decision on AI-score alone - pair the model score with the
-  cryptographic/forensic verdicts (the suite does).
+  forensic/validation verdicts (the suite does).

@@ -2,11 +2,11 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title nocap (Veri_source) launcher
+title SSB Border Screening (SIH26188) launcher
 
 echo.
-echo   [nocap] Provenance-ledger demo launcher
-echo   -----------------------------------------
+echo   [SSB] Border screening console launcher
+echo   ---------------------------------------
 echo.
 
 set "PY=python"

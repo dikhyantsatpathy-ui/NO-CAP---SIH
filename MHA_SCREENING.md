@@ -1,9 +1,9 @@
 # SIH26188 — AI-Based Fake Identity & Document Screening (MHA) — BUILD STATUS / HANDOFF
 
 > **Status: DONE** — the four PS modules are built, Aadhaar is fully stripped,
-> follow-on screening capabilities are integrated, the suite is green
-> (96 tests), both remotes are pushed, and the bundle deploys live to
-> https://no-cap-tau.vercel.app.
+> the old "No Cap" provenance/ledger engine (sign/verify/blockchain/IPFS) has
+> been **removed entirely**, follow-on screening capabilities are integrated,
+> the suite is green (95 tests), and the console is a single screening view.
 > This file is the accuracy-grounded twin of `frontend/src/knowledge.ts`
 > (which cites `MHA_SCREENING.md` as its source). Update it whenever the desk
 > changes so the next agent can trust it.
@@ -37,18 +37,18 @@ identity impersonation must be caught.
 > about "monitor and manage police assets" — a scrape artifact from a different
 > PS. Ignore it. The four modules + risk score + digital trail ARE the criteria.
 
-## 2. THE REPO — TWO SOULS, ONE SHELL
+## 2. THE REPO — ONE CONSOLE, ONE SOUL
 
 Repo `D:\mos\crypto`. FastAPI backend in `app/`, single-file React bundle in
 `frontend/src` compiled to `app/static/index.html` (Vercel serves that
 bundle). Windows/PowerShell environment — see §11.
 
-The repo has two overlapping "souls":
-1. **No Cap — provenance/ledger engine** (deepfake/vault/web3 lexicon). Alive
-   and untouched by this build: `/api/sign*`, `/api/verify*`, ledger,
-   rollback, notice board, analytics, AI chatbot (`/api/chat`).
-2. **The identity-document screening desk (this project)** — the four modules
-   below, orchestrated by `run_screening`.
+The repo **is** the identity-document screening desk: the four modules below,
+orchestrated by `run_screening`, behind a Google-SSO officer console. The old
+"No Cap" provenance engine (media signing, broadcasts, ledger, blockchain
+anchoring, IPFS, public verification, analytics) was deleted from the backend,
+frontend, migrations, and this documentation in the latest pass — do not
+resurrect it.
 
 ## 3. WHAT IS DONE (git history)
 
@@ -84,10 +84,10 @@ The repo has two overlapping "souls":
     **PAN** (structure + PAN check-character), **Voter-ID/EPIC**
     (format). Anything else = format rules only, no fake "REGISTERED" claims.
 4. **Digital trail = plain DB audit** — masked `ScreeningReport` rows +
-    watchlist + opener attribution + supervisory adjudication. Supervisors can
-    additionally export a SHA-256-signed shift CSV or open a printable
-    HMAC-sealed dossier. No ledger anchoring for screenings (the
-    ledger's own `crypto_mode` field on blocks is unrelated — leave it).
+   watchlist + opener attribution + supervisory adjudication. Supervisors can
+   additionally export a SHA-256-signed shift CSV or open a printable
+   HMAC-sealed dossier. Screening rows keep a vestigial `ledger_status`
+   column (always `LOCAL`) — a leftover field, not a ledger.
 5. **Zero-storage and no silent egress:** raw bytes/text/photos are read,
     used, discarded. DB stores only SHA-256 hashes, masked identifiers, and
     explainable signals. OCR stays local: if tesseract is unavailable, OCR
@@ -115,8 +115,9 @@ Supporting engines (unchanged, reused): `app/mrz.py` (ICAO 9303 TD1/TD2/TD3,
 `compute_mrz_check_digit`, MRZ = also visas), `app/forensics.py` (ELA,
 `image_qa`, `roi_boxes`, liveness signals, `verify_webcam_liveness`),
 `app/face_match.py` (dHash via Pillow — works on Vercel — + optional
-`FACE_EMBED_MODEL` ONNX), `app/yolo_roi.py`, `app/detectors.py` (AI/ML
-content provenance).
+`FACE_EMBED_MODEL` ONNX), `app/yolo_roi.py`, plus the AI/ML content
+provenance inlined in `app/main.py` (heuristic / Sightengine / self-hosted
+ONNX detector — the old `app/detectors` package was folded in).
 
 `app/identity.py` is now **slim**: deterministic validators
 (`verify_pan`, `verify_dl`, `verify_rc`, `verify_epic`, `verify_passport`,
@@ -145,7 +146,6 @@ rc→`driving_licence` (screening field keys); `identity.py` maps rc→`rc`
   - M3 a tampering/anomaly check failed → **+14**
   - M4 face mismatch → **+40** (strongest single signal)
   - Watchlist hit → **+60** ("reroute to a supervisory officer")
-  - Ledger: exact file AUTHENTIC → **−38**; REVOKED → **+32**
   - Declared expiry in the past fails through Module 2 and the existing
     expired-document signal; expiry within 180 days produces an
     `EXPIRING_SOON` travel-validity status and **+6**.
@@ -185,7 +185,7 @@ Screening family (all live, verified): `POST /api/screen`,
 Operational reporting routes require an admin session: shift export is
 supervisor-only and returns masked rows plus a SHA-256 digest; the dossier
 route returns a printable HTML report with an HMAC-SHA256 custody seal
-derived from the vault key. Do not describe the dossier as legally
+(master key derived). Do not describe the dossier as legally
 admissible in any jurisdiction — the code proves integrity, not legal
 admissibility.
 
@@ -195,9 +195,9 @@ Deleted (do not resurrect): `/api/identity/meta`, `/api/identity/verify`,
 `identity` for reports. Stray `IdentityCheck` class + `identity_checks`
 table model removed from code (live table row relic harmless).
 
-Provenance/ledger/auth/chat routes from the No Cap soul are untouched:
-`/api/sign*`, `/api/verify*`, `/api/ledger`, `/api/analytics*`,
-`/api/network`, `/api/stats`, `/api/chat`, `/api/admin/*`, watch-if-you-touch.
+Admin/chat routes are untouched and now the only non-screening surface:
+`/api/chat`, `/api/admin/*`. The sign/verify/ledger/analytics/network/stats
+routes were deleted — watch-if-you-touch.
 
 ## 8. FRONTEND (`frontend/src/`, ships as `app/static/index.html`)
 
@@ -231,19 +231,21 @@ Provenance/ledger/auth/chat routes from the No Cap soul are untouched:
 adjudication), `WatchlistEntry` (**identifier_hash + reason only**),
 `SignerIdentity` (officer roles, super-admin). Reporting indexes cover
 screening verdict and `(checkpoint, created_at)`; SQLite-only connections use
-WAL/normal-sync/busy-timeout/cache pragmas. Ledger blocks etc. for the No
-Cap soul. Migrations run at startup; the migration startup was fixed to run
-each statement in its own transaction (~5s import) — do not reintroduce a
-single outer transaction.
+WAL/normal-sync/busy-timeout/cache pragmas. The old ledger/verification
+models (`LedgerBlock`, `VerificationLog`, `PendingUpload`,
+`SightengineUsage`) are deleted. Migrations run at startup; the migration
+startup was fixed to run each statement in its own transaction (~5s import)
+— do not reintroduce a single outer transaction.
 
 ## 10. ENVIRONMENT (`app/main.py` reads via os.environ)
 
 Core: `DATABASE_URL`, `MASTER_VAULT_KEY`, `GOOGLE_CLIENT_ID`,
-`ALLOWED_DOMAINS`/`ALLOWED_EMAILS`/`SUPER_ADMINS`, `WEB3_RPC_URL`,
-`WALLET_PRIVATE_KEY`, `PINATA_JWT`, `BLOCKCHAIN_EXPLORER_URL`,
+`ALLOWED_DOMAINS`/`ALLOWED_EMAILS`/`SUPER_ADMINS`,
 `KEEPALIVE_INTERVAL`, `GEMINI_API_KEY` (chat only — never OCR fallback),
 `FACE_EMBED_MODEL` (face_match; unset → Pillow dHash whole-image; never
-auto-downloaded). **Removed:** all `IDV_*`,
+auto-downloaded). **Removed:** the Web3/IPFS vars
+(`WEB3_RPC_URL`, `WALLET_PRIVATE_KEY`, `PINATA_JWT`,
+`BLOCKCHAIN_EXPLORER_URL`) and all `IDV_*`,
 `DIGILOCKER_*`, `UIDAI_AADHAAR_PUBKEY_PEM`. See `.env.example`.
 `onnxruntime` remains worker-only/commented, and removed `zxing-cpp` plus
 `pyaadhaar` because no screening code imports them.
@@ -263,22 +265,22 @@ auto-downloaded). **Removed:** all `IDV_*`,
 - **Face model:** leave `FACE_EMBED_MODEL` unset in prod (whole-image dHash)
   unless you also install `onnxruntime` on the worker. Face code never
   downloads weights; tests assert that no model download occurs.
-- **Ledger `crypto_mode`** in `api.ts`/`main.py`/`AuthorityView.tsx` is the
-  provenance ledger's signature-mode field — unrelated to screening. Do not
-  remove it (grep's "crypto_mode" will keep matching it; that is expected).
+- **Screen-report `ledger_status`** is a vestigial column that always reads
+  `LOCAL` — screening is not chained. Do not remove the column from the model
+  (migrations/indexes reference it); the UI shows it as `record: LOCAL`.
 - Auto-format line endings: do not hand-edit `app/static/index.html`.
 
 ## 12. TEST & SHIP RECIPE (proven green in this integration)
 
 ```
-python -m pytest -q            # 96 passed
+python -m pytest -q            # 95 passed
 python -m pyflakes app/... tests/...   # zero warnings (do not pass requirements.txt)
 cd frontend && npm run build   # regenerates ../app/static/index.html
 git add -A && git commit -m "..." && git push origin main && git push crypto-knights main
 ```
 
 Remotes: `origin` = Veri_source.git, `crypto-knights` = Crypto-Knights.git.
-Live: https://no-cap-tau.vercel.app. Live `/api/screen`
+Live `/api/screen`
 requires an admin session cookie (anonymous POST → `{"detail":"ACCESS DENIED:
 Missing or invalid secure session cookie."}`). Tests: `test_screening.py`,
 `test_identity.py` (validators, OCR no-egress, no Aadhaar), `test_syndicate.py`
@@ -306,4 +308,7 @@ adjudication, printable dossier, or signed shift export.
   behavior before relying on bursts/clashes in live operations.
 - **Cloud OCR on Vercel** for image-only passports remains intentionally absent
   to avoid third-party PII egress; local tesseract remains the only OCR path.
-- Production-grade face embeddings (`FACE_EMBED_MODEL`) on a worker.
+- **SCRFD face detection/alignment** before embedding (the current ONNX engine
+  resizes whole images to 112x112; a detector improves real-world accuracy) —
+  the face-match integration runs ArcFace today; detection is a future
+  refinement.
