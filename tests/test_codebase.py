@@ -30,8 +30,8 @@ def test_index_scans_project_sources():
     # Real project files must be discoverable from the repo root.
     assert "app/main.py" in rels
     assert "app/screening.py" in rels
-    assert any(r.endswith("frontend/src/views/AnalyticsView.tsx") for r in rels) or any(
-        r == "frontend/src/views/AnalyticsView.tsx" for r in rels
+    assert any(r.endswith("frontend/src/views/AuthorityView.tsx") for r in rels) or any(
+        r == "frontend/src/views/AuthorityView.tsx" for r in rels
     )
     assert "README.md" in rels
 
@@ -57,7 +57,7 @@ def test_screening_question_ranks_screening():
 
 
 def test_context_includes_instruction_prefix():
-    ctx = codebase_context("how does blockchain anchoring work")
+    ctx = codebase_context("how does the ai screening engine work")
     assert ctx.startswith("Below is the ACTUAL SOURCE CODE")
     assert "FILE:" in ctx
 

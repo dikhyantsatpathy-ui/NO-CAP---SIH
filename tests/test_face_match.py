@@ -3,12 +3,31 @@ garbage stays inconclusive, base64 (QR-attr form) is accepted."""
 
 import base64
 import io
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 
 import face_match as fm  # noqa: E402
+
+_MODELPATH = Path(__file__).resolve().parent.parent / "data" / "models" / "w600k_r50.onnx"
+
+
+@pytest.fixture(autouse=True)
+def _no_model_environ():
+    """The dHash assertions below are only valid with no ONNX model configured.
+    .env may set FACE_EMBED_MODEL on real machines, so clear it around each
+    test and drop any cached ONNX session."""
+    old = os.environ.pop("FACE_EMBED_MODEL", None)
+    fm._embed_model_path = None
+    fm._embed_session = None
+    fm._embed_failed = None
+    yield
+    if old is not None:
+        os.environ["FACE_EMBED_MODEL"] = old
 
 
 def _img(kind: str) -> bytes:
@@ -90,3 +109,35 @@ def test_capabilities_shape():
     assert set(caps) == {"available", "method", "onnx_configured"}
     assert caps["available"] is True
     assert caps["method"] == "phash-dhash"  # no FACE_EMBED_MODEL in test env
+
+
+@pytest.mark.skipif(not _MODELPATH.exists(), reason="w600k_r50.onnx not downloaded")
+def test_onnx_embedding_path_when_configured():
+    """With FACE_EMBED_MODEL pointing at the ArcFace weights, the embedding
+    engine takes over (no download, no fallback) and identical portraits
+    match."""
+    os.environ["FACE_EMBED_MODEL"] = str(_MODELPATH)
+    try:
+        caps = fm.face_match_capabilities()
+        assert caps["method"] == "onnx-embedding"
+        assert caps["onnx_configured"] is True
+        out = fm.compare_faces(_img("checker"), _img("checker"))
+        assert out["method"] == "onnx-embedding"
+        assert out["match"] is True
+    finally:
+        os.environ.pop("FACE_EMBED_MODEL", None)
+
+
+def test_age_aware_adaptive_threshold_dhash():
+    """Perceptual hash matching dynamically adapts threshold when doc_age_years > 4.0."""
+    a = _img("checker")
+    out_standard = fm.compare_faces(a, a, doc_age_years=2.0)
+    assert out_standard["age_adjusted"] is False
+    assert out_standard["threshold_used"] == 8
+
+    out_aged = fm.compare_faces(a, a, doc_age_years=8.5)
+    assert out_aged["age_adjusted"] is True
+    assert out_aged["threshold_used"] > 8
+    assert "age-adapted threshold" in out_aged["detail"]
+    assert out_aged["match"] is True
+
