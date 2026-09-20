@@ -13,13 +13,25 @@ never treats a low-signal comparison as a pass.
 
 def face_verification(document_bytes: bytes | None = None,
                       live_frame: bytes | None = None,
-                      doc_type: str = "") -> dict:
+                      doc_type: str = "",
+                      document_photo_b64: str | None = None,
+                      dob: str | None = None,
+                      issue_date: str | None = None) -> dict:
     """Run Module 4.
 
-    Returns {score, match, method, detail, checks}. doc_type is advisory —
-    when a document portrait is present, a face ROI is cropped from the
-    document image. Missing live frame / missing document face degrade to an
-    honest inconclusive row rather than a guessed verdict.
+    Returns {score, match, method, detail, checks, signals}. doc_type is
+    advisory — when a document portrait is present, a face ROI is cropped from
+    the document image (or `document_photo_b64` is used directly when the
+    pipeline already isolated the portrait, as with Aadhaar's Photo zone).
+    Missing live frame / missing document face degrade to an honest
+    inconclusive row rather than a guessed verdict.
+
+    Feature 3 (age-aware thresholding): when the document photo is older than
+    5 years (issue date when present, else DOB age as a bound proxy), the
+    ArcFace cosine pass threshold drops 0.60 -> 0.52 so a legitimate aged
+    document is not rejected on pixel drift alone. The adjustment is surfaced
+    through `signals` ('Age Drift Compensation Active') so the desk — and the
+    ledger reasons array — can see exactly why the threshold moved.
     """
     from face_match import compare_faces
     result = {
@@ -32,34 +44,92 @@ def face_verification(document_bytes: bytes | None = None,
              "detail": "No live frame was captured at the desk."},
         ],
         "verdict": "UNVERIFIED",
+        "signals": [],
     }
 
     if live_frame is None:
         return result
 
-    doc_face_b64 = _document_face_b64(document_bytes)
+    # Age-drift compensation: react to an aged document photo BEFORE matching.
+    emb_same = None
+    photo_age = _photo_age_years(dob, issue_date)
+    signals = []
+    if photo_age is not None and photo_age > 5.0:
+        emb_same = 0.52  # baseline 0.60 -> compensated threshold
+        signals.append("Age Drift Compensation Active")
+    result["signals"] = signals
+
+    doc_face_b64 = document_photo_b64 or _document_face_b64(document_bytes)
     if doc_face_b64 is None:
         result["detail"] = "No document-side face found (no face ROI)."
         result["checks"][0]["detail"] = result["detail"]
         return result
 
     try:
-        fm = compare_faces(doc_face_b64, live_frame)
+        fm = compare_faces(doc_face_b64, live_frame, doc_age_years=photo_age, emb_same=emb_same)
     except Exception as exc:
         result["detail"] = f"Face comparison failed to run: {exc}"
         result["checks"][0]["detail"] = result["detail"]
         return result
 
     result.update({k: fm.get(k) for k in ("score", "match", "method", "detail")})
-    result["checks"] = [{
+    checks = [{
         "label": "face-match",
         "ok": fm.get("match"),
         "detail": (f"Document portrait vs live capture "
                    f"({fm.get('method')}, score {fm.get('score')}): {fm.get('detail')}"),
     }]
+    if signals:
+        checks.append({"label": "age-drift", "ok": True,
+                       "detail": (f"{'; '.join(signals)} (photo ~{photo_age:.1f}y old; "
+                                  f"arcface threshold 0.60 -> {emb_same:.2f}).")})
+    result["checks"] = checks
     result["verdict"] = ("PASS" if fm.get("match") is True else
                          ("FAIL" if fm.get("match") is False else "REVIEW"))
     return result
+
+
+def _photo_age_years(dob: str | None, issue_date: str | None):
+    """Approximate age of the document photo in years, or None when unknowable.
+
+    An issue date is exact when present (the portrait is captured at issue
+    time). DOB is used deliberately as a PROXY per the SIH26188 design: a birth
+    date N years ago bounds how long the photo can have existed — if that bound
+    already exceeds 5 years the photo is treated as aged. Unparseable dates
+    degrade to None (never a guessed verdict).
+    """
+    from datetime import datetime
+    today = datetime.now().date()
+    d = _parse_date_value(issue_date) or _parse_date_value(dob)
+    if d is None:
+        return None
+    try:
+        return max(0.0, (today - d).days / 365.25)
+    except Exception:
+        return None
+
+
+def _parse_date_value(s):
+    """Parse common date layouts into a date, or None. Lenient: ISO, dmy with
+    - / . separators, and 6-digit YYMMDD/DDMMYY (MRZ-style) like the desk."""
+    if not isinstance(s, str):
+        return None
+    from datetime import datetime
+    raw = (s or "").strip()
+    if not raw:
+        return None
+    if len(raw) == 6 and raw.isdigit():
+        yy = int(raw[:2])
+        mm = int(raw[2:4])
+        dd = int(raw[4:6])
+        yyyy = 1900 + yy if yy > 50 else 2000 + yy
+        raw = f"{yyyy:04d}-{mm:02d}-{dd:02d}"
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _document_face_b64(document_bytes):

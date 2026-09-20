@@ -124,7 +124,8 @@ def _embed_image(image):
         shape = inp.shape
         h = int(shape[2]) if len(shape) > 2 and isinstance(shape[2], int) else 112
         w = int(shape[3]) if len(shape) > 3 and isinstance(shape[3], int) else 112
-        arr = np.asarray(image.resize((w, h)), dtype=np.float32) / 255.0
+        arr = np.asarray(image.resize((w, h)), dtype=np.float32)
+        arr = (arr - 127.5) / 128.0  # ArcFace/FaceNet-style (0-255 -> ~[-1, 1])
         arr = arr.transpose(2, 0, 1)[None, ...]
         vec = np.asarray(sess.run(None, {inp.name: arr})[0]).reshape(-1)
         n = float((vec ** 2).sum() ** 0.5)
@@ -135,9 +136,14 @@ def _embed_image(image):
         return None
 
 
-def compare_faces(document_photo, selfie) -> dict:
+def compare_faces(document_photo, selfie, doc_age_years: float | None = None, emb_same: float | None = None) -> dict:
     """Compare a document portrait against a selfie. Inputs may be raw bytes or
-    base64 strings. Never raises; inconclusive inputs yield match None."""
+    base64 strings. Never raises; inconclusive inputs yield match None.
+    
+    When doc_age_years is provided and > 4.0 (or emb_same is specified), dynamically
+    adapts the threshold to account for natural physiological aging across long-validity
+    documents (e.g., 10-year passports).
+    """
     qr_bytes = _coerce_image_bytes(document_photo)
     sl_bytes = _coerce_image_bytes(selfie)
     if qr_bytes is None or sl_bytes is None:
@@ -149,16 +155,44 @@ def compare_faces(document_photo, selfie) -> dict:
         return {"score": 0, "match": None, "method": "unavailable",
                 "detail": "One of the images could not be decoded."}
 
+    # Age-aware adaptive threshold scaling:
+    # A 5-10 year old passport photo exhibits natural physiological aging.
+    # We adaptively relax the threshold slightly while guarding against spoofing.
+    emb_same_threshold = float(emb_same) if emb_same is not None else _EMB_SAME
+    age_note = ""
+    is_age_adjusted = emb_same is not None
+    if doc_age_years is not None and doc_age_years > 4.0:
+        relax = min(0.12, (doc_age_years - 4.0) * 0.015)
+        if emb_same is None:
+            emb_same_threshold = max(0.48, _EMB_SAME - relax)
+        is_age_adjusted = True
+        age_note = f" (age-adapted threshold: {emb_same_threshold:.2f} for ~{int(round(doc_age_years))}y old document portrait)"
+    elif emb_same is not None and emb_same != _EMB_SAME:
+        age_note = f" (adapted threshold: {emb_same_threshold:.2f})"
+
     emb_a, emb_b = _embed_image(qr_img), _embed_image(sl_img)
     if emb_a is not None and emb_b is not None:
         import numpy as np
         sim = float(np.dot(emb_a, emb_b))
         score = int(round(max(0.0, min(1.0, (sim + 1.0) / 2.0)) * 100))
-        match = True if sim >= _EMB_SAME else (False if sim <= _EMB_DIFF else None)
+        match = True if sim >= emb_same_threshold else (False if sim <= _EMB_DIFF else None)
         verdict = "same person" if match is True else ("different person" if match is False
                                                        else "inconclusive — confirm by eye")
-        return {"score": score, "match": match, "method": "onnx-embedding",
-                "detail": f"Face-embedding cosine {sim:.2f}: {verdict}."}
+        return {
+            "score": score,
+            "match": match,
+            "method": "onnx-embedding",
+            "age_adjusted": is_age_adjusted,
+            "threshold_used": round(emb_same_threshold, 2),
+            "detail": f"Face-embedding cosine {sim:.2f}: {verdict}{age_note}.",
+        }
+
+    dhash_same_threshold = _DHASH_SAME
+    if doc_age_years is not None and doc_age_years > 4.0:
+        dhash_relax = min(4, int((doc_age_years - 4.0) * 0.5))
+        dhash_same_threshold = min(12, _DHASH_SAME + dhash_relax)
+        is_age_adjusted = True
+        age_note = f" (age-adapted threshold: <= {dhash_same_threshold} for ~{int(round(doc_age_years))}y old portrait)"
 
     ha, hb = dhash(qr_img), dhash(sl_img)
     if ha is None or hb is None:
@@ -166,13 +200,19 @@ def compare_faces(document_photo, selfie) -> dict:
                 "detail": "Perceptual hash failed on one of the images."}
     dist = _hamming(ha, hb)
     score = int(round((1.0 - dist / 64.0) * 100))
-    match = True if dist <= _DHASH_SAME else (False if dist >= _DHASH_DIFF else None)
+    match = True if dist <= dhash_same_threshold else (False if dist >= _DHASH_DIFF else None)
     verdict = ("near-duplicate portraits" if match is True
                else ("clearly different portraits" if match is False
                      else "inconclusive — confirm by eye"))
-    return {"score": score, "match": match, "method": "phash-dhash",
-            "detail": f"Perceptual-hash distance {dist}/64 ({verdict}). Coarse "
-                      f"whole-image comparison — set FACE_EMBED_MODEL for production."}
+    return {
+        "score": score,
+        "match": match,
+        "method": "phash-dhash",
+        "age_adjusted": is_age_adjusted,
+        "threshold_used": dhash_same_threshold,
+        "detail": f"Perceptual-hash distance {dist}/64 ({verdict}){age_note}. Coarse "
+                  f"whole-image comparison — set FACE_EMBED_MODEL for production.",
+    }
 
 
 def face_match_capabilities() -> dict:

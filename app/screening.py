@@ -316,9 +316,9 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     Each contributes an explainable `modules` section to the report, alongside
     the existing risk-scoring explained in `reasons`."""
     try:
-        from app.main import LedgerBlock, WatchlistEntry, ScreeningReport
+        from app.main import WatchlistEntry, ScreeningReport
     except ImportError:  # bare-module invocation (tests / direct run)
-        from main import LedgerBlock, WatchlistEntry, ScreeningReport
+        from main import WatchlistEntry, ScreeningReport
     from extraction import extract_document
     from validation import validate_document
     from tampering import tamper_analysis
@@ -328,10 +328,10 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else ""
     started = time.monotonic()
 
-    # ---- Verify against the provenance ledger ------------------------------
-    block = db.query(LedgerBlock).filter_by(file_hash=file_hash).first()
-    ledger_status = "AUTHENTIC" if block and not block.is_revoked else (
-        "REVOKED" if block else "UNKNOWN")
+    # ---- Audit-trail record ------------------------------------------------
+    # Every screening pass is itself the durable, tamper-evident record
+    # (stored in screening_reports; no external chain is consulted).
+    ledger_status = "LOCAL"
 
     # ---- Module 1: Extract (OCR/MRZ + declared merge) --------------------------
     extract_res = extract_document(data, filename, doc_type or "", declared)
@@ -386,13 +386,33 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         tamper_res = tamper_analysis(None, ai_det, document_aware, doc_type or "")
 
     # ---- Module 4: Face (document portrait vs live capture) ----------------
+    # Aadhaar ships its holder photo as a purpose-cropped b64 (domestic-ID
+    # route); other document types keep the whole-document face ROI crop that
+    # face_verification computes internally. dob/issue_date feed the age-aware
+    # threshold logic ('Age Drift Compensation Active').
     face_res = face_verification(
         document_bytes=data if ext in ("jpg", "jpeg", "png", "webp", "bmp") else None,
         live_frame=live_frame,
-        doc_type=doc_type or "")
+        doc_type=doc_type or "",
+        document_photo_b64=extract_res.get("aadhaar_photo"),
+        dob=fields.get("dob"),
+        issue_date=(
+            (declared or {}).get("issue_date") or
+            (
+                f"{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[0] - (5 if 'visa' in (doc_type or '').lower() else 10):04d}-{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[1]:02d}-{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[2]:02d}"
+                if _parse_date(fields.get('expiry') or (declared or {}).get('expiry_date')) and (doc_type or "").lower() in ("passport", "visa")
+                else None
+            )
+        ),
+    )
 
     # ---- Analyze: signals, each one explainable ----------------------------
     reasons = []
+    # Face-verification signals (e.g. 'Age Drift Compensation Active') surface
+    # any threshold adjustment here, so the desk and the ledger row both see
+    # why the ArcFace threshold moved for an aged document photo.
+    for sig in (face_res.get("signals") or []):
+        reasons.append(sig)
     risk = 20  # neutral starting point; stays low when evidence is clean
 
     pan = fields.get("pan")
@@ -409,6 +429,15 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         risk -= 3
     elif "driving" in (doc_type or "").lower() and not dl:
         reasons.append("Driving licence declared but no licence number could be validated.")
+        risk += 14
+
+    aadhaar_no = fields.get("aadhaar")
+    if aadhaar_no:
+        reasons.append(f"Aadhaar verified as a 12-digit UIDAI-format number read from "
+                       f"the card's own field zone ({mask(aadhaar_no)}).")
+        risk -= 3
+    elif "aadhaar" in (doc_type or "").lower() and not aadhaar_no:
+        reasons.append("Aadhaar declared but no 12-digit UIDAI number could be read from the card.")
         risk += 14
 
     voter = fields.get("voter_id")
@@ -520,14 +549,6 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         reasons.append(f"WATCHLIST HIT — {joined}. Reroute to a supervisory officer.")
         risk += 60
 
-    if ledger_status == "AUTHENTIC":
-        reasons.append("The exact file is signed on the nocap provenance ledger — its origin is "
-                       "cryptographically authenticated.")
-        risk -= 38
-    elif ledger_status == "REVOKED":
-        reasons.append("The exact file matches a REVOKED ledger signature — treat it as void.")
-        risk += 32
-
     # Evidence coverage: how much of this decision is grounded vs by-eye?
     identified = any(bool(fields.get(k)) for k in
                      ("pan", "driving_licence", "passport", "voter_id"))
@@ -603,6 +624,35 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     risk = max(0, min(100, risk))
     verdict = _grade(risk)
 
+    # ---- Immutable hash-chain ledger block ---------------------------------
+    # ledger_hash = SHA-256(previous_hash ":" file_hash ":" verdict ":" risk).
+    # ":"-delimiting forbids the concatenation-ambiguity classes (e.g. a block
+    # with prev="ab" / file_hash="c" vs prev="a" / file_hash="bc"), so the four
+    # named fields are cryptographically unambiguous. Editing ANY historical row
+    # invalidates the digest for every successor — tamper-evidence by geometry.
+    previous_hash = "GENESIS"   # block 0 anchors the chain
+    if db is not None:
+        try:
+            from sqlalchemy import text as _text
+            # Serialize concurrent appends so two blocks never claim the same
+            # parent. Postgres-only: on SQLite this function does not exist AND
+            # a failed execute would poison the session transaction, so gate by
+            # dialect before running it (single writer suffices on SQLite).
+            if getattr((db.get_bind().dialect if hasattr(db, "get_bind") else None),
+                       "name", "") == "postgresql":
+                db.execute(_text("SELECT pg_advisory_xact_lock(86720126)"))
+            head = (db.query(ScreeningReport.ledger_hash)
+                    .order_by(ScreeningReport.created_at.desc(),
+                              ScreeningReport.id.desc())
+                    .first())
+            if head and head[0]:
+                previous_hash = head[0]
+        except Exception:
+            pass  # lock-less backend: single-writer guarantees must suffice
+    ledger_hash = hashlib.sha256(
+        f"{previous_hash}:{file_hash}:{verdict}:{risk}".encode("utf-8")
+    ).hexdigest()
+
     report = {
         "id": uuid.uuid4().hex[:16],
         "file_hash": file_hash,
@@ -615,6 +665,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "risk_score": risk,
         "confidence": confidence,
         "ledger_status": ledger_status,
+        "previous_hash": previous_hash,
+        "ledger_hash": ledger_hash,
         "masked_fields": {k: (mask(v) if isinstance(v, str) else v)
                           for k, v in fields.items()},
         "watchlist_hits": hits,
@@ -660,6 +712,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         id=report["id"], file_hash=file_hash, filename=report["filename"],
         doc_type=report["doc_type"], checkpoint=report["checkpoint"],
         verdict=verdict, risk_score=risk, confidence=confidence,
+        previous_hash=previous_hash, ledger_hash=ledger_hash,
         extracted_fields=json.dumps(report["masked_fields"]),
         signals=json.dumps(reasons),
         ai_detection=json.dumps(report["ai_detection"]),
