@@ -25,6 +25,7 @@ Thumbs.db
 temp/
 tmp/
 *.log
+*.db
 _srv*.log
 
 # ---- Downloaded / trained model weights (never committed; 128MB Vercel cap) ----

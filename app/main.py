@@ -1097,10 +1097,11 @@ def _start_keepalive() -> None:
 _start_keepalive()
 
 _PRIMARY_LAST_FAILED = 0.0
+_PRIMARY_LAST_ERROR = None
 
 @contextmanager
 def get_db():
-    global _PRIMARY_LAST_FAILED
+    global _PRIMARY_LAST_FAILED, _PRIMARY_LAST_ERROR
     use_fallback = (_IS_SQLITE is False) and (time.monotonic() - _PRIMARY_LAST_FAILED < 30.0)
     db = None
 
@@ -1111,6 +1112,7 @@ def get_db():
                 db.execute(text("SELECT 1"))
         except Exception as e:
             _PRIMARY_LAST_FAILED = time.monotonic()
+            _PRIMARY_LAST_ERROR = f"{type(e).__name__}: {e}"
             print(f"[get_db] Primary DB check failed ({type(e).__name__}: {e}); using fallback SQLite session.")
             if db:
                 try:
@@ -1587,7 +1589,7 @@ def index(request: Request):
 @app.get("/api/health")
 def health_check():
     """Liveness and readiness check: returns service, database status, and system metadata."""
-    global _PRIMARY_LAST_FAILED
+    global _PRIMARY_LAST_FAILED, _PRIMARY_LAST_ERROR
     db_status = "connected"
     db_type = "sqlite" if _IS_SQLITE else "postgresql"
     if not _IS_SQLITE and (time.monotonic() - _PRIMARY_LAST_FAILED < 30.0):
@@ -1606,6 +1608,7 @@ def health_check():
             "status": db_status,
             "engine": db_type,
             "neon_endpoint": _NEON_ENDPOINT,
+            "last_error": _PRIMARY_LAST_ERROR,
         },
         "version": "2.1.0",
         "timestamp": now_utc(),
