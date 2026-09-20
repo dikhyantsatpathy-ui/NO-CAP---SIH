@@ -44,7 +44,8 @@ weights/
 *.onnx
 
 # ---- Study scripts & local helper tools (kept local, not on GitHub) ----
-scripts/
+scripts/*
+!scripts/anchor_ledger.py
 
 # ---- Rollback snapshots (local only, never pushed) ----
 _backup/

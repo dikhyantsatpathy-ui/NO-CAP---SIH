@@ -584,3 +584,36 @@ export function getAnalytics() {
 export function getAnalyticsSummary() {
   return request<AnalyticsSummary>("/api/analytics/summary");
 }
+
+export interface LedgerAnchorStatus {
+  anchored: boolean;
+  status: string;
+  in_sync: boolean;
+  anchor_head_hash: string | null;
+  current_db_head_hash: string | null;
+  total_blocks: number;
+  anchor_blocks: number;
+  anchored_at: string | null;
+  anchor_type: string | null;
+  public_url: string | null;
+  signature: string | null;
+  manifest?: Record<string, unknown>;
+}
+
+export function getLedgerAnchor() {
+  return request<LedgerAnchorStatus>("/api/screen/ledger/anchor");
+}
+
+export function triggerLedgerAnchor() {
+  return request<{
+    ok: boolean;
+    status: string;
+    head_hash: string;
+    total_blocks: number;
+    anchored_at: string;
+    anchor_type: string;
+    public_url: string;
+    signature: string;
+    manifest: Record<string, unknown>;
+  }>("/api/screen/ledger/anchor", { method: "POST" });
+}

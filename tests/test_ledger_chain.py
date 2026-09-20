@@ -169,4 +169,90 @@ def test_clean_postgres_dsn():
     assert os.getenv("FOO_BAR_TEST") == "123"
 
 
+def test_ledger_anchor_endpoints(client):
+    """POST & GET /api/screen/ledger/anchor and cross-verification in verify endpoint."""
+    import hashlib
+    SessionLocal = main.SessionLocal
+    db = SessionLocal()
+    try:
+        created_at = now_utc()
+        block_payload = f"GENESIS:1122334455667788:CLEAR:10:{created_at}:officer@ssb.gov.in"
+        valid_hash = hashlib.sha256(block_payload.encode("utf-8")).hexdigest()
+
+        rep = ScreeningReport(
+            id="test_anchor_rep_01",
+            file_hash="1122334455667788",
+            filename="passport_anchor.jpg",
+            doc_type="passport",
+            checkpoint="Panitanki ICP",
+            verdict="CLEAR",
+            risk_score=10,
+            confidence=0.98,
+            extracted_fields='{"passport":"A1234567"}',
+            signals='["Valid"]',
+            modules='{"validation":"PASS","tampering":"PASS","face":"PASS"}',
+            previous_hash="GENESIS",
+            ledger_hash=valid_hash,
+            screener="officer@ssb.gov.in",
+            created_at=created_at,
+        )
+        db.add(rep)
+        db.commit()
+    finally:
+        db.close()
+
+    # 1. POST /api/screen/ledger/anchor
+    anchor_resp = client.post("/api/screen/ledger/anchor")
+    assert anchor_resp.status_code == 200
+    adata = anchor_resp.json()
+    assert adata["ok"] is True
+    assert adata["status"] == "ANCHORED"
+    assert adata["head_hash"] == valid_hash
+
+    assert adata["total_blocks"] >= 1
+    assert "signature" in adata
+    assert "public_url" in adata
+
+    # 2. GET /api/screen/ledger/anchor
+    get_resp = client.get("/api/screen/ledger/anchor")
+    assert get_resp.status_code == 200
+    gdata = get_resp.json()
+    assert gdata["anchored"] is True
+    assert gdata["in_sync"] is True
+    assert gdata["anchor_head_hash"] == adata["head_hash"]
+
+    # 3. GET /api/screen/ledger/verify cross-reference
+    vresp = client.get("/api/screen/ledger/verify")
+    assert vresp.status_code == 200
+    vdata = vresp.json()
+    assert vdata["valid"] is True
+    assert "anchor" in vdata
+    assert vdata["anchor"]["anchored"] is True
+    assert vdata["anchor"]["in_sync"] is True
+
+
+def test_manifest_signature():
+    """_compute_anchor_manifest produces verified HMAC-SHA256 non-repudiation signature."""
+    import hmac
+    import hashlib
+    from main import _compute_anchor_manifest, MASTER_VAULT_KEY
+
+    manifest = _compute_anchor_manifest(
+        head_hash="deadbeef1234",
+        total_blocks=42,
+        screener="commander@ssb.gov.in",
+        checkpoint="Raxaul ICP"
+    )
+    assert manifest["protocol"] == "SIH26188-LEDGER-ANCHOR-v1"
+    assert manifest["head_hash"] == "deadbeef1234"
+    assert manifest["total_blocks"] == 42
+
+    # Recompute expected signature
+    ts = manifest["anchored_at"]
+    payload = f"deadbeef1234:42:{ts}:commander@ssb.gov.in:Raxaul ICP"
+    expected = hmac.new(MASTER_VAULT_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    assert manifest["signature"] == expected
+
+
+
 
