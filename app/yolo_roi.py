@@ -27,7 +27,22 @@ import numpy as np
 from PIL import Image
 from typing import Any, Dict, List, Optional
 
-_ONNX_MODEL_PATH = os.getenv("YOLO_ROI_ONNX_PATH", os.path.join(os.path.dirname(__file__), "models", "yolov8n.onnx"))
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+
+
+def _default_model_path() -> str:
+    """Resolve the default ONNX model: env override, then card/'yolov8n' file."""
+    env = os.getenv("YOLO_ROI_ONNX_PATH")
+    if env:
+        return env
+    for name in ("card.onnx", "yolov8n.onnx"):
+        candidate = os.path.join(_MODEL_DIR, name)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(_MODEL_DIR, "yolov8n.onnx")
+
+
+_ONNX_MODEL_PATH = _default_model_path()
 _session = None
 _session_attempted = False
 
@@ -202,22 +217,26 @@ def _detect_document_card(rgb: np.ndarray) -> Dict[str, Any]:
     }
 
 
-def _run_yolo_onnx(rgb: np.ndarray, session) -> List[Dict[str, Any]]:
-    """Run true YOLOv8-nano ONNX model when model file is present."""
+def _run_yolo_onnx(rgb: np.ndarray, session, max_boxes: int = 4) -> List[Dict[str, Any]]:
+    """Run a YOLO ONNX model (any class count) when a model file is present."""
     h_orig, w_orig = rgb.shape[:2]
     try:
-        # Preprocessing: resize to 640x640 and normalize to [0, 1]
-        img_resized = Image.fromarray(rgb).resize((640, 640), Image.BILINEAR)
+        inp = session.get_inputs()[0]
+        inp_h = inp.shape[2] if len(inp.shape) == 4 and isinstance(inp.shape[2], int) else 640
+        inp_w = inp.shape[3] if len(inp.shape) == 4 and isinstance(inp.shape[3], int) else 640
+
+        img_resized = Image.fromarray(rgb).resize((inp_w, inp_h), Image.BILINEAR)
         input_tensor = np.asarray(img_resized, dtype=np.float32).transpose(2, 0, 1) / 255.0
         input_tensor = np.expand_dims(input_tensor, axis=0)
 
-        input_name = session.get_inputs()[0].name
+        input_name = inp.name
         output_name = session.get_outputs()[0].name
         preds = session.run([output_name], {input_name: input_tensor})[0]
 
-        # Standard YOLOv8 output shape: [1, 84, 8400]
-        # Transpose to [8400, 84] where first 4 are (cx, cy, w, h)
-        predictions = preds[0].transpose(1, 0)
+        # YOLOv8 output: [1, 4 + nc, G]. Derive class count from the actual
+        # tensor shape so single-class ('Card') and multi-class models both work.
+        nc = preds.shape[1] - 4 if preds.ndim == 3 else 1
+        predictions = preds[0].transpose(1, 0)  # [G, 4 + nc]
         boxes = []
         conf_threshold = 0.35
         for pred in predictions:
@@ -226,25 +245,46 @@ def _run_yolo_onnx(rgb: np.ndarray, session) -> List[Dict[str, Any]]:
             score = float(scores[class_id])
             if score > conf_threshold:
                 cx, cy, bw, bh = pred[:4]
-                x0 = max(0.0, (cx - bw / 2.0) / 640.0)
-                y0 = max(0.0, (cy - bh / 2.0) / 640.0)
-                w_norm = min(1.0, bw / 640.0)
-                h_norm = min(1.0, bh / 640.0)
-                # Map YOLO class 0 (person) to 'face' for identity context
-                label = "face" if class_id == 0 else f"class_{class_id}"
+                x0 = max(0.0, (cx - bw / 2.0) / inp_w)
+                y0 = max(0.0, (cy - bh / 2.0) / inp_h)
+                w_norm = min(1.0, bw / inp_w)
+                h_norm = min(1.0, bh / inp_h)
+                # single-class card/document model -> 'document' zone; otherwise
+                # keep the class id so callers can interpret it.
+                label = "document" if nc == 1 else f"class_{class_id}"
                 boxes.append({
                     "label": label,
-                    "x": round(x0, 3),
-                    "y": round(y0, 3),
-                    "w": round(w_norm, 3),
-                    "h": round(h_norm, 3),
-                    "confidence": round(score, 2),
+                    "class_id": class_id,
+                    "x": round(float(x0), 3),
+                    "y": round(float(y0), 3),
+                    "w": round(float(w_norm), 3),
+                    "h": round(float(h_norm), 3),
+                    "confidence": round(float(score), 2),
                 })
-        if boxes:
-            return boxes[:4]
+        return _nms(boxes)[:max_boxes]
     except Exception:
         pass
     return []
+
+
+def _nms(boxes: List[Dict[str, Any]], iou_thres: float = 0.5) -> List[Dict[str, Any]]:
+    """Lightweight IoU suppression so duplicate detections collapse to one box."""
+    if len(boxes) <= 1:
+        return boxes
+    kept: List[Dict[str, Any]] = []
+    for b in sorted(boxes, key=lambda b: b["confidence"], reverse=True):
+        duplicate = False
+        for k in kept:
+            ix1, iy1 = max(b["x"], k["x"]), max(b["y"], k["y"])
+            ix2, iy2 = min(b["x"] + b["w"], k["x"] + k["w"]), min(b["y"] + b["h"], k["y"] + k["h"])
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            union = b["w"] * b["h"] + k["w"] * k["h"] - inter
+            if union > 0 and inter / union > iou_thres:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(b)
+    return kept
 
 
 def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
@@ -280,3 +320,93 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
         boxes.append(mrz_box)
 
     return boxes
+
+
+_AADHAAR_CLASS_NAMES = [
+    "Aadhaar_No", "DOB", "Gender", "Name", "Photo",
+]
+_aadhaar_session = None
+
+
+def _get_aadhaar_session():
+    """Lazily load the 5-class Aadhaar-field ONNX detector (nc=5, 640x640)."""
+    global _aadhaar_session
+    if _aadhaar_session is not None:
+        return _aadhaar_session
+    path = os.getenv("AADHAAR_FIELDS_ONNX_PATH")
+    if not path:
+        path = os.path.join(_MODEL_DIR, "aadhaar_fields.onnx")
+    if not os.path.exists(path):
+        return None
+    try:
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 2
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        _aadhaar_session = ort.InferenceSession(
+            path, sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+        return _aadhaar_session
+    except Exception:
+        return None
+
+
+def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
+    """Detect Aadhaar fields with the trained 5-class model.
+
+    Boxes are normalised (0..1) and labelled with semantic names
+    ({'Aadhaar_No','DOB','Gender','Name','Photo'}). Requires
+    app/models/aadhaar_fields.onnx or AADHAAR_FIELDS_ONNX_PATH.
+    """
+    if not image_bytes:
+        return []
+    rgb = _open_rgb(image_bytes)
+    session = _get_aadhaar_session()
+    if rgb is None or session is None:
+        return []
+    boxes = _run_yolo_onnx(rgb, session, max_boxes=8)
+    resolved = []
+    for b in boxes:
+        class_id = int(b["class_id"])
+        b["label"] = _AADHAAR_CLASS_NAMES[class_id] if class_id < len(_AADHAAR_CLASS_NAMES) else b["label"]
+        resolved.append(b)
+    return resolved
+
+
+def crop_region_to_bytes(image_bytes: bytes, box: Dict[str, Any],
+                         padding: float = 0.0, fmt: str = "PNG") -> bytes | None:
+    """Crop a normalised ROI out of an image as raw bytes.
+
+    `box` is a normalised {x, y, w, h} dict (0..1) as returned by the ROI
+    detectors. `padding` inflates the box fractionally (0.08 = +8% each side)
+    so a tight detection never clips the printed field. Returns None on any
+    failure — callers degrade instead of crash. This is the seam the Aadhaar
+    pipeline uses to pipe a Name/DOB/Aadhaar_No zone straight into tesseract
+    and the Photo zone into Module 4 (nothing is persisted).
+    """
+    if not image_bytes or not box:
+        return None
+    try:
+        import io
+        from PIL import Image
+        x0 = float(box.get("x", 0) or 0)
+        y0 = float(box.get("y", 0) or 0)
+        bw = float(box.get("w", 0) or 0)
+        bh = float(box.get("h", 0) or 0)
+        if bw <= 0 or bh <= 0 or x0 < 0 or y0 < 0:
+            return None
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w, h = img.size
+        pad = max(0.0, float(padding))
+        left = max(0, int((x0 - pad * bw) * w))
+        top = max(0, int((y0 - pad * bh) * h))
+        right = min(w, int((x0 + bw + pad * bw) * w))
+        bottom = min(h, int((y0 + bh + pad * bh) * h))
+        if right <= left or bottom <= top:
+            return None
+        crop = img.crop((left, top, right, bottom))
+        out = io.BytesIO()
+        crop.save(out, format=fmt)
+        return out.getvalue()
+    except Exception:
+        return None
