@@ -1,27 +1,24 @@
 // ============================================================================
-// AuthorityView — the signed-in console: Google Single Sign-In gate, media
-// signing (batched + chunked for big files), the broadcast composer, the
-// identity directory with revoke/reinstate, the provenance ledger table,
-// and the administrator command bar (sync / rollback).
+// AuthorityView — the screening console (SSB border inspection / SIH26188):
+// Google Single Sign-In gate, the 4-module screening desk, adjudication queue,
+// cross-border syndicate monitor, watchlist, and (super-admin) officer role
+// approvals. The signing/ledger/admin capabilities were removed.
 // ============================================================================
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import JSZip from "jszip";
+import { useEffect, useRef, useState } from "react";
 import {
   adjudicateScreen,
   addWatchlistEntry,
   assignRole,
+  getAadhaarFields,
   getDossierUrl,
-  getLedger,
   getScreenQueue,
   getScreenReport,
+  getSigners,
   getSyndicateAlerts,
   getWatchlist,
   googleLogin,
-  reinstateIdentity,
   removeWatchlistEntry,
-  revokeIdentity,
-  rollbackLedger,
   SCREEN_DOC_LABELS,
   SCREEN_DOC_NUMBER_PLACEHOLDERS,
   SCREEN_DOC_TYPES,
@@ -29,32 +26,23 @@ import {
   SCREEN_WATCHLIST_LABELS,
   SCREEN_WATCHLIST_PLACEHOLDERS,
   screenDocument,
+  verifyLedgerChain,
+  verifyLiveness,
+  type AadhaarFieldBox,
+  type LedgerVerificationResult,
+  type LivenessResult,
+  type OfficerEntry,
   type ScreenDocType,
   type ScreenModuleTampering,
   type ScreenTravelValidity,
   type ScreenWatchlistCategory,
-  setPin,
-  signChunk,
-  signComplete,
-  signFiles,
-  signTextNotice,
-  syncBlockchain,
-  type LedgerPayload,
   type ScreenQueue,
   type ScreenReport,
-  type Signer,
   type WatchlistEntry,
 } from "../api";
 import { SPECIMEN_PRESETS, generateSpecimenFile, type SpecimenPreset } from "../app/specimens";
 import { useAuth, useToast } from "../app/state";
-import {
-  copyText,
-  downloadBlob,
-  initials,
-  shortHash,
-  timeLabel,
-} from "../app/util";
-import { expandZip } from "../components/VerdictCard";
+import { initials } from "../app/util";
 import {
   Button,
   Card,
@@ -62,13 +50,7 @@ import {
   EmptyNote,
   Field,
   IconBolt,
-  IconCheck,
-  IconClock,
-  IconCopy,
-  IconGrid,
   IconKey,
-  IconLayers,
-  IconLink,
   IconLock,
   IconPen,
   IconUsers,
@@ -77,7 +59,7 @@ import {
   Pill,
   useGsiReady,
 } from "../components/ui";
-import { downloadReceiptJson, FALLBACK_CLIENT_ID } from "./gsi";
+import { FALLBACK_CLIENT_ID } from "./gsi";
 
 // ----------------------------------------------------------------------------
 // Auth gate + Google sign-in button
@@ -103,7 +85,7 @@ function GoogleSignInButton() {
       callback: async (response) => {
         const res = await googleLogin(response.credential);
         if (res.ok) {
-          toast("Authority session established.", "success");
+          toast("Officer session established.", "success");
           await refreshRef.current();
         } else {
           toast(res.error || "ACCESS DENIED: Invalid clearance.", "error");
@@ -123,679 +105,135 @@ function GoogleSignInButton() {
   return <div ref={containerRef} style={{ minHeight: 44 }} />;
 }
 
-function AuthorityProfileHeader({ payload }: { payload: LedgerPayload | null }) {
-  const { me } = useAuth();
-  if (!me) return null;
-  const pending = !!me.pending_approval;
-
-  return (
-    <div className="auth-profile rv rv--d1">
-      <div className="auth-profile__user">
-        <div className="auth-profile__avatar-wrap">
-          <div className="auth-profile__avatar">
-            {initials(me.name)}
-          </div>
-          <span
-            className="auth-profile__status-dot"
-            style={{ background: pending ? "var(--warn)" : "var(--seal-2)" }}
-            title={pending ? "Pending approval" : "Verified session"}
-            aria-hidden="true"
-          />
-        </div>
-        <div className="auth-profile__meta">
-          <h3>
-            {me.name}
-            {me.is_super_admin ? (
-              <Pill tone="night">Administrator</Pill>
-            ) : pending ? (
-              <Pill tone="amber">Pending Approval</Pill>
-            ) : (
-              <Pill tone="seal">Verified Signer</Pill>
-            )}
-          </h3>
-          <div className="auth-profile__sub">
-            {pending
-              ? "Signing blocked until an administrator assigns your institution"
-              : `${me.designation || "Signer"} · ${me.institution || "Root Authority"} · ${me.admin}`}
-          </div>
-        </div>
-      </div>
-
-      <div className="auth-profile__stats">
-        <div className="auth-stat-pill">
-          <IconLayers size={13} />
-          <span>Ledger:</span>
-          <strong>{payload ? `${payload.total} blocks` : "—"}</strong>
-        </div>
-        <div className="auth-stat-pill">
-          <IconUsers size={13} />
-          <span>Identities:</span>
-          <strong>{payload ? `${Object.keys(payload.signers).length}` : "—"}</strong>
-        </div>
-        <div className="auth-stat-pill">
-          <span className="dot" style={{ background: "var(--seal-2)" }} aria-hidden="true" />
-          <span>Network:</span>
-          <strong>L2 Anchored</strong>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ----------------------------------------------------------------------------
-// Media signing — batches for small files, chunked for big ones
+// Officer directory & role approvals (super-admin only)
 // ----------------------------------------------------------------------------
 
-const MAX_SINGLE_FILE = 4.2 * 1024 * 1024;
-const MAX_BATCH_BYTES = 4 * 1024 * 1024;
-const CHUNK_BYTES = 4 * 1024 * 1024;
-const MAX_CHUNKS_IN_FLIGHT = 3;
-
-async function signFileChunked(name: string, blob: Blob): Promise<{ name: string; blob: Blob }> {
-  const session =
-    (typeof crypto !== "undefined" && "randomUUID" in crypto && crypto.randomUUID()) ||
-    `s${Date.now()}${Math.random().toString(36).slice(2)}`;
-  const total = Math.max(1, Math.ceil(blob.size / CHUNK_BYTES));
-
-  const jobs: (() => Promise<boolean>)[] = [];
-  for (let i = 0; i < total; i++) {
-    jobs.push(async () => {
-      const slice = blob.slice(i * CHUNK_BYTES, Math.min(blob.size, (i + 1) * CHUNK_BYTES));
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await signChunk(session, i, total, name, slice);
-        if (res.ok) return true;
-      }
-      return false;
-    });
-  }
-  for (let start = 0; start < jobs.length; start += MAX_CHUNKS_IN_FLIGHT) {
-    const batch = jobs.slice(start, start + MAX_CHUNKS_IN_FLIGHT).map((j) => j());
-    const results = await Promise.all(batch);
-    if (results.includes(false)) throw new Error("Chunk upload failed.");
-  }
-
-  const done = await signComplete(session);
-  if (!done.ok) throw new Error(done.error || "Signing large file failed.");
-  return { name: `signed_${name}`, blob: await done.response.blob() };
-}
-
-/** Flat, collision-free member keys: keep the original basename, but when two
- *  members imported from different archives/folders share a basename, prefix
- *  with the sanitized parent path so nothing is silently overwritten. */
-function uniqueSignKeys(items: { name: string; blob: Blob }[]): { name: string; blob: Blob }[] {
-  const counts = new Map<string, number>();
-  for (const it of items) {
-    const base = (it.name.split("/").pop() || it.name).replace(/[^a-zA-Z0-9._-]+/g, "_");
-    counts.set(base, (counts.get(base) || 0) + 1);
-  }
-  const used = new Set<string>();
-  return items.map((it) => {
-    const base = (it.name.split("/").pop() || it.name).replace(/[^a-zA-Z0-9._-]+/g, "_");
-    let key = base;
-    if (counts.get(base)! > 1 && it.name.includes("/")) {
-      const folder = it.name.slice(0, it.name.lastIndexOf("/")).replace(/[^a-zA-Z0-9._-]+/g, "_");
-      key = `${folder}_${base}`;
-    }
-    let i = 1;
-    while (used.has(key)) key = `${i++}_${key}`;
-    used.add(key);
-    return { name: key, blob: it.blob };
-  });
-}
-
-function SignPanel({ onSigned, bare }: { onSigned?: () => void; bare?: boolean }) {
+function OfficerDirectory() {
   const { toast } = useToast();
-  const [files, setFiles] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [busyLabel, setBusyLabel] = useState<string | null>(null);
-
-  const total = files.reduce((a, f) => a + (f.size || 0), 0);
-  const oversized = files.filter((f) => (f.size || 0) > MAX_SINGLE_FILE).length;
-
-  const handleSign = async () => {
-    if (!files.length) return;
-    setBusy(true);
-    setBusyLabel("Preparing files…");
-    try {
-      // Archives are unpacked FIRST so every internal file is signed on its own
-      // and lands in the ledger — a notice re-zipped with its signed file later
-      // verifies individually instead of appearing unsigned.
-      const members: { name: string; blob: Blob }[] = [];
-      for (const f of files) {
-        if (f.name.toLowerCase().endsWith(".zip")) {
-          setBusyLabel(`Unpacking ${f.name}…`);
-          const inner = await expandZip(f);
-          members.push(...inner);
-        } else {
-          members.push({ name: f.name, blob: f });
-        }
-      }
-
-      const items = uniqueSignKeys(members);
-      const big = items.filter((it) => it.blob.size > MAX_SINGLE_FILE);
-      const normal = items.filter((it) => it.blob.size <= MAX_SINGLE_FILE);
-
-      const batches: typeof items[] = [];
-      let cur: typeof items = [];
-      let curSz = 0;
-      for (const it of normal) {
-        const sz = it.blob.size;
-        if (cur.length && curSz + sz > MAX_BATCH_BYTES) {
-          batches.push(cur);
-          cur = [];
-          curSz = 0;
-        }
-        cur.push(it);
-        curSz += sz;
-      }
-      if (cur.length) batches.push(cur);
-
-      const signed: { name: string; blob: Blob }[] = [];
-
-      setBusyLabel("Anchoring to ledger…");
-      for (const it of big) {
-        const r = await signFileChunked(it.name, it.blob);
-        signed.push(r);
-      }
-      for (const b of batches) {
-        const res = await signFiles(b.map((it) => it.blob));
-        if (!res.ok) throw new Error(res.error || "Signing failed.");
-        const blob = await res.response.blob();
-        if (b.length === 1) {
-          signed.push({ name: `signed_${b[0].name}`, blob });
-        } else {
-          const zip = await JSZip.loadAsync(blob);
-          for (const [inner, entry] of Object.entries(zip.files)) {
-            if (!entry.dir) signed.push({ name: inner, blob: await entry.async("blob") });
-          }
-        }
-      }
-
-      if (signed.length === 1) {
-        downloadBlob(signed[0].blob, signed[0].name);
-      } else {
-        const zip = new JSZip();
-        for (const s of signed) zip.file(s.name, s.blob);
-        const out = await zip.generateAsync({ type: "blob" });
-        downloadBlob(out, "signed_batch.zip");
-      }
-      toast(`Signed ${signed.length} file${signed.length === 1 ? "" : "s"} — each member is ledger-verified.`, "success");
-      setFiles([]);
-      onSigned?.();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Signing failed.", "error");
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-    }
-  };
-
-  const signContent = (
-    <>
-      <Dropzone
-        label="Drop files to sign"
-        sub={
-          files.length
-            ? `${files.length} file${files.length > 1 ? "s" : ""} · ${(total / 1024 / 1024).toFixed(2)} MB total${
-                oversized ? ` · ${oversized} over ${Math.round(MAX_SINGLE_FILE / 1024 / 1024)} MB → chunked` : ""
-              }`
-            : "Drop files or a .zip — archives are unpacked and every member is signed individually"
-        }
-        multiple
-        files={files}
-        onFiles={setFiles}
-        busy={busy}
-      />
-      {files.length > 0 && !busy && (
-        <div
-          className="row mt-3"
-          style={{ gap: 6 }}
-        >
-          {files.map((f, i) => (
-            <span className="pill" key={`${f.name}-${i}`}>
-              {f.name} · {(f.size / 1024 / 1024).toFixed(2)} MB
-            </span>
-          ))}
-        </div>
-      )}
-      <Button
-        variant="seal"
-        size="lg"
-        className="mt-3"
-        block
-        busy={busy}
-        disabled={!files.length}
-        onClick={() => void handleSign()}
-      >
-        <IconBolt size={15} /> {busy ? busyLabel || "Signing…" : "Sign & anchor"}
-      </Button>
-      <p className="stat-note mt-3">
-        Signing injects an invisible forensic trap, records a ledger block, and anchors it to the chain.
-      </p>
-    </>
-  );
-
-  if (bare) return signContent;
-
-  return (
-    <Card title="Sign media" icon={<IconPen size={14} />}>
-      {signContent}
-    </Card>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Broadcast composer
-// ----------------------------------------------------------------------------
-
-function BroadcastComposer({ onIssued, bare }: { onIssued?: () => void; bare?: boolean }) {
-  const { toast } = useToast();
-  const [title, setTitle] = useState("");
-  const [urgency, setUrgency] = useState("HIGH");
-  const [message, setMessage] = useState("");
-  const [media, setMedia] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [receipt, setReceipt] = useState<{ json: Record<string, unknown>; hash: string; persisted: boolean } | null>(null);
-
-  const mediaFile = media[0] || null;
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
-  const lastMediaUrl = useRef<string | null>(null);
-  useEffect(() => {
-    if (lastMediaUrl.current) {
-      URL.revokeObjectURL(lastMediaUrl.current);
-      lastMediaUrl.current = null;
-    }
-    if (mediaFile) {
-      const url = URL.createObjectURL(mediaFile);
-      lastMediaUrl.current = url;
-      setMediaUrl(url);
-    } else {
-      setMediaUrl(null);
-    }
-  }, [mediaFile]);
-
-  const submit = async () => {
-    if (!message.trim()) return;
-    setBusy(true);
-    setBusyLabel("Computing hash…");
-    try {
-      const hashTimer = window.setTimeout(() => setBusyLabel("Anchoring broadcast…"), 600);
-      const res = await signTextNotice(title || "Emergency Notice", urgency, message, mediaFile || undefined);
-      window.clearTimeout(hashTimer);
-      if (!res.ok) {
-        toast(res.error, "error");
-        return;
-      }
-      setReceipt({
-        json: res.data.receipt as unknown as Record<string, unknown>,
-        hash: res.data.ledger_hash,
-        persisted: res.data.ledger_persisted,
-      });
-      toast(res.data.ledger_persisted ? "Document successfully anchored." : "Broadcast already on record (duplicate).", "success");
-      setMessage("");
-      setMedia([]);
-      onIssued?.();
-    } catch {
-      toast("Broadcast failed.", "error");
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-    }
-  };
-
-  const broadcastContent = (
-    <>
-      <div className="row-stretch">
-        <Field label="Title">
-          <input
-            className="input"
-            value={title}
-            placeholder="Emergency Notice"
-            maxLength={120}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </Field>
-        <Field label="Urgency">
-          <select className="select" value={urgency} onChange={(e) => setUrgency(e.target.value)}>
-            {(["ADVISORY", "HIGH", "CRITICAL"] as const).map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <Field label="Message">
-        <textarea
-          className="textarea"
-          rows={5}
-          placeholder="The official statement the public needs to see…"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-        />
-      </Field>
-      <Dropzone
-        label="Attach media (optional)"
-        sub={mediaFile ? mediaFile.name : "One image or video binds into the signed hash"}
-        files={media}
-        onFiles={(fs) => setMedia(fs.slice(0, 1))}
-        accept="image/*,video/*"
-        busy={busy}
-      />
-      {mediaUrl && (
-        <div className="notice-media" style={{ marginTop: 10 }}>
-          {mediaFile!.type.startsWith("video/") ? (
-            <video src={mediaUrl} controls style={{ maxHeight: 260 }} />
-          ) : (
-            <img src={mediaUrl} alt="Media preview" style={{ maxWidth: "100%", maxHeight: 260, objectFit: "contain" }} />
-          )}
-        </div>
-      )}
-      <Button
-        variant="seal"
-        size="lg"
-        className="mt-3"
-        block
-        busy={busy}
-        disabled={!message.trim()}
-        onClick={() => void submit()}
-      >
-        <IconPen size={15} /> {busy ? busyLabel || "Processing…" : "Issue signed broadcast"}
-      </Button>
-
-      {receipt && (
-        <div className="verdict__block" style={{ borderTop: "1px dashed var(--line-2)" }}>
-          <div className="verdict__block-title">
-            <IconCheck size={13} /> RECEIPT {receipt.persisted ? "· PERSISTED" : "· DUPLICATE"}
-          </div>
-          <p style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.6, margin: 0 }}>
-            Hash <span className="mono">{shortHash(receipt.hash, 26)}</span> · anchored to IPFS, carved into the ledger.
-          </p>
-          <div className="row mt-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => downloadReceiptJson(receipt.json)}
-            >
-              <IconCopy size={13} /> Download receipt (.json)
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => void copyText(receipt.hash)}>
-              Copy hash
-            </Button>
-          </div>
-        </div>
-      )}
-    </>
-  );
-
-  if (bare) return broadcastContent;
-
-  return (
-    <>
-      <Card title="Issue a broadcast" icon={<IconLayers size={14} />}>
-        {broadcastContent}
-      </Card>
-    </>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Identity directory + revoke / reinstate
-// ----------------------------------------------------------------------------
-
-function IdentityDirectory({
-  payload,
-  onChanged,
-  bare,
-}: {
-  payload: LedgerPayload;
-  onChanged: () => void;
-  bare?: boolean;
-}) {
-  const { me } = useAuth();
-  const { toast } = useToast();
-  const [manage, setManage] = useState<{ signer: Signer; mode: "revoke" | "reinstate" } | null>(null);
-  const [pin, setPinValue] = useState("");
-  const [confirmText, setConfirmText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [roleAssign, setRoleAssign] = useState<{ email: string; designation: string; institution: string } | null>(null);
-
-  // compact, searchable directory: filter by status + free text
+  const [signers, setSigners] = useState<OfficerEntry[]>([]);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"all" | "active" | "revoked">("all");
+  const [busy, setBusy] = useState(false);
+  const [roleAssign, setRoleAssign] = useState<{
+    email: string;
+    name: string;
+    designation: string;
+    institution: string;
+  } | null>(null);
 
-  const isSuper = !!me?.is_super_admin;
-  const signers = Object.values(payload.signers);
-  const q = query.trim().toLowerCase();
-  const filtered = signers.filter((s) => {
-    if (status === "active" && s.is_revoked) return false;
-    if (status === "revoked" && !s.is_revoked) return false;
-    if (!q) return true;
-    return [s.name, s.email, s.designation, s.institution].some((v) =>
-      (v || "").toLowerCase().includes(q)
-    );
-  });
-
-  const submitManage = async () => {
-    if (!manage) return;
-    setBusy(true);
-    const { signer, mode } = manage;
-    const target = signer.email;
-
-    if (mode === "revoke") {
-      if (!isSuper && !/^\d{5}$/.test(pin)) {
-        toast("Enter a 5-digit PIN.", "warn");
-        setBusy(false);
-        return;
-      }
-      if (!isSuper && !signer.has_pin) {
-        // First-time PIN: set it, then revoke with it (backend accepts new PIN)
-        const res = await setPin(pin);
-        if (!res.ok) {
-          toast(res.error, "error");
-          setBusy(false);
-          return;
-        }
-      }
-      const res = await revokeIdentity(target, isSuper ? undefined : pin);
-      if (res.ok) {
-        toast(`${signer.name} revoked — prior signatures marked void.`, "success");
-        setManage(null);
-        onChanged();
-      } else {
-        toast(res.error, "error");
-      }
-    } else {
-      const res = await reinstateIdentity(target, pin || "00000");
-      if (res.ok) {
-        toast(`${signer.name} reinstated.`, "success");
-        setManage(null);
-        onChanged();
-      } else {
-        toast(res.error, "error");
-      }
-    }
-    setBusy(false);
-    setPinValue("");
-    setConfirmText("");
+  const load = async () => {
+    const res = await getSigners();
+    if (res.ok) setSigners(res.data.signers);
   };
+
+  useEffect(() => {
+    void load();
+  }, []);
 
   const submitAssign = async () => {
     if (!roleAssign) return;
+    setBusy(true);
     const res = await assignRole(roleAssign.email, roleAssign.designation, roleAssign.institution);
     if (res.ok) {
       toast(`Role assigned to ${roleAssign.email}.`, "success");
       setRoleAssign(null);
-      onChanged();
+      setSigners((prev) =>
+        prev.map((s) =>
+          s.email === roleAssign.email
+            ? { ...s, designation: roleAssign.designation, institution: roleAssign.institution }
+            : s,
+        ),
+      );
     } else {
       toast(res.error, "error");
     }
+    setBusy(false);
   };
 
-  const confirmRequired = manage && manage.mode === "revoke" && isSuper;
+  const q = query.trim().toLowerCase();
+  const filtered = signers.filter((s) => {
+    if (!q) return true;
+    return [s.name, s.email, s.designation, s.institution].some((v) =>
+      (v || "").toLowerCase().includes(q),
+    );
+  });
 
-  const dirContent = (
-    <>
-      {signers.length === 0 ? (
+  return (
+    <Card
+      title="Officers & roles"
+      icon={<IconUsers size={14} />}
+      aside={<span className="stat-note">Role approvals — supervisor clearance</span>}
+    >
+      <p className="stat-note" style={{ fontSize: 12, marginBottom: 12 }}>
+        Every officer account is authorized here before it can screen at a checkpoint. Accounts
+        without an assigned post &amp; institution are blocked from screening.
+      </p>
+      <div className="dir-toolbar">
+        <input
+          className="input dir-search"
+          placeholder="Search name, email, designation, institution…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Filter officer directory"
+        />
+        <span className="dir-count">
+          {filtered.length} / {signers.length}
+        </span>
+      </div>
+      {filtered.length === 0 ? (
         <EmptyNote>
-          <span className="big">No identities exposed</span>
-          <br />
-          A regular signer only sees their own record.
+          {signers.length === 0 ? "No officers have signed in yet." : "No officers match that filter."}
         </EmptyNote>
       ) : (
-        <>
-          <div className="dir-toolbar">
-            <input
-              className="input dir-search"
-              placeholder="Search name, email, designation, institution…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Filter identity directory"
-            />
-            <div className="dir-tabs" role="tablist" aria-label="Filter by status">
-              <button
-                className={`dir-tab${status === "all" ? " dir-tab--active" : ""}`}
-                onClick={() => setStatus("all")}
-              >
-                All
-              </button>
-              <button
-                className={`dir-tab${status === "active" ? " dir-tab--active" : ""}`}
-                onClick={() => setStatus("active")}
-              >
-                Active
-              </button>
-              <button
-                className={`dir-tab${status === "revoked" ? " dir-tab--active" : ""}`}
-                onClick={() => setStatus("revoked")}
-              >
-                Revoked
-              </button>
-            </div>
-            <span className="dir-count">
-              {filtered.length} / {signers.length}
-            </span>
-          </div>
-
-          {filtered.length === 0 ? (
-            <EmptyNote>No identities match that filter.</EmptyNote>
-          ) : (
-            <div className="dir-scroll">
-              {filtered.map((s) => (
-                <div key={s.email} className={`authority-row${s.is_revoked ? " is-revoked" : ""}`}>
-                  <span className="authority-row__avatar">{initials(s.name)}</span>
-                  <div className="authority-row__info">
-                    <div className="authority-row__name">
-                      {s.name}
-                      {s.is_revoked && <Pill tone="danger" style={{ marginLeft: 8 }}>revoked</Pill>}
-                      {s.has_pin && <Pill tone="seal" style={{ marginLeft: 8 }}>pin set</Pill>}
-                    </div>
-                    <div className="authority-row__id">{s.email}</div>
-                    <div className="authority-row__key">
-                      {s.designation || "—"} · {s.institution || "—"}
-                    </div>
-                  </div>
-                  <div className="authority-row__actions">
-                    {isSuper && (
-                      <Button size="sm" variant="ghost" onClick={() => setRoleAssign({ email: s.email, designation: s.designation, institution: s.institution })}>
-                        Role
-                      </Button>
+        <div className="dir-scroll">
+          {filtered.map((s) => {
+            const pending = !(s.designation && s.institution);
+            return (
+              <div key={s.email} className="authority-row">
+                <span className="authority-row__avatar">{initials(s.name)}</span>
+                <div className="authority-row__info">
+                  <div className="authority-row__name">
+                    {s.name}
+                    {pending ? (
+                      <Pill tone="amber" style={{ marginLeft: 8 }}>pending</Pill>
+                    ) : (
+                      <Pill tone="seal" style={{ marginLeft: 8 }}>approved</Pill>
                     )}
-                    <Button
-                      size="sm"
-                      variant={s.is_revoked ? "seal" : "danger-ghost"}
-                      onClick={() => setManage({ signer: s, mode: s.is_revoked ? "reinstate" : "revoke" })}
-                    >
-                      {s.is_revoked ? "Reinstate" : "Revoke"}
-                    </Button>
+                  </div>
+                  <div className="authority-row__id">{s.email}</div>
+                  <div className="authority-row__key">
+                    {s.designation || "—"} · {s.institution || "—"}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {manage && (
-        <Modal
-          narrow
-          title={manage.mode === "revoke" ? "Revoke identity" : "Reinstate identity"}
-          onClose={() => setManage(null)}
-          footer={
-            <Button
-              variant={manage.mode === "revoke" ? "danger-ghost" : "seal"}
-              busy={busy}
-              disabled={confirmRequired ? confirmText !== "REVOKE" : false}
-              onClick={() => void submitManage()}
-            >
-              Confirm {manage.mode}
-            </Button>
-          }
-        >
-          <p style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.6 }}>
-            {manage.mode === "revoke" ? (
-              <>
-                Revoking <strong style={{ color: "var(--ink)" }}>{manage.signer.name}</strong>{" "}
-                ({manage.signer.email}) voids this authority's prior signatures across the ledger.
-                The blocks remain public — they simply read REVOKED.
-              </>
-            ) : (
-              <>
-                Reinstate <strong style={{ color: "var(--ink)" }}>{manage.signer.name}</strong> so they
-                can sign again. Their past signatures recover their standing.
-              </>
-            )}
-          </p>
-
-          {confirmRequired && (
-            <div className="warning-box mt-3">
-              <strong>Administrator override — no PIN</strong>
-              <p>Type REVOKE to confirm this irreversible action.</p>
-              <input
-                className="input mt-3"
-                value={confirmText}
-                placeholder="Type REVOKE…"
-                onChange={(e) => setConfirmText(e.target.value)}
-              />
-            </div>
-          )}
-
-          {manage.mode === "reinstate" && (
-            <Field label="Target's revocation PIN (or 00000 to bypass)">
-              <input
-                className="input pin-input"
-                inputMode="numeric"
-                maxLength={5}
-                placeholder="•••••"
-                value={pin}
-                onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
-              />
-            </Field>
-          )}
-
-          {manage.mode === "revoke" && !isSuper && (
-            <Field label="Your 5-digit PIN (first time sets it)">
-              <input
-                className="input pin-input"
-                inputMode="numeric"
-                maxLength={5}
-                placeholder="•••••"
-                value={pin}
-                onChange={(e) => setPinValue(e.target.value.replace(/\D/g, ""))}
-              />
-            </Field>
-          )}
-        </Modal>
+                <div className="authority-row__actions">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      setRoleAssign({
+                        email: s.email,
+                        name: s.name,
+                        designation: s.designation || "",
+                        institution: s.institution || "",
+                      })
+                    }
+                  >
+                    Role
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {roleAssign && (
         <Modal
           narrow
-          title={`Assign role · ${roleAssign.email}`}
+          title={`Assign role · ${roleAssign.name}`}
           onClose={() => setRoleAssign(null)}
           footer={
-            <Button variant="seal" onClick={() => void submitAssign()}>
+            <Button variant="seal" busy={busy} onClick={() => void submitAssign()}>
               Assign
             </Button>
           }
@@ -816,225 +254,9 @@ function IdentityDirectory({
               onChange={(e) => setRoleAssign({ ...roleAssign, institution: e.target.value })}
             />
           </Field>
-        </Modal>
-      )}
-    </>
-  );
-
-  if (bare) return dirContent;
-
-  return (
-    <Card title="Identity directory" icon={<IconUsers size={14} />}>
-      {dirContent}
-    </Card>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Ledger table + dependency map
-// ----------------------------------------------------------------------------
-
-const CRYPTO_META: Record<string, { label: string; tone: "seal" | "danger" | "slate" }> = {
-  hybrid: { label: "HYBRID", tone: "seal" },
-  standard: { label: "STANDARD", tone: "danger" },
-};
-
-function LedgerSection({ payload, bare }: { payload: LedgerPayload; bare?: boolean }) {
-  const [filter, setFilter] = useState("");
-
-  const blocks = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return q
-      ? payload.blocks.filter(
-          (b) =>
-            (b.signer_institution || "").toLowerCase().includes(q) ||
-            (b.signer_name || "").toLowerCase().includes(q) ||
-            (b.filename || "").toLowerCase().includes(q),
-        )
-      : payload.blocks;
-  }, [payload.blocks, filter]);
-
-  const ledgerContent = (
-    <>
-      <div className="row" style={{ padding: "12px 12px 6px" }}>
-        <input
-          className="input"
-          style={{ maxWidth: 320 }}
-          placeholder="Filter by institution, signer, or file…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <span className="stat-note right">{blocks.length} of {payload.total} blocks</span>
-      </div>
-      <div className="tbl-scroll">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>File</th>
-              <th>Signer</th>
-              <th>Role / Org</th>
-              <th>Crypto</th>
-              <th>Anchored</th>
-              <th>When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {blocks.length === 0 && (
-              <tr>
-                <td colSpan={6} className="empty-note">
-                  <span className="big">No blocks match</span>
-                </td>
-              </tr>
-            )}
-            {blocks.map((b) => {
-              const crypto = CRYPTO_META[b.crypto_mode] || { label: b.crypto_mode.toUpperCase(), tone: "slate" as const };
-              return (
-                <tr key={b.id}>
-                  <td>
-                    <span className="strong trunc" title={b.filename}>{b.filename}</span>
-                    <br />
-                    <span className="mono" style={{ fontSize: 10 }}> {shortHash(b.file_hash, 20)}</span>
-                  </td>
-                  <td>{b.signer_name}</td>
-                  <td>
-                    {b.signer_designation}
-                    <br />
-                    <span style={{ color: "var(--ink-3)" }}>{b.signer_institution}</span>
-                  </td>
-                  <td>
-                    <Pill tone={crypto.tone}>{crypto.label}</Pill>
-                    <br />
-                    {b.is_revoked ? <Pill tone="danger">revoked</Pill> : <Pill tone="seal">active</Pill>}
-                  </td>
-                  <td>
-                    {b.tx_hash ? (
-                      <span className="mono" style={{ fontSize: 10.5 }}>
-                        <IconLink size={11} /> {shortHash(b.tx_hash, 18)}
-                      </span>
-                    ) : (
-                      <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>unanchored</span>
-                    )}
-                  </td>
-                  <td className="mono" style={{ fontSize: 10.5, whiteSpace: "nowrap" }}>
-                    {timeLabel(b.timestamp)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-
-  if (bare) return ledgerContent;
-
-  return (
-    <Card title="Provenance ledger" icon={<IconGrid size={14} />}>
-      {ledgerContent}
-    </Card>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Administrator command bar
-// ----------------------------------------------------------------------------
-
-function SuperAdminBar({ onChanged }: { onChanged: () => void }) {
-  const { toast } = useToast();
-  const [rollbackOpen, setRollbackOpen] = useState(false);
-  const [rollbackTs, setRollbackTs] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-
-  const sync = async () => {
-    setBusy("sync");
-    const res = await syncBlockchain();
-    if (res.ok) toast(res.data.status === "UP_TO_DATE" ? "All blocks already anchored." : `Anchored ${res.data.anchored_blocks_count ?? 0} blocks — ${res.data.tx_hash || "n/a"}`, "success");
-    else toast(res.error, "error");
-    setBusy(null);
-    onChanged();
-  };
-
-  const doRollback = async () => {
-    if (!rollbackTs) return;
-    setBusy("rollback");
-    const local = new Date(rollbackTs);
-    if (Number.isNaN(local.getTime())) {
-      toast("Pick a valid date/time.", "error");
-      setBusy(null);
-      return;
-    }
-    // datetime-local is local time; the ledger lives in UTC.
-    const ts = local.toISOString().slice(0, 19).replace("T", " ") + " UTC";
-    const res = await rollbackLedger(ts);
-    if (res.ok) toast(`Ledger rolled back to ${ts}.`, "success");
-    else toast(res.error, "error");
-    setBusy(null);
-    setRollbackOpen(false);
-    onChanged();
-  };
-
-  return (
-    <Card
-      title="Administrator operations"
-      icon={<IconKey size={14} />}
-      danger
-      aside={<span className="stat-note">Root authority clearance</span>}
-    >
-      <div className="admin-grid">
-      <div className="admin-card">
-        <div className="admin-card__title">
-          <IconLink size={16} /> Blockchain Anchoring
-        </div>
-        <p className="admin-card__desc">
-          Sync newly signed ledger digests and anchor the cryptographic Merkle root to Ethereum L2 for public non-repudiation.
-        </p>
-        <div className="admin-card__actions">
-          <Button variant="ink" size="sm" block busy={busy === "sync"} onClick={() => void sync()}>
-            <IconLink size={13} /> Sync to blockchain
-          </Button>
-        </div>
-      </div>
-
-      <div className="admin-card">
-        <div className="admin-card__title">
-          <IconClock size={16} /> Ledger Rollback
-        </div>
-        <p className="admin-card__desc">
-          Time-travel recovery: roll the cryptographic provenance chain back to any UTC timestamp to excise compromised blocks.
-        </p>
-        <div className="admin-card__actions">
-          <Button variant="ghost" size="sm" block onClick={() => setRollbackOpen(true)}>
-            Configure rollback
-          </Button>
-        </div>
-      </div>
-      </div>
-
-      {rollbackOpen && (
-        <Modal
-          narrow
-          title="Rollback ledger"
-          onClose={() => setRollbackOpen(false)}
-          footer={
-            <Button variant="danger-ghost" busy={busy === "rollback"} onClick={() => void doRollback()}>
-              Rollback beyond this time
-            </Button>
-          }
-        >
-          <p style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.6 }}>
-            Every ledger block and verification <em>after this timestamp</em> is permanently deleted.
-          </p>
-          <Field label="Delete everything after (UTC)">
-            <input
-              className="input"
-              type="datetime-local"
-              value={rollbackTs}
-              onChange={(e) => setRollbackTs(e.target.value)}
-            />
-          </Field>
           <p className="stat-note mt-3" style={{ margin: "12px 0 0" }}>
-            Your local date/time is converted to UTC before it leaves the browser.
+            Assigning a role clears the pending block and lets this officer screen documents at
+            checkpoints.
           </p>
         </Modal>
       )}
@@ -1118,12 +340,29 @@ function ModuleScorecard({ modules }: { modules: NonNullable<ScreenReport["modul
   );
 }
 
-/** Captures a single JPEG still from the operator's camera (Module 4 input). */
+// ---------------------------------------------------------------------------
+// Challenge constants — cycled round-robin for each liveness test
+// ---------------------------------------------------------------------------
+const CHALLENGES: { id: string; prompt: string; icon: string; hint: string }[] = [
+  { id: "blink",   prompt: "Blink naturally",        icon: "👁️",  hint: "Blink both eyes once" },
+  { id: "nod",     prompt: "Nod your head slowly",   icon: "↕️",  hint: "Move head up, then down" },
+  { id: "turn",    prompt: "Turn head slightly left", icon: "↩️",  hint: "Rotate 10–20° left" },
+];
+
+/** Multi-round challenge-response live capture for Module 4 anti-spoofing. */
 function LiveCapture({ onFrame }: { onFrame: (blob: Blob | null) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [active, setActive] = useState(false);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [denied, setDenied] = useState(false);
+
+  // Liveness challenge state
+  const [liveness, setLiveness] = useState<LivenessResult | null>(null);
+  const [livenessBusy, setLivenessBusy] = useState(false);
+  const [challengeIdx, setChallengeIdx] = useState(0);
+  const [countdown, setCountdown] = useState<number | null>(null);   // 3-2-1 before burst
+  const [frameProgress, setFrameProgress] = useState(0);            // 0-3 frames captured
+  const challenge = CHALLENGES[challengeIdx % CHALLENGES.length];
 
   const stop = () => {
     const v = videoRef.current;
@@ -1136,12 +375,12 @@ function LiveCapture({ onFrame }: { onFrame: (blob: Blob | null) => void }) {
 
   const start = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
       const v = videoRef.current;
-      if (!v) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
+      if (!v) { stream.getTracks().forEach((t) => t.stop()); return; }
       v.srcObject = stream;
       await v.play();
       setActive(true);
@@ -1155,22 +394,69 @@ function LiveCapture({ onFrame }: { onFrame: (blob: Blob | null) => void }) {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return;
     const c = document.createElement("canvas");
-    c.width = v.videoWidth;
-    c.height = v.videoHeight;
+    c.width = v.videoWidth; c.height = v.videoHeight;
     c.getContext("2d")?.drawImage(v, 0, 0);
-    c.toBlob(
-      (blob) => {
-        if (!blob) return;
-        onFrame(blob);
-        setImgUrl(URL.createObjectURL(blob));
-        stop();
-      },
-      "image/jpeg",
-      0.85,
-    );
+    c.toBlob((blob) => {
+      if (!blob) return;
+      onFrame(blob);
+      setImgUrl(URL.createObjectURL(blob));
+      stop();
+    }, "image/jpeg", 0.85);
   };
 
-  // release object URL on unmount / replace
+  /** 3-frame burst with countdown UI, then POST to /api/screen/liveness */
+  const runLivenessCheck = async () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    setLivenessBusy(true);
+    setFrameProgress(0);
+
+    // 3-2-1 countdown
+    for (let c = 3; c >= 1; c--) {
+      setCountdown(c);
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    setCountdown(null);
+
+    const grabFrame = (): Promise<Blob | null> =>
+      new Promise((res) => {
+        const c = document.createElement("canvas");
+        c.width = v.videoWidth; c.height = v.videoHeight;
+        c.getContext("2d")?.drawImage(v, 0, 0);
+        c.toBlob((b) => res(b), "image/jpeg", 0.85);
+      });
+
+    const timestamps: number[] = [];
+    const frames: Blob[] = [];
+    for (let i = 0; i < 3; i++) {
+      const f = await grabFrame();
+      if (f) { frames.push(f); timestamps.push(Date.now()); }
+      setFrameProgress(i + 1);
+      if (i < 2) await new Promise((r) => setTimeout(r, 280));
+    }
+
+    const stream = v.srcObject as MediaStream | null;
+    const cameraLabel = stream?.getVideoTracks()[0]?.label || "Integrated Webcam";
+
+    const res = await verifyLiveness(frames, challenge.id, {
+      camera_label: cameraLabel,
+      challenge_prompt: challenge.prompt,
+      timestamps,
+    });
+
+    setLivenessBusy(false);
+    setFrameProgress(0);
+
+    if (res.ok) {
+      setLiveness(res.data);
+      // Auto-advance to next challenge on failure so officer can retry different action
+      if (res.data.verdict !== "LIVE") {
+        setChallengeIdx((i) => i + 1);
+      }
+    }
+  };
+
+  // Clean up on unmount
   useEffect(() => {
     return () => {
       stop();
@@ -1179,58 +465,183 @@ function LiveCapture({ onFrame }: { onFrame: (blob: Blob | null) => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imgUrl]);
 
+  const livenessColor = liveness?.verdict === "LIVE" ? "#10b981" : "#ef4444";
+  const livenessAlpha = liveness?.verdict === "LIVE" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)";
+  const confidencePct = liveness ? Math.round(liveness.confidence * 100) : null;
+
   return (
-    <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-      <video
-        ref={videoRef}
-        playsInline
-        muted
-        style={{
-          display: active ? "block" : "none",
-          width: 150,
-          height: 105,
-          borderRadius: "var(--r-sm)",
-          background: "#000",
-          objectFit: "cover",
-        }}
-      />
-      {imgUrl && (
-        <img
-          src={imgUrl}
-          alt="holder capture"
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+      {/* Camera / snapshot */}
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        <video
+          ref={videoRef}
+          playsInline muted
           style={{
-            width: 150,
-            height: 105,
+            display: active ? "block" : "none",
+            width: 160, height: 112,
             borderRadius: "var(--r-sm)",
+            background: "#000",
             objectFit: "cover",
-            border: "2px solid var(--border-seal-mid)",
+            border: active ? "2px solid var(--primary)" : undefined,
           }}
         />
-      )}
-      <div className="stack-sm">
-        <span className="stat-note">Module 4 — holder capture</span>
+        {/* Countdown overlay */}
+        {countdown !== null && (
+          <div style={{
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: "var(--r-sm)",
+            background: "rgba(0,0,0,0.55)",
+            fontSize: 38, fontWeight: 800, color: "#fff",
+            pointerEvents: "none",
+            fontFamily: "var(--font-mono)",
+          }}>
+            {countdown}
+          </div>
+        )}
+        {imgUrl && (
+          <img
+            src={imgUrl}
+            alt="holder capture"
+            style={{
+              width: 160, height: 112,
+              borderRadius: "var(--r-sm)",
+              objectFit: "cover",
+              border: "2px solid var(--border-seal-mid)",
+            }}
+          />
+        )}
+      </div>
+
+      {/* Controls column */}
+      <div className="stack-sm" style={{ flex: 1, minWidth: 180 }}>
+        <span className="stat-note" style={{ fontWeight: 600 }}>Module 4 — Live Holder Capture</span>
+
+        {/* Challenge badge (shown when camera is active) */}
+        {active && !liveness && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 7,
+            background: "rgba(99,102,241,0.1)",
+            border: "1px solid rgba(99,102,241,0.3)",
+            borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 600,
+          }}>
+            <span style={{ fontSize: 16 }}>{challenge.icon}</span>
+            <div>
+              <div style={{ color: "var(--ink)" }}>{challenge.prompt}</div>
+              <div className="stat-note" style={{ fontSize: 10.5 }}>{challenge.hint}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Frame capture progress bar */}
+        {livenessBusy && (
+          <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
+            <span>Capturing frame {frameProgress}/3…</span>
+            <div style={{ marginTop: 4, height: 4, background: "var(--surface-3)", borderRadius: 2 }}>
+              <div style={{
+                height: "100%", borderRadius: 2,
+                width: `${(frameProgress / 3) * 100}%`,
+                background: "var(--primary)",
+                transition: "width 0.25s ease",
+              }} />
+            </div>
+          </div>
+        )}
+
+        {/* Buttons */}
         {!active && !imgUrl && (
           <Button size="sm" variant={denied ? "danger-ghost" : "ghost"} onClick={() => void start()}>
-            {denied ? "Camera blocked — retry" : "Open camera"}
+            {denied ? "Camera blocked — retry" : "📷 Open camera"}
           </Button>
         )}
         {active && (
-          <Button size="sm" variant="seal" onClick={capture}>
-            Capture frame
-          </Button>
+          <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+            <Button size="sm" variant="seal" onClick={capture}>
+              Capture frame
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              busy={livenessBusy}
+              onClick={() => void runLivenessCheck()}
+              title="3-frame burst: detect printed-photo replay, virtual-camera injection, and motion dynamics"
+            >
+              {livenessBusy ? "Running…" : "🔍 Liveness test"}
+            </Button>
+          </div>
         )}
         {imgUrl && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              onFrame(null);
-              setImgUrl(null);
-              void start();
-            }}
-          >
-            Retake
+          <Button size="sm" variant="ghost" onClick={() => {
+            onFrame(null);
+            setImgUrl(null);
+            setLiveness(null);
+            void start();
+          }}>
+            ↩ Retake
           </Button>
+        )}
+
+        {/* Liveness result */}
+        {liveness && (
+          <div style={{
+            fontSize: 11, fontWeight: 600,
+            color: livenessColor,
+            background: livenessAlpha,
+            border: `1px solid ${livenessColor}33`,
+            padding: "6px 10px",
+            borderRadius: 6,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+              <span style={{ fontSize: 14 }}>
+                {liveness.verdict === "LIVE" ? "✅" : "⚠️"}
+              </span>
+              <span>
+                {liveness.verdict === "LIVE"
+                  ? "LIVE HUMAN CONFIRMED"
+                  : `${liveness.verdict} DETECTED`}
+                {confidencePct !== null && (
+                  <span style={{ fontWeight: 400, color: "var(--ink-3)", marginLeft: 6 }}>
+                    {confidencePct}% confidence
+                  </span>
+                )}
+              </span>
+            </div>
+            {liveness.verdict !== "LIVE" && (
+              <div style={{ fontWeight: 400, fontSize: 10.5, color: "var(--ink-3)", marginTop: 2 }}>
+                Try again with challenge: <strong>{CHALLENGES[(challengeIdx) % CHALLENGES.length].prompt}</strong>
+              </div>
+            )}
+            {/* Per-check detail */}
+            {liveness.checks && liveness.checks.length > 0 && (
+              <div style={{ marginTop: 5, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {liveness.checks.slice(0, 4).map((ck, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      fontSize: 10, padding: "1px 5px",
+                      borderRadius: 3,
+                      background: ck.ok === false ? "rgba(239,68,68,0.2)" : "rgba(0,0,0,0.15)",
+                      color: "inherit",
+                    }}
+                  >
+                    {ck.ok === true ? "✓" : ck.ok === false ? "✗" : "—"} {ck.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Retry challenge link */}
+        {liveness && liveness.verdict !== "LIVE" && active && (
+          <button
+            type="button"
+            className="btn btn--outline btn--sm"
+            style={{ fontSize: 10.5 }}
+            onClick={() => { setLiveness(null); setChallengeIdx((i) => i + 1); }}
+          >
+            Next challenge →
+          </button>
         )}
       </div>
     </div>
@@ -1436,6 +847,43 @@ export function ScreeningDesk() {
   } | null>(null);
   const [syndicateBusy, setSyndicateBusy] = useState(false);
   const [syndicateFilter, setSyndicateFilter] = useState("");
+  const [aadhaarBoxes, setAadhaarBoxes] = useState<AadhaarFieldBox[] | null>(null);
+  const [aadhaarBusy, setAadhaarBusy] = useState(false);
+  const [ledgerVerifyResult, setLedgerVerifyResult] = useState<LedgerVerificationResult | null>(null);
+  const [ledgerBusy, setLedgerBusy] = useState(false);
+
+  const handleInspectAadhaar = async () => {
+    const f = file[0];
+    if (!f) {
+      toast("Choose an identity document first.", "warn");
+      return;
+    }
+    setAadhaarBusy(true);
+    const res = await getAadhaarFields(f);
+    setAadhaarBusy(false);
+    if (res.ok) {
+      setAadhaarBoxes(res.data.fields);
+      toast(`Detected ${res.data.count} field zones using 5-class YOLO model.`, "info");
+    } else {
+      toast(res.error, "error");
+    }
+  };
+
+  const handleVerifyLedger = async () => {
+    setLedgerBusy(true);
+    const res = await verifyLedgerChain();
+    setLedgerBusy(false);
+    if (res.ok) {
+      setLedgerVerifyResult(res.data);
+      if (res.data.valid) {
+        toast(`Ledger integrity verified (${res.data.total_blocks} blocks unbroken).`, "success");
+      } else {
+        toast(`Ledger verification failed: ${res.data.reason}`, "error");
+      }
+    } else {
+      toast(res.error, "error");
+    }
+  };
 
   const handleLoadPreset = async (preset: SpecimenPreset) => {
     try {
@@ -1717,21 +1165,70 @@ export function ScreeningDesk() {
       )}
 
       {file.length > 0 && (
-        <Button
-          variant="seal"
-          block
-          className="mt-3"
-          busy={busy}
-          onClick={() => void run()}
-        >
-          <IconBolt size={15} /> {busy ? "Screening…" : "Run screening"}
-        </Button>
+        <>
+          <div className="row mt-3" style={{ gap: 8 }}>
+            <Button
+              variant="seal"
+              style={{ flex: 1 }}
+              busy={busy}
+              onClick={() => void run()}
+            >
+              <IconBolt size={15} /> {busy ? "Screening…" : "Run screening"}
+            </Button>
+            <button
+              type="button"
+              className="btn btn--outline"
+              disabled={aadhaarBusy}
+              onClick={() => void handleInspectAadhaar()}
+              title="Run YOLOv8 5-Class detector to locate Photo, Name, DOB, Aadhaar Number, and Gender zones"
+            >
+              🎯 {aadhaarBusy ? "Scanning Zones…" : "5-Class ID Zones"}
+            </button>
+          </div>
+
+          {aadhaarBoxes && (
+            <div className="mt-2 p-2" style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: "var(--r-sm)" }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span className="kicker kicker--plain" style={{ margin: 0, fontSize: 10.5 }}>
+                  🎯 YOLOv8 5-Class Field Zones ({aadhaarBoxes.length} detected)
+                </span>
+                <button
+                  type="button"
+                  className="btn btn--outline btn--sm"
+                  style={{ fontSize: 10, padding: "2px 6px" }}
+                  onClick={() => setAadhaarBoxes(null)}
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                {aadhaarBoxes.map((box, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: "rgba(59, 130, 246, 0.1)",
+                      border: "1px solid rgba(59, 130, 246, 0.3)",
+                      borderRadius: 4,
+                      padding: "3px 8px",
+                      fontSize: 11,
+                      fontFamily: "var(--font-mono)"
+                    }}
+                  >
+                    <strong style={{ color: "var(--primary)" }}>{box.label}</strong>:{" "}
+                    <span>{(box.confidence * 100).toFixed(0)}%</span>{" "}
+                    <span className="stat-note" style={{ fontSize: 10 }}>[x:{box.x.toFixed(2)}, y:{box.y.toFixed(2)}, w:{box.w.toFixed(2)}, h:{box.h.toFixed(2)}]</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {report && vm && (
         <div className={`screen-report ${vm.pill}`} data-tone={vm.pill}>
           <div className="screen-report__top">
-            <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+            <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <Pill tone={vm.pill}>{report.verdict}</Pill>
               <span className="strong">
                 {report.risk_score}
@@ -1739,12 +1236,31 @@ export function ScreeningDesk() {
               </span>
               <span className="stat-note">confidence {(report.confidence * 100).toFixed(0)}%</span>
               <Pill tone="slate">
-                ledger: {report.ledger_status}
+                record: {report.ledger_status}
               </Pill>
+              {report.ledger_hash && (
+                <span
+                  className="mono stat-note"
+                  style={{ fontSize: 10, background: "var(--surface-3)", padding: "3px 7px", borderRadius: 4, border: "1px solid var(--line-2)" }}
+                  title={`Block Hash: ${report.ledger_hash}\nPrevious Block Hash: ${report.previous_hash || "genesis"}`}
+                >
+                  block: {report.ledger_hash.slice(0, 8)}…
+                </span>
+              )}
               {report.watchlist_hits && report.watchlist_hits.length > 0 && (
                 <Pill tone="danger">watchlist hit</Pill>
               )}
-              <div style={{ marginLeft: "auto" }}>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="btn btn--outline btn--sm"
+                  style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}
+                  disabled={ledgerBusy}
+                  onClick={() => void handleVerifyLedger()}
+                  title="Verify cryptographic SHA-256 hash-chain across all historical screening blocks"
+                >
+                  🔗 {ledgerBusy ? "Verifying…" : "Verify Chain"}
+                </button>
                 <a
                   href={`/api/screen/dossier/${encodeURIComponent(report.id)}`}
                   target="_blank"
@@ -1762,6 +1278,37 @@ export function ScreeningDesk() {
               {formatScreenDocType(report.doc_type)} · {report.checkpoint || "no checkpoint"} · {report.created_at}
             </div>
           </div>
+
+          {ledgerVerifyResult && (
+            <div
+              className="mt-3"
+              style={{
+                background: ledgerVerifyResult.valid ? "rgba(16, 185, 129, 0.12)" : "rgba(239, 68, 68, 0.14)",
+                border: `1px solid ${ledgerVerifyResult.valid ? "rgba(16, 185, 129, 0.4)" : "rgba(239, 68, 68, 0.5)"}`,
+                borderRadius: 6,
+                padding: "8px 12px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8
+              }}
+            >
+              <div>
+                <strong>{ledgerVerifyResult.valid ? "✅ Hash-Chain Ledger Verified:" : "❌ Ledger Tampering Detected:"}</strong>{" "}
+                <span>{ledgerVerifyResult.reason || ledgerVerifyResult.status}</span>{" "}
+                <span className="mono stat-note">({ledgerVerifyResult.total_blocks} blocks)</span>
+              </div>
+              <button
+                type="button"
+                className="btn btn--outline btn--sm"
+                style={{ fontSize: 10, padding: "2px 6px" }}
+                onClick={() => setLedgerVerifyResult(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           <div className="risk-meter mt-3">
             <span className={`risk-meter__fill risk-meter__fill--${vm.pill}`} style={{ width: `${report.risk_score}%` }} />
@@ -2055,7 +1602,7 @@ export function ScreeningDesk() {
       {isSuper && (
         <div className="mt-4" style={{ borderTop: "1px solid var(--line-2)", paddingTop: 14 }}>
           <p style={{ fontSize: 11.5, color: "var(--ink-3)", marginBottom: 10 }}>
-            <strong>Watchlist (Administrators only):</strong> Add any identifier (PAN number, Passport number, Aadhaar, phone, etc.)
+            <strong>Watchlist (Administrators only):</strong> Add any identifier (PAN number, Passport number, phone, etc.)
             that should trigger an automatic flag during screening. The system stores only a cryptographic hash of the value —
             the actual number is never saved to disk and cannot be reversed. Every new screening automatically checks against this list.
           </p>
@@ -2119,59 +1666,16 @@ export function ScreeningDesk() {
 }
 
 // ----------------------------------------------------------------------------
-// Unified directory + ledger card (Identity Directory | Signed Ledger)
-// ----------------------------------------------------------------------------
-
-function DirectoryLedgerCard({ payload, onChanged }: { payload: LedgerPayload; onChanged: () => void }) {
-  const [tab, setTab] = useState<"dir" | "ledger">("dir");
-  return (
-    <Card
-      title="Directory & ledger"
-      icon={<IconUsers size={14} />}
-      aside={
-        <div className="seg">
-          <button
-            className={`seg__btn${tab === "dir" ? " seg__btn--active" : ""}`}
-            onClick={() => setTab("dir")}
-          >
-            Identity Directory
-          </button>
-          <button
-            className={`seg__btn${tab === "ledger" ? " seg__btn--active" : ""}`}
-            onClick={() => setTab("ledger")}
-          >
-            Signed Ledger
-          </button>
-        </div>
-      }
-    >
-      {tab === "dir" ? <IdentityDirectory bare payload={payload} onChanged={onChanged} /> : <LedgerSection bare payload={payload} />}
-    </Card>
-  );
-}
-
-// ----------------------------------------------------------------------------
 // The view
 // ----------------------------------------------------------------------------
 
 export function AuthorityView() {
   const { signedIn, booting, me } = useAuth();
-  const [payload, setPayload] = useState<LedgerPayload | null>(null);
-  const [tab, setTab] = useState<"sign" | "broadcast" | "screening" | "records" | "admin">("screening");
-
-  const loadLedger = async () => {
-    const res = await getLedger();
-    if (res.ok) setPayload(res.data);
-  };
-
-  useEffect(() => {
-    if (signedIn) void loadLedger();
-  }, [signedIn]);
 
   if (booting) {
     return (
       <div className="section">
-        <EmptyNote>Checking your authority session…</EmptyNote>
+        <EmptyNote>Checking your officer session…</EmptyNote>
       </div>
     );
   }
@@ -2182,8 +1686,8 @@ export function AuthorityView() {
         <Card title="Restricted access" icon={<IconLock size={14} />}>
           <div style={{ textAlign: "center", padding: "22px 10px" }}>
             <p style={{ color: "var(--ink-2)", marginBottom: 22 }}>
-              Authenticate with an authorized Google account to reach the signing
-              console, identity directory, and ledger.
+              Authenticate with an authorized Google account to reach the border screening
+              console, duty watchlist, and role approvals.
             </p>
             <div className="hero__kicker" style={{ display: "inline-flex" }}>
               <span className="dot" aria-hidden="true" /> Google single sign-in
@@ -2192,7 +1696,7 @@ export function AuthorityView() {
               <GoogleSignInButton />
             </div>
             <p className="stat-note mt-4">
-              Roles are assigned only by an administrator — signing privileges are never self-claimed.
+              Screening duty is assigned only by an administrator — desk access is never self-claimed.
             </p>
           </div>
         </Card>
@@ -2204,127 +1708,37 @@ export function AuthorityView() {
     <section className="section">
       <div className="section__head rv">
         <div>
-          <Kicker>Authority console</Kicker>
-          <h2>Sign, broadcast, and steward the record</h2>
+          <Kicker>SSB border screening console</Kicker>
+          <h2>AI-based fake identity &amp; document screening desk</h2>
         </div>
         <p>
           {me.name} — session active.{" "}
-          {me.is_super_admin ? "Full network visibility." : "Your view is scoped to your own signatures."}
+          {me.is_super_admin ? "Supervisor clearance." : me.pending_approval ? "Your screening role is pending approval." : "Duty post authorized."}
         </p>
       </div>
 
-      <AuthorityProfileHeader payload={payload} />
+      {me.pending_approval && (
+        <div className="rv rv--d2">
+          <Card title="Role pending approval" icon={<IconKey size={14} />}>
+            <EmptyNote>
+              <span className="big">Screening is temporarily blocked</span>
+              <br />
+              An administrator must assign your post &amp; institution before you can screen documents
+              or adjudicate results.
+            </EmptyNote>
+          </Card>
+        </div>
+      )}
 
-      <div className="auth-tabs rv rv--d2">
-        <button
-          type="button"
-          className={`auth-tab${tab === "screening" ? " auth-tab--active" : ""}`}
-          onClick={() => setTab("screening")}
-        >
-          <IconCheck size={14} />
-          Screening Desk
-        </button>
-        <button
-          type="button"
-          className={`auth-tab${tab === "sign" ? " auth-tab--active" : ""}`}
-          onClick={() => setTab("sign")}
-        >
-          <IconPen size={14} />
-          Sign Media
-        </button>
-        <button
-          type="button"
-          className={`auth-tab${tab === "broadcast" ? " auth-tab--active" : ""}`}
-          onClick={() => setTab("broadcast")}
-        >
-          <IconLayers size={14} />
-          Issue Broadcast
-        </button>
-        <button
-          type="button"
-          className={`auth-tab${tab === "records" ? " auth-tab--active" : ""}`}
-          onClick={() => setTab("records")}
-        >
-          <IconUsers size={14} />
-          Ledger & Directory
-          {payload ? <span className="auth-tab__badge">{payload.total}</span> : null}
-        </button>
-        {me.is_super_admin && (
-          <button
-            type="button"
-            className={`auth-tab${tab === "admin" ? " auth-tab--active" : ""}`}
-            onClick={() => setTab("admin")}
-          >
-            <IconKey size={14} />
-            Admin Operations
-          </button>
-        )}
+      <div className="rv rv--d2">
+        <ScreeningDesk />
       </div>
 
-      <div className="rv rv--d3">
-        {tab === "sign" && (
-          me.pending_approval ? (
-            <Card title="Awaiting approval" icon={<IconKey size={14} />}>
-              <EmptyNote>
-                <span className="big">Signing is temporarily blocked</span>
-                <br />
-                An administrator must assign your post & institution before you can sign files or issue broadcasts.
-              </EmptyNote>
-            </Card>
-          ) : (
-            <Card
-              title="Cryptographic media signing"
-              icon={<IconPen size={14} />}
-              aside={<span className="stat-note">ECDSA P-256 · SHA-256</span>}
-            >
-              <SignPanel bare onSigned={() => void loadLedger()} />
-            </Card>
-          )
-        )}
-
-        {tab === "broadcast" && (
-          me.pending_approval ? (
-            <Card title="Awaiting approval" icon={<IconKey size={14} />}>
-              <EmptyNote>
-                <span className="big">Broadcast issuance blocked</span>
-                <br />
-                An administrator must assign your post & institution before you can sign files or issue broadcasts.
-              </EmptyNote>
-            </Card>
-          ) : (
-            <Card
-              title="Issue official broadcast bulletin"
-              icon={<IconLayers size={14} />}
-              aside={<span className="stat-note">Anchored to IPFS & Ledger</span>}
-            >
-              <BroadcastComposer bare onIssued={() => void loadLedger()} />
-            </Card>
-          )
-        )}
-
-        {tab === "screening" && (
-          <ScreeningDesk />
-        )}
-
-        {tab === "records" && (
-          payload ? (
-            <>
-              <DirectoryLedgerCard payload={payload} onChanged={() => void loadLedger()} />
-              <p className="stat-note mt-3">
-                Ledger total: {payload.total} blocks. Regular signers see only their own; administrators see the whole chain.
-              </p>
-            </>
-          ) : (
-            <Card title="Provenance ledger" icon={<IconGrid size={14} />}>
-              <EmptyNote>Loading the ledger…</EmptyNote>
-            </Card>
-          )
-        )}
-
-        {tab === "admin" && me.is_super_admin && (
-          <SuperAdminBar onChanged={() => void loadLedger()} />
-        )}
-      </div>
+      {me.is_super_admin && (
+        <div className="rv rv--d3 mt-4">
+          <OfficerDirectory />
+        </div>
+      )}
 
       <div style={{ height: 16 }} />
     </section>

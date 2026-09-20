@@ -1,13 +1,11 @@
 // ============================================================================
-// App shell — navigation, session chip, status band, footer.
-// The whole site is three views: Verify (public), Authority (signed-in
-// console), and Analytics (public analytics, aggregate counters only).
+// App shell — top bar, status band, footer.
+// The console is a single officer view: the SSB border screening desk
+// (Google sign-in gate; signed-out visitors see the login screen).
 // ============================================================================
 
-import { useEffect, useRef, useState } from "react";
-import { getDetectionUsage, type DetectionUsage } from "./api";
+import { useEffect, useRef } from "react";
 import { useAuth, useToast } from "./app/state";
-import { prefetchAnalyticsSummary } from "./app/analyticsCache";
 import { useExplain } from "./app/explain";
 import { useTheme } from "./app/theme";
 import { useGlobalReveals } from "./app/motion";
@@ -15,36 +13,25 @@ import { initials } from "./app/util";
 import { IconMoon, IconQuestion, IconSun } from "./components/ui";
 import ProjectChatbot from "./components/ProjectChatbot";
 import { AuthorityView } from "./views/AuthorityView";
-import { AnalyticsView } from "./views/AnalyticsView";
-import { PublicView } from "./views/PublicView";
-
-type View = "verify" | "authority" | "analytics";
-
-const NAV: { key: View; label: string }[] = [
-  { key: "verify", label: "Verify" },
-  { key: "authority", label: "Authority" },
-  { key: "analytics", label: "Analytics" },
-];
 
 function BrandMark() {
-  // The upside-down cap-lock — a padlock whose body carries a knurled
-  // bottle-cap rim. Nothing gets in, and nothing gets out unverified.
+  // A checkpost seal: a passport-style clipped shield in the seal colour,
+  // inner tick asserting the screened identity.
   return (
     <svg className="brand__mark" viewBox="0 0 64 64" aria-hidden="true">
       <rect width="64" height="64" rx="14" fill="var(--seal)" />
       <g
-        transform="rotate(180 32 32)"
         fill="none"
         stroke="var(--paper)"
         strokeWidth="3.4"
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        <rect x="15" y="31" width="34" height="23" rx="5" />
-        <path d="M20 48 v7 M26 51 v4 M32 51 v4 M38 51 v4 M44 48 v7" />
-        <path d="M21 31 v-8 a11 11 0 0 1 22 0 v8" />
+        <path d="M32 8 l18 9 c0 12 -4 22 -18 30 c-14 -8 -18 -18 -18 -30 Z" />
+        <circle cx="32" cy="27" r="5.5" />
+        <path d="M26 36 l4 4 7-8" />
       </g>
-      <circle cx="32" cy="21" r="2.7" fill="var(--paper)" />
+      <path d="M20 52 c12 5 12 5 24 0" stroke="var(--paper)" strokeWidth="2.6" strokeLinecap="round" fill="none" />
     </svg>
   );
 }
@@ -80,7 +67,7 @@ function ScrollProgress() {
   return <div className="scroll-progress" ref={ref} aria-hidden="true" />;
 }
 
-function TopBar({ view, onView }: { view: View; onView: (v: View) => void }) {
+function TopBar() {
   const { me, signedIn, signOut } = useAuth();
   const { toast } = useToast();
   const { on, toggle } = useExplain();
@@ -88,7 +75,7 @@ function TopBar({ view, onView }: { view: View; onView: (v: View) => void }) {
 
   const doLogout = async () => {
     await signOut();
-    toast("Authority session ended.", "info");
+    toast("Officer session ended.", "info");
   };
 
   return (
@@ -97,22 +84,10 @@ function TopBar({ view, onView }: { view: View; onView: (v: View) => void }) {
         <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
           <BrandMark />
           <span>
-            <span className="brand__name">nocap</span>
-            <span className="brand__sub">provenance ledger</span>
+            <span className="brand__name">SSB Border Screening</span>
+            <span className="brand__sub">Fake Identity &amp; Document Screening · SIH26188</span>
           </span>
         </a>
-
-        <nav className="nav" aria-label="Primary">
-          {NAV.map((n) => (
-            <button
-              key={n.key}
-              className={`nav__link${view === n.key ? " nav__link--active" : ""}`}
-              onClick={() => onView(n.key)}
-            >
-              {n.label}
-            </button>
-          ))}
-        </nav>
 
         {me && signedIn && (
           <span className="session-chip">
@@ -156,36 +131,21 @@ function TopBar({ view, onView }: { view: View; onView: (v: View) => void }) {
 }
 
 function StatusBand() {
-  const [usage, setUsage] = useState<DetectionUsage | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getDetectionUsage().then((res) => {
-      if (res.ok && alive) setUsage(res.data);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const model = usage?.model || "built-in detector";
-
   return (
     <div className="status-band">
       <div className="shell status-band__inner">
         <span>
           <span className="dot" style={{ background: "var(--status-dot)" }} aria-hidden="true" />
-          PROVENANCE LEDGER — OPERATIONAL
+          SCREENING DESK — OPERATIONAL
         </span>
         <span className="sep">|</span>
         <span>
-          AI DETECTOR <b style={{ color: "var(--status-strong)" }}>{model}</b>
-          {usage ? ` · ${usage.remaining_today}/${usage.limit_today} today` : ""}
+          AI DETECTOR <b style={{ color: "var(--status-strong)" }}>heuristic + cloud + on-device</b>
         </span>
         <span className="sep">|</span>
-        <span>L2 ANCHORING ACTIVE</span>
+        <span>FOUR-MODULE FORENSICS</span>
         <span className="sep">|</span>
-        <span>ZERO-STORAGE VERIFICATION</span>
+        <span>ZERO-STORAGE AUDIT TRAIL</span>
       </div>
     </div>
   );
@@ -194,7 +154,7 @@ function StatusBand() {
 function SiteFooter() {
   return (
     <footer className="site-footer">
-      The Public Record — built on a cryptographic provenance ledger. Verify before you forward.
+      SSB Border Screening Console — AI-assisted fake identity &amp; document screening for the Ministry of Home Affairs.
       <div className="team">
         Dikhyant Satapathy · Supriya Mandal · Asutosh Nayak · Sushumna Meghavaram · Ayush Kumar Lenka · Sidharth Priyadarshi
       </div>
@@ -203,33 +163,20 @@ function SiteFooter() {
 }
 
 export function App() {
-  const [view, setView] = useState<View>("verify");
+  // Scroll-reveals for the console view.
+  useGlobalReveals("authority");
 
-  // Warm the analytics numbers once at site load: by the time anyone opens the
-  // dashboard tab, the figures are already in memory and render instantly.
-  useEffect(() => {
-    void prefetchAnalyticsSummary();
-  }, []);
-
-  // Reset scroll so each view starts at the top. Use 'instant' (not smooth)
-  // to avoid briefly revealing the previous view's scroll position during tab
-  // switching — the CSS scroll-behavior is overridden per this explicit option.
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-  }, [view]);
-
-  // scroll-reveals for the console views (Authority / Analytics)
-  useGlobalReveals(view);
+  }, []);
 
   return (
     <div className="app">
       <ScrollProgress />
-      <TopBar view={view} onView={setView} />
+      <TopBar />
 
       <main className="shell app__main">
-        {view === "verify" && <PublicView />}
-        {view === "authority" && <AuthorityView />}
-        {view === "analytics" && <AnalyticsView />}
+        <AuthorityView />
       </main>
 
       <StatusBand />
