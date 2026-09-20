@@ -371,6 +371,37 @@ function LiveCapture({
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [denied, setDenied] = useState(false);
 
+  // Camera devices state
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => {
+    try {
+      return localStorage.getItem("sih_camera_device_id") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const refreshDevices = async (): Promise<MediaDeviceInfo[]> => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return [];
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = all.filter((d) => d.kind === "videoinput");
+      setVideoDevices(videoInputs);
+      return videoInputs;
+    } catch {
+      return [];
+    }
+  };
+
+  useEffect(() => {
+    void refreshDevices();
+    const onDeviceChange = () => { void refreshDevices(); };
+    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
+    };
+  }, []);
+
   // Liveness challenge state
   const [liveness, setLiveness] = useState<LivenessResult | null>(null);
   const [livenessBusy, setLivenessBusy] = useState(false);
@@ -396,19 +427,84 @@ function LiveCapture({
     setActive(false);
   };
 
-  const start = async () => {
+  const handleDeviceChange = async (newDeviceId: string) => {
+    setSelectedDeviceId(newDeviceId);
     try {
+      localStorage.setItem("sih_camera_device_id", newDeviceId);
+    } catch {}
+    if (active) {
+      await start(newDeviceId);
+    }
+  };
+
+  const cycleCamera = async () => {
+    if (videoDevices.length <= 1) return;
+    const currentIdx = videoDevices.findIndex((d) => d.deviceId === selectedDeviceId);
+    const nextIdx = (currentIdx + 1) % videoDevices.length;
+    const nextDev = videoDevices[nextIdx];
+    if (nextDev) {
+      await handleDeviceChange(nextDev.deviceId);
+    }
+  };
+
+  const start = async (deviceIdToUse?: string) => {
+    const devId = deviceIdToUse || selectedDeviceId;
+    stop();
+    try {
+      const videoConstraints: MediaTrackConstraints = devId
+        ? { deviceId: { exact: devId }, width: { ideal: 640 }, height: { ideal: 480 } }
+        : { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } };
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        video: videoConstraints,
         audio: false,
       });
       const v = videoRef.current;
-      if (!v) { stream.getTracks().forEach((t) => t.stop()); return; }
+      if (!v) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       v.srcObject = stream;
       await v.play();
       setActive(true);
       setDenied(false);
+
+      // Refresh list now that labels are populated
+      const devs = await refreshDevices();
+      const activeTrack = stream.getVideoTracks()[0];
+      const activeId = activeTrack?.getSettings()?.deviceId || (devs && devs[0]?.deviceId) || "";
+      if (activeId) {
+        setSelectedDeviceId(activeId);
+        try {
+          localStorage.setItem("sih_camera_device_id", activeId);
+        } catch {}
+      }
     } catch {
+      // If exact device failed (e.g. unplugged), fallback to default facingMode
+      if (devId) {
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false,
+          });
+          const v = videoRef.current;
+          if (v) {
+            v.srcObject = fallbackStream;
+            await v.play();
+            setActive(true);
+            setDenied(false);
+            const devs = await refreshDevices();
+            const activeId = fallbackStream.getVideoTracks()[0]?.getSettings()?.deviceId || (devs && devs[0]?.deviceId) || "";
+            if (activeId) {
+              setSelectedDeviceId(activeId);
+              try {
+                localStorage.setItem("sih_camera_device_id", activeId);
+              } catch {}
+            }
+            return;
+          }
+        } catch {}
+      }
       setDenied(true);
     }
   };
@@ -464,7 +560,8 @@ function LiveCapture({
     }
 
     const stream = v.srcObject as MediaStream | null;
-    const cameraLabel = stream?.getVideoTracks()[0]?.label || "Integrated Webcam";
+    const track = stream?.getVideoTracks()[0];
+    const cameraLabel = track?.label || videoDevices.find((d) => d.deviceId === selectedDeviceId)?.label || "Integrated Webcam";
 
     const res = await verifyLiveness(frames, challenge.id, {
       camera_label: cameraLabel,
@@ -637,24 +734,46 @@ function LiveCapture({
                   Liveness Challenge #{challengeIdx + 1}
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={shuffleChallenge}
-                disabled={livenessBusy}
-                title="Shuffle random challenge"
-                style={{
-                  background: "rgba(255,255,255,0.12)",
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  color: "#fff",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: "1px 6px",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                🎲 Shuffle
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                {videoDevices.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => void cycleCamera()}
+                    disabled={livenessBusy}
+                    title="Switch to next camera device"
+                    style={{
+                      background: "rgba(255,255,255,0.14)",
+                      border: "1px solid rgba(255,255,255,0.25)",
+                      color: "#fff",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "1px 6px",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                    }}
+                  >
+                    🔄 Switch Cam
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={shuffleChallenge}
+                  disabled={livenessBusy}
+                  title="Shuffle random challenge"
+                  style={{
+                    background: "rgba(255,255,255,0.12)",
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  🎲 Shuffle
+                </button>
+              </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 16 }}>{challenge.icon}</span>
@@ -774,6 +893,63 @@ function LiveCapture({
             </button>
           )}
         </div>
+
+        {/* Camera Device Selector Dropdown */}
+        {videoDevices.length > 0 && (
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            padding: "6px 9px",
+            borderRadius: "var(--r-xs)",
+            background: "var(--surface-2)",
+            border: "1px solid var(--line-2)",
+            fontSize: 11,
+            marginTop: 4,
+            marginBottom: 2,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontWeight: 700, color: "var(--ink-2)", display: "flex", alignItems: "center", gap: 5 }}>
+                📹 Video Input Device
+              </span>
+              {videoDevices.length > 1 ? (
+                <span style={{ fontSize: 10, color: "var(--primary)", fontWeight: 700 }}>
+                  {videoDevices.length} available
+                </span>
+              ) : (
+                <span style={{ fontSize: 10, color: "var(--ink-3)" }}>
+                  Default
+                </span>
+              )}
+            </div>
+            <select
+              value={selectedDeviceId}
+              onChange={(e) => void handleDeviceChange(e.target.value)}
+              disabled={livenessBusy}
+              style={{
+                width: "100%",
+                padding: "5px 7px",
+                fontSize: 11,
+                background: "var(--surface-1)",
+                color: "var(--ink)",
+                border: "1px solid var(--line-1)",
+                borderRadius: 4,
+                cursor: "pointer",
+              }}
+            >
+              {videoDevices.map((dev, idx) => (
+                <option key={dev.deviceId || idx} value={dev.deviceId}>
+                  {dev.label || `Camera ${idx + 1}`}
+                </option>
+              ))}
+            </select>
+            {active && (
+              <div style={{ fontSize: 9.5, color: "var(--ink-3)", lineHeight: 1.3 }}>
+                Select physical webcam if virtual camera (OBS/DroidCam) was defaulted.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Camera Start Button */}
         {!active && !imgUrl && (
