@@ -316,14 +316,14 @@ Explain Mode, theme, specimen presets, offline chatbot KB (`knowledge.ts`) with 
 1. ~~Wire `extract_aadhaar_fields` into endpoint + UI~~ → **DONE** (`POST /api/screen/aadhaar-fields` + 5-Class ID Zones chips)
 2. ~~Implement age-aware threshold adjustment~~ → **DONE** (dynamic ArcFace/dHash relaxation for docs > 4 years)
 3. ~~Append-only SHA-256 checksum chain~~ → **DONE** (ledger verify endpoint + dossier seals + UI banner)
-4. ~~Interactive challenge-response liveness~~ → **DONE** (endpoint + LiveCapture integration)
+4. ~~Interactive challenge-response liveness~~ → **DONE** (endpoint + LiveCapture HUD overlay + randomized challenge + 3-frame burst + biometric gate)
+5. ~~External Blockchain Ledger Notarization~~ → **DONE** (`POST /api/screen/ledger/anchor`, `GET /api/screen/ledger/anchor`, `scripts/anchor_ledger.py` CLI with `--verify`/`--remote`, Gist/HMAC-SHA256 non-repudiation notary)
+6. ~~Commit hygiene & production deployment~~ → **DONE** (Clean commits on `main`, pushed to `https://github.com/dikhyantsatpathy-ui/NO-CAP---SIH.git`, live and verified on `https://no-cap-sih.vercel.app`)
 
 **Still open / owner decisions:**
 1. Confirm Aadhaar class-name semantics with a real prediction strip on diverse samples (provisional labels still in use).
 2. Re-evaluate unsigned `evaluator@ssb.gov.in` fallback scope for queue/report visibility in production deployments.
-3. Commit hygiene: stage the de-blockchain + ArcFace + YOLO + ledger + liveness changes into clean, reviewable commits.
-4. Optional future hardening: stronger multi-round liveness UI, continuous chain monitoring alerts, or external notarization of the ledger root.
-5. Any new feature must continue to preserve zero-raw-storage, offline heuristics, and the existing risk-explainability model.
+3. Any new feature must continue to preserve zero-raw-storage, offline heuristics, and the existing risk-explainability model.
 
 ---
 
