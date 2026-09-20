@@ -14,14 +14,12 @@ import { initials } from "./app/util";
 import { IconBar, IconMoon, IconQuestion, IconShield, IconSun } from "./components/ui";
 import ProjectChatbot from "./components/ProjectChatbot";
 import { AuthorityView } from "./views/AuthorityView";
-import { PublicView } from "./views/PublicView";
 import { AnalyticsView } from "./views/AnalyticsView";
 
-type ViewKey = "desk" | "public" | "analytics";
+type ViewKey = "desk" | "analytics";
 
 const NAV_TABS: { key: ViewKey; label: string; icon: ReactNode }[] = [
   { key: "desk", label: "Screening Desk", icon: <IconShield size={13} /> },
-  { key: "public", label: "Verify & Notices", icon: <IconShield size={13} /> },
   { key: "analytics", label: "Analytics", icon: <IconBar size={13} /> },
 ];
 
@@ -219,7 +217,6 @@ export function App() {
 
       <main className="shell app__main">
         {view === "desk" && <AuthorityView />}
-        {view === "public" && <PublicView />}
         {view === "analytics" && <AnalyticsView />}
       </main>
 

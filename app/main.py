@@ -914,12 +914,6 @@ class ScreeningReport(Base):
     __tablename__ = "screening_reports"
     id = Column(String, primary_key=True)
     file_hash = Column(String, index=True, nullable=False)
-    # ---- Immutable hash-chain ledger ---------------------------------------
-    # Every report links to its predecessor: ledger_hash = SHA-256(previous | file
-    # hash | verdict | risk). Tampering with ANY historical row breaks the chain
-    # for every later block — a single-writer, tamper-proof audit trail.
-    previous_hash = Column(String, nullable=True)    # parent block's ledger_hash ("GENESIS" for block 0)
-    ledger_hash = Column(String, index=True, nullable=True)  # this block's SHA-256
     filename = Column(String, nullable=False)
     doc_type = Column(String, nullable=True)
     checkpoint = Column(String, nullable=True)
@@ -931,7 +925,6 @@ class ScreeningReport(Base):
     signals = Column(Text, nullable=False)           # reasons JSON
     ai_detection = Column(Text, nullable=True)       # detector snapshot JSON
     modules = Column(Text, nullable=True)            # Module 1-4 verdicts JSON
-    ledger_status = Column(String, nullable=True)    # LOCAL record held in screening_reports
     adjudication = Column(String, nullable=True)     # CLEARED | CONFIRMED_FRAUD | INCONCLUSIVE
     adjudicator = Column(String, nullable=True)
     adjudication_note = Column(String, nullable=True)
@@ -1000,11 +993,7 @@ _MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_identifier ON watchlist_entries(identifier_hash);",
     # Module 1-4 verdicts (OCR/validation/tampering/face) as one JSON row.
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS modules TEXT;",
-    # Immutable hash-chain ledger columns + lookup index (SIH26188 audit trail).
-    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS previous_hash VARCHAR;",
-    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS ledger_hash VARCHAR;",
-    "CREATE INDEX IF NOT EXISTS ix_screening_reports_ledger ON screening_reports(ledger_hash);",
-    # Restored public surface: notice-board timeline + per-report screening latency.
+    # Notice-board timeline + per-report screening latency.
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS latency_ms INTEGER;",
     "CREATE INDEX IF NOT EXISTS ix_notice_broadcasts_ts ON notice_broadcasts(timestamp);",
 ]
@@ -1650,9 +1639,6 @@ def _screen_row(r):
         "verdict": r.verdict,
         "risk_score": r.risk_score,
         "confidence": r.confidence,
-        "ledger_status": r.ledger_status,
-        "previous_hash": getattr(r, "previous_hash", None),
-        "ledger_hash": getattr(r, "ledger_hash", None),
         "screener": r.screener,
         "created_at": r.created_at,
         "adjudication": r.adjudication,
@@ -1812,13 +1798,13 @@ def screening_shift_export(
     writer.writerow([f"# Exported by: {admin}", f"# At: {datetime.now(timezone.utc).isoformat()}"])
     writer.writerow([
         "id", "doc_type", "checkpoint", "verdict", "risk_score",
-        "confidence", "ledger_status", "screener", "adjudication",
+        "confidence", "screener", "adjudication",
         "adjudicator", "created_at", "masked_fields",
     ])
     for r in rows:
         writer.writerow([
             r.id, r.doc_type or "other", r.checkpoint or "",
-            r.verdict, r.risk_score, r.confidence, r.ledger_status,
+            r.verdict, r.risk_score, r.confidence,
             r.screener or "", r.adjudication or "", r.adjudicator or "",
             r.created_at, r.extracted_fields or "{}",
         ])
@@ -1979,9 +1965,9 @@ def screening_evidentiary_dossier(
     <div><strong>Document Type:</strong> {safe_doc_type}</div>
     <div><strong>Confidence Score:</strong> {int(report.confidence * 100)}%</div>
     <div><strong>File Fingerprint (SHA-256):</strong> <span style="font-size:11px;">{safe_file_hash}</span></div>
-    <div><strong>Ledger Block Hash:</strong> <span style="font-size:11px;">{html.escape(str(report.ledger_hash or 'GENESIS'))}</span></div>
-    <div><strong>Previous Block Hash:</strong> <span style="font-size:11px;">{html.escape(str(report.previous_hash or 'GENESIS'))}</span></div>
-    <div><strong>Ledger Status:</strong> <span style="color:#38bdf8;">{html.escape(str(report.ledger_status or 'LOCAL'))}</span></div>
+    <div><strong>Screened By:</strong> {safe_officer}</div>
+    <div><strong>Adjudication:</strong> {html.escape(str(report.adjudication or 'PENDING'))}</div>
+    <div><strong>Latency:</strong> {report.latency_ms if report.latency_ms is not None else 'N/A'} ms</div>
   </div>
 
   <div class="section">
@@ -2084,63 +2070,6 @@ def screening_watchlist_remove(
         return {"ok": True}
 
 
-@app.get("/api/screen/ledger/verify")
-@limiter.limit("60/minute")
-def verify_ledger_chain(request: Request, admin: str = Depends(get_current_admin)):
-    """Audit endpoint: cryptographically verifies the unbroken append-only hash chain
-    across all historical screening reports. Detects any database tampering, out-of-order
-    insertions, or modified report attributes."""
-    with get_db() as db:
-        rows = db.query(ScreeningReport).order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc()).all()
-
-    if not rows:
-        return {
-            "valid": True,
-            "total_blocks": 0,
-            "head_hash": None,
-            "genesis_hash": "GENESIS",
-            "broken_at": None,
-            "status": "EMPTY_CHAIN",
-        }
-
-    expected_prev = "GENESIS"
-    for idx, r in enumerate(rows):
-        if r.previous_hash and idx > 0 and r.previous_hash != expected_prev:
-            return {
-                "valid": False,
-                "total_blocks": len(rows),
-                "verified_blocks": idx,
-                "broken_at": r.id,
-                "reason": f"Block {r.id} parent hash mismatch: expected {expected_prev}, got {r.previous_hash}",
-                "status": "CORRUPTED_CHAIN",
-            }
-
-        if r.ledger_hash:
-            computed = hashlib.sha256(
-                f"{r.previous_hash or 'GENESIS'}:{r.file_hash}:{r.verdict}:{r.risk_score}".encode("utf-8")
-            ).hexdigest()
-            if r.ledger_hash != computed:
-                return {
-                    "valid": False,
-                    "total_blocks": len(rows),
-                    "verified_blocks": idx,
-                    "broken_at": r.id,
-                    "reason": f"Block {r.id} data tampered: computed {computed} != stored {r.ledger_hash}",
-                    "status": "CORRUPTED_CHAIN",
-                }
-            expected_prev = r.ledger_hash
-        elif r.previous_hash:
-            expected_prev = r.previous_hash
-
-    return {
-        "valid": True,
-        "total_blocks": len(rows),
-        "head_hash": rows[-1].ledger_hash if rows else None,
-        "genesis_hash": rows[0].previous_hash if rows else "GENESIS",
-        "status": "CHAIN_INTEGRITY_VERIFIED",
-    }
-
-
 @app.post("/api/screen/aadhaar-fields")
 @limiter.limit("60/minute")
 async def screen_aadhaar_fields(
@@ -2194,159 +2123,66 @@ async def verify_liveness(
 
 
 # ============================================================================
-# Public provenance & analytics — the original NoCap public layer, re-based on
-# the SIH26188 screening ledger. Zero-storage discipline holds: aggregates and
-# digests only, no raw bytes, no PII.
+# Screening lookup & analytics — verified-identity surface for signed-in
+# officers. Zero-storage discipline holds: aggregates and digests only, no raw
+# bytes, no PII.
 # ============================================================================
 
-@app.get("/api/stats")
-@limiter.limit("300/minute")
-def public_stats(request: Request):
-    """Public headline counters: screening records bound into the trusted ledger
-    and the distinct registered officers who authored them. Aggregates only."""
-    with get_db() as db:
-        docs = db.query(func.count(ScreeningReport.id)).scalar() or 0
-        issuers = (
-            db.query(func.count(func.distinct(ScreeningReport.screener)))
-            .filter(ScreeningReport.screener.isnot(None),
-                    ScreeningReport.screener != "evaluator@ssb.gov.in")
-            .scalar()
-            or 0
-        )
-    return {"signed_docs": docs, "trusted_issuers": issuers}
-
-
-def _screening_verdict_kind(verdict: str, adjudication):
-    """Map a screening (CLEAR|REVIEW|FLAGGED + adjudication) to the legacy public
-    VerdictKind vocabulary. A supervised CONFIRMED_FRAUD overrides a CLEAR."""
-    if adjudication == "CONFIRMED_FRAUD":
+def _public_verdict_kind(row) -> str:
+    """Stable public verdict for a screening record, honouring supervised
+    adjudication: a confirmed fraud overrides a CLEAR, a cleared one overrides
+    a FLAGGED."""
+    if row.adjudication == "CONFIRMED_FRAUD":
         return "PROVEN_FAKE"
-    if adjudication == "CLEARED":
+    if row.adjudication == "CLEARED":
         return "AUTHENTIC"
-    if adjudication == "INCONCLUSIVE":
-        return "UNSIGNED"
-    if verdict == "CLEAR":
+    if row.verdict == "CLEAR":
         return "AUTHENTIC"
-    if verdict == "FLAGGED":
+    if row.verdict == "FLAGGED" or row.adjudication == "INCONCLUSIVE":
         return "PROVEN_FAKE"
     return "UNSIGNED"
 
 
-def _verify_screening_report(row) -> dict:
-    """Replay a screening record as the legacy VerifyResult shape."""
-    kind = _screening_verdict_kind(row.verdict, row.adjudication)
-    reasons = _safe_json(row.signals) or []
-    reasons = [str(r) for r in reasons][:8]
+def _screening_lookup(row) -> dict:
+    """Latest matching screening record as a lean, adjudication-aware object."""
+    kind = _public_verdict_kind(row)
+    reasons = [str(r) for r in (_safe_json(row.signals) or [])][:8]
     ai_det = _safe_json(row.ai_detection) or {}
-    if kind == "UNSIGNED" and row.verdict == "REVIEW":
-        headline = "Screened — awaiting human adjudication"
-    elif kind == "UNSIGNED" and row.adjudication == "INCONCLUSIVE":
-        headline = "Screened — adjudicated inconclusive"
-    elif kind == "PROVEN_FAKE":
-        headline = "Proven fake — failed border screening"
-    elif kind == "AUTHENTIC":
-        headline = "Authentic — passed border screening"
-    else:
-        headline = "No record found"
     return {
         "verdict": kind,
         "message": {
-            "AUTHENTIC": "Signature and screening checks passed.",
-            "PROVEN_FAKE": "Forensic and screening checks prove this is forged.",
-            "REVOKED": "The issuing authority retracted this digest.",
-            "UNSIGNED": "No clean authority record for this digest.",
+            "AUTHENTIC": "Passed border screening — checks and adjudication agree.",
+            "PROVEN_FAKE": "Failed border screening — forensic checks prove this is forged.",
+            "UNSIGNED": "Screened but awaiting a supervisory adjudication.",
         }[kind],
         "hash": row.file_hash,
         "filename": row.filename,
-        "signer": (
-            {
-                "name": row.screener or "Screening Officer",
-                "institution": row.checkpoint or None,
-                "designation": None,
-                "signature_guidance": None,
-            }
-            if row.screener
-            else None
+        "checkpoint": row.checkpoint or "",
+        "headline": (
+            "Authentic — passed border screening" if kind == "AUTHENTIC"
+            else "Proven fake — failed border screening" if kind == "PROVEN_FAKE"
+            else "Screened — awaiting human adjudication"
         ),
-        "tx_hash": None,
-        "retracted": False,
-        "headline": headline,
-        "guidance": "This digest is bound into the append-only SHA-256 screening ledger. "
-                    "File a report to revisit it if you believe it is miscategorised.",
-        "forensic_leaning": "forged" if kind == "PROVEN_FAKE"
-            else ("verified" if kind == "AUTHENTIC" else "inconclusive"),
-        "forensic_tool": None,
-        "forensic_confidence": None,
+        "guidance": "This digest matches the latest screening record. Report it to the "
+                    "border desk if you believe the decision is miscategorised.",
+        "reasons": reasons,
+        "screening": {
+            "verdict": row.verdict,
+            "risk_score": row.risk_score,
+            "confidence": row.confidence,
+            "adjudication": row.adjudication,
+            "adjudicator": row.adjudicator,
+            "adjudication_note": row.adjudication_note,
+            "adjudicated_at": row.adjudicated_at,
+            "screener": row.screener,
+            "created_at": row.created_at,
+        },
         "ai_detection": ai_det or None,
         "ai_score": ai_det.get("ai_score"),
         "ai_model": ai_det.get("model"),
         "ai_provider": ai_det.get("provider"),
         "ai_explanation": ai_det.get("explanation"),
         "ai_suspected": ai_det.get("ai_suspected"),
-        "edited_suspected": None,
-        "likely_forged": kind == "PROVEN_FAKE",
-        "forgery_warned": kind == "PROVEN_FAKE",
-        "reasons": reasons,
-        "ledger": {
-            "found": True,
-            "hash": row.ledger_hash or row.file_hash,
-            "filename": row.filename,
-            "signed_at": row.created_at,
-            "retracted": False,
-            "revoked": False,
-            "signer_name": row.screener or None,
-            "signer_institution": row.checkpoint or None,
-            "signer_designation": None,
-            "issuer_pubkey": None,
-            "merkle_root": None,
-            "ipfs_cid": None,
-            "tx_hash": None,
-            "blockchain_explorer": None,
-        },
-        "blockchain_explorer": None,
-    }
-
-
-def _verify_notice(notice) -> dict:
-    """Replay a broadcast (issued or retracted) as the legacy VerifyResult."""
-    revoked = bool(notice.is_revoked)
-    return {
-        "verdict": "REVOKED" if revoked else "AUTHENTIC",
-        "message": ("The issuing authority revoked this digest." if revoked
-                    else "This digest matches a signed authority notice on the board."),
-        "hash": notice.file_hash,
-        "filename": notice.title or "authority notice",
-        "signer": {
-            "name": notice.signer,
-            "institution": notice.institution or None,
-            "designation": notice.designation or None,
-            "signature_guidance": None,
-        },
-        "tx_hash": None,
-        "retracted": revoked,
-        "headline": "Retracted authority notice" if revoked else "Signed authority notice",
-        "guidance": ("This digest was issued as an authority notice and later retracted; "
-                     "treat any copy as void." if revoked
-                     else "This digest is a signed authority notice. The issuing institution stands behind it."),
-        "reasons": [] if revoked else ["Signed authority broadcast — posted by the listed institution."],
-        "ledger": {
-            "found": True,
-            "hash": notice.file_hash,
-            "filename": notice.title or "authority notice",
-            "signature": notice.signature,
-            "signed_at": notice.timestamp,
-            "retracted": revoked,
-            "revoked": revoked,
-            "signer_name": notice.signer,
-            "signer_institution": notice.institution or None,
-            "signer_designation": notice.designation or None,
-            "issuer_pubkey": None,
-            "merkle_root": None,
-            "ipfs_cid": None,
-            "tx_hash": None,
-            "blockchain_explorer": None,
-        },
-        "blockchain_explorer": None,
     }
 
 
@@ -2358,10 +2194,9 @@ async def verify_digest(
     client_hash: str = Form(""),
     raw_text: str = Form(""),
 ):
-    """Ledger replay: derive the SHA-256 of an uploaded sample / pasted text /
-    caller-supplied digest and look it up in the screening ledger and notice
-    board. Returns the classic AUTHENTIC/PROVEN_FAKE/REVOKED/UNSIGNED verdict.
-    Raw bytes are hashed in memory and never stored."""
+    """Screening lookup: derive the SHA-256 of an uploaded sample / pasted text /
+    caller-supplied digest and return the latest matching screening record
+    (adjudication-aware verdict, reasons, masked fields — never raw bytes)."""
     if file is not None and file.filename:
         filename = file.filename
     elif raw_text.strip():
@@ -2384,36 +2219,27 @@ async def verify_digest(
             "message": "A full 64-character hex SHA-256 digest is expected.",
             "hash": digest,
             "filename": filename,
-            "signer": None,
-            "tx_hash": None,
             "headline": "No valid digest supplied",
             "guidance": "Drop the original file or paste its full SHA-256 hash.",
             "reasons": [],
-            "ledger": {"found": False},
-            "blockchain_explorer": None,
+            "screening": None,
         }
     with get_db() as db:
         row = (db.query(ScreeningReport).filter_by(file_hash=digest)
                .order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc())
                .first())
         if row:
-            return _verify_screening_report(row)
-        notice = db.query(NoticeBroadcast).filter_by(file_hash=digest).first()
-        if notice:
-            return _verify_notice(notice)
+            return _screening_lookup(row)
     return {
         "verdict": "UNSIGNED",
-        "message": "No matching record in the trusted screening ledger.",
+        "message": "No matching screening record for this digest.",
         "hash": digest,
         "filename": filename,
-        "signer": None,
-        "tx_hash": None,
-        "headline": "No record found",
-        "guidance": "This digest is not on the ledger. It may be unofficial, unscreened, or "
-                    "created by an authority that has not recorded it yet.",
+        "headline": "No screening record found",
+        "guidance": "This digest has not been screened at the border desk yet. Present the "
+                    "document at the nearest checkpoint for a screening run.",
         "reasons": [],
-        "ledger": {"found": False},
-        "blockchain_explorer": None,
+        "screening": None,
     }
 
 
@@ -2529,15 +2355,14 @@ def retract_broadcast(
 
 
 def _analytics_payload() -> dict:
-    """Aggregated verdict mix + latency (avg/min/max) from the screening ledger.
-    Aggregates only — never any PII."""
+    """Aggregated public-verdict mix + latency (avg/min/max) from screening
+    records. Aggregates only — never any PII."""
     stats = {"AUTHENTIC": 0, "PROVEN_FAKE": 0, "REVOKED": 0, "UNSIGNED": 0}
     latencies = []
     with get_db() as db:
         for r in db.query(ScreeningReport).all():
-            kind = _screening_verdict_kind(r.verdict, r.adjudication)
-            if kind != "REVOKED":
-                stats[kind] = stats.get(kind, 0) + 1
+            kind = _public_verdict_kind(r)
+            stats[kind] = stats.get(kind, 0) + 1
             lm = getattr(r, "latency_ms", None)
             if isinstance(lm, int) and lm and lm > 0:
                 latencies.append(lm)
@@ -2562,42 +2387,6 @@ def public_analytics(request: Request):
 @app.get("/api/analytics/summary")
 def public_analytics_summary(request: Request):
     return {"analytics": _analytics_payload(), "usage": None, "cached": False}
-
-
-@app.get("/api/ledger")
-def public_ledger(request: Request, limit: int = 50, offset: int = 0):
-    """Recent screening-records list for signed-in officers (AnalyticsView).
-    The overall figures stay public; the identifiable recent stream requires a
-    session, exactly like the original console."""
-    admin = _optional_admin_email(request)
-    if admin is None:
-        return {"signers": {}, "blocks": [], "total": 0, "is_super_admin": False}
-    with get_db() as db:
-        total = db.query(func.count(ScreeningReport.id)).scalar() or 0
-        rows = (db.query(ScreeningReport)
-                .order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc())
-                .offset(max(int(offset or 0), 0))
-                .limit(min(int(limit or 50), 200))
-                .all())
-    blocks = [{
-        "id": r.id,
-        "signer_email": r.screener or "",
-        "signer_name": r.screener or "Screening Officer",
-        "signer_institution": r.checkpoint or "",
-        "signer_designation": "",
-        "filename": r.filename,
-        "file_hash": r.file_hash,
-        "sig_hex": r.ledger_hash or "",
-        "timestamp": r.created_at,
-        "ipfs_cid": "",
-        "tx_hash": None,
-        "merkle_root": None,
-        "is_revoked": r.adjudication == "CONFIRMED_FRAUD" and r.verdict == "FLAGGED",
-        "crypto_mode": "sha256-chain",
-        "is_compromised": False,
-    } for r in rows]
-    return {"signers": {}, "blocks": blocks, "total": total,
-            "is_super_admin": is_super_admin(admin)}
 
 
 

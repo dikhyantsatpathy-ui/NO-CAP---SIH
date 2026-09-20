@@ -35,11 +35,11 @@ const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase().replace(
 const EXPLAIN_MAP: Record<string, { t: string; b: string }> = {
   "verify": {
     t: "Verify — the lookup counter",
-    b: "The front desk of the whole app. Pick any file, message or fingerprint, drop it here, and the app tells you if it's the genuine original, has been tampered with, was cancelled, or was never official at all. If you're unsure whether something is real, this is where you check.",
+    b: "The screening-desk lookup. Drop a file or paste a digest and the app tells you whether it matches an official screening record — genuine, tampered, revoked, or never seen. If you're unsure whether something is real, this is where you check.",
   },
   "authority": {
     t: "Authority — the officials' room",
-    b: "A locked staff area. Officials sign in with a Google account, wait for an admin to approve their job title, then use it to sign files, post emergency notices, manage the records, and screen identity documents. Regular readers can't get in.",
+    b: "A locked staff area. Officials sign in with a Google account, wait for an admin to approve their duty post, then use the desk to screen identity documents, adjudicate results, post watchlists and emergency notices. Regular readers can't get in.",
   },
   "analytics": {
     t: "Analytics — the scoreboard",
@@ -50,80 +50,40 @@ const EXPLAIN_MAP: Record<string, { t: string; b: string }> = {
     b: "Logs the official out and closes their secure session — like locking the desk drawer when you leave for lunch.",
   },
   "verify health": {
-    t: "Verify / run the check",
-    b: "Press this after choosing a file. It acts like a security hologram check: the app compares the file's unique fingerprint (its SHA-256 digest) against the official record, checks the signature, and instantly tells you — genuine, tampered, cancelled, or never registered.",
+    t: "Run the screening",
+    b: "Press this after choosing a file. The desk computes the file's unique fingerprint (its SHA-256 digest), runs the four screening modules, and returns an explainable risk score with a verdict — CLEAR, REVIEW, or FLAGGED.",
   },
   "verify another file": {
-    t: "Verify another file",
-    b: "Clears the current result so you can check a different file. Handy when you're going through a batch of suspicious messages.",
+    t: "Screen another file",
+    b: "Clears the current result so you can screen a different document. Handy when you're going through a batch of suspicious identities.",
   },
   "report this fake": {
     t: "Report this fake",
-    b: "For a result that came back as a forgery: it logs that exact copy as a scam so others can see it circulated, and the network learns from it.",
+    b: "For a result that screened as fraud: record the exact copy so the network learns from it and other checkpoints can match its fingerprint.",
   },
   "trust this file": {
     t: "Trust this file",
-    b: "A confirmation after a positive check: you ran the scan, the app says AUTHENTIC, so you can safely treat the file as the real thing.",
-  },
-  "verify who signed this": {
-    t: "Verify who signed this",
-    b: "Reveals the person behind the signature — name, job title and organisation. These details are assigned by an admin, not typed by the signer, so nobody can make themselves look important.",
-  },
-  "check with the issuer": {
-    t: "Check with the issuer",
-    b: "Shows the office that supposedly issued the file, so you can call them directly and double-check before you trust or share it.",
-  },
-  "no official source": {
-    t: "No official source",
-    b: "This button is greyed out on purpose: the file was never signed by any authority, so there is no official source to check yet.",
-  },
-  "compare": {
-    t: "Compare a copy",
-    b: "Paste another fingerprint (or drop a second copy) and the app immediately says match or mismatch. Perfect for spotting a slightly different 'copy' of a real file.",
+    b: "A confirmation after a positive check: you ran the screening, the desk says CLEAR, so you can safely accept the document as real.",
   },
   "google single sign-in": {
     t: "Google sign-in",
-    b: "The officials' unlock button. Sign in with Google, the server quietly creates a private signing key inside a locked vault, and gives you a session cookie. Your private key never leaves the server — you never see it, so nobody can steal it from you.",
-  },
-  "sign & anchor": {
-    t: "Sign & anchor",
-    b: "The official's 'make it official' button. It stamps the file with an invisible mark, records a receipt in the public ledger, and locks a summary onto the blockchain. You get the signed file back to distribute.",
+    b: "The officers' unlock button. Sign in with Google, the server checks your name against the approved duty list, and gives you a session cookie. Desk access is granted only by an administrator — never self-claimed.",
   },
   "issue signed broadcast": {
-    t: "Issue signed broadcast",
-    b: "The official's 'announce it' button. Takes the text message, signs it, timestamps it, and puts it on the public bulletin board so everyone can verify it's really from that office.",
+    t: "Issue authority notice",
+    b: "The officer's 'announce it' button. Takes an emergency notice, signs it with your identity, timestamps it, and puts it on the officer bulletin board so every checkpoint can see it.",
   },
   "issue broadcast": {
     t: "Issue broadcast",
-    b: "Publishes the draft message as a signed, timestamped emergency notice on the public board.",
+    b: "Publishes the draft message as a signed, timestamped emergency notice on the officer bulletin.",
   },
   "assign role": {
     t: "Assign role (admin only)",
-    b: "Admin-only: gives an official their job title and organisation. Whatever is typed here is what shows up on everything they sign. Officials can't write their own title, which stops impostors.",
-  },
-  "set pin": {
-    t: "Set PIN",
-    b: "Sets a secret 5-digit code. If the official's account is ever hijacked, this PIN is the emergency kill switch to shut down their signing key.",
-  },
-  "revoke access": {
-    t: "Revoke (kill switch)",
-    b: "The emergency stop button. Using the PIN, an official can permanently retire a signing key — and every file that key ever signed turns into REVOKED across the whole network, instantly. Old copies suddenly can't be trusted, which is exactly what you want if someone's keys were stolen.",
-  },
-  "reinstate": {
-    t: "Reinstate",
-    b: "The admin's undo button. Brings a revoked key back to life — but only with the original PIN, so one careless click can't un-retire a whole batch by accident.",
-  },
-  "batch anchor": {
-    t: "Batch anchor (L2 sync)",
-    b: "Admin command: bundles all unsealed records into one tree, then stamps its summary onto the blockchain — the permanent public receipt book that nobody can quietly edit.",
+    b: "Admin-only: gives an officer their duty post and institution. Whatever is typed here is what shows on everything they do. Officers can't write their own title, which stops impersonators.",
   },
   "inject demo attack": {
     t: "Inject demo attack",
     b: "A demo-only toy button. It plants fake 'caught a fake!' records so a judge can watch the fraud dashboard light up. The data is invented and harmless.",
-  },
-  "rollback ledger": {
-    t: "Rollback ledger",
-    b: "An admin emergency drill: wipes every record newer than a chosen time. It deliberately works while staying visible on the blockchain, so it can't be abused in secret.",
   },
   "screen document": {
     t: "Screen document",

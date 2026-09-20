@@ -153,6 +153,14 @@ export function recordMetric(verdict: string) {
   localStorage.setItem(LOCAL_METRICS_KEY, JSON.stringify(local));
 }
 
+/** Map a desk-risk verdict (CLEAR/REVIEW/FLAGGED) onto the analytics scopes:
+ *  CLEAR counts as AUTHENTIC, FLAGGED as PROVEN_FAKE, REVIEW as UNSIGNED. */
+export function recordScreeningMetric(verdict: string) {
+  const kind =
+    verdict === "CLEAR" ? "AUTHENTIC" : verdict === "FLAGGED" ? "PROVEN_FAKE" : "UNSIGNED";
+  recordMetric(kind);
+}
+
 export function getSessionMetrics(): MetricMap {
   return { ...sessionMetrics };
 }

@@ -1,16 +1,16 @@
 // ============================================================================
 // AnalyticsView — Analytics dashboard: scope stats, verdict breakdown, engine
-// timing, AI-detector quota and recent ledger activity.
+// timing, AI-detector quota and the last few screenings on the desk.
 // ============================================================================
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  getLedger,
-  type LedgerBlock,
+  getScreenQueue,
+  type ScreenReport,
 } from "../api";
 import { useAnalyticsSummary } from "../app/analyticsCache";
 import { getLocalMetrics, getSessionMetrics, useAuth } from "../app/state";
-import { copyText, shortHash, timeLabel } from "../app/util";
+import { timeLabel } from "../app/util";
 import { BarChart, HBarChart, type BarDatum } from "../components/Charts";
 import {
   Card,
@@ -19,7 +19,6 @@ import {
   IconBar,
   IconCheck,
   IconClock,
-  IconCopy,
   IconGrid,
   IconShield,
   Kicker,
@@ -41,7 +40,7 @@ const SCOPE_META: Record<Scope, { title: string; subtitle: string; badge: string
   },
   global: {
     title: "Network-wide",
-    subtitle: "All verifications recorded in the shared ledger",
+    subtitle: "All screenings recorded across the network",
     badge: "Global",
   },
 };
@@ -60,15 +59,15 @@ const VERDICT_CONFIG: Record<
   AUTHENTIC: {
     label: "Authentic",
     name: "Authentic",
-    chips: ["Signature checks out", "Merkle root valid", "No tampering"],
-    statusNote: "News and content checks agree",
+    chips: ["Checks passed", "Face match OK", "No tampering"],
+    statusNote: "Screening checks agree",
     color: "var(--seal-2)",
     tone: "seal",
   },
   PROVEN_FAKE: {
     label: "Proven fake",
     name: "Proven fake",
-    chips: ["Hash mismatch", "Synthetic noise", "Altered headers"],
+    chips: ["Rollback residue", "Synthetic noise", "Altered headers"],
     statusNote: "Flagged — fails the checks",
     color: "var(--danger)",
     tone: "danger",
@@ -76,16 +75,16 @@ const VERDICT_CONFIG: Record<
   REVOKED: {
     label: "Revoked",
     name: "Revoked",
-    chips: ["Retracted by issuer", "Kept on record"],
-    statusNote: "Signature was cancelled",
+    chips: ["Retracted by authority", "Kept on record"],
+    statusNote: "Notice was cancelled",
     color: "var(--warn)",
     tone: "amber",
   },
   UNSIGNED: {
-    label: "Unsigned",
-    name: "Unsigned",
-    chips: ["No authority signature", "No ledger record"],
-    statusNote: "Nothing links it to an authority",
+    label: "Not screened",
+    name: "Not screened",
+    chips: ["No screening record", "Submitted for desk"],
+    statusNote: "Nothing links it to a decision yet",
     color: "var(--slate)",
     tone: "slate",
   },
@@ -99,25 +98,24 @@ export function AnalyticsView() {
   const summary = useAnalyticsSummary(30000);
   const global = summary?.analytics ?? null;
   const usage = summary?.usage ?? null;
-  const [blocks, setBlocks] = useState<LedgerBlock[]>([]);
-  const [blocksReady, setBlocksReady] = useState(false);
-  const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [recent, setRecent] = useState<ScreenReport[]>([]);
+  const [recentReady, setRecentReady] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    setBlocksReady(false);
+    setRecentReady(false);
     if (!signedIn) {
-      setBlocks([]);
-      setBlocksReady(true);
+      setRecent([]);
+      setRecentReady(true);
       return () => {
         alive = false;
       };
     }
-    // The "recent" strip renders 7 rows — fetch 7, not the whole ledger.
-    getLedger(7).then((l) => {
+    // The "recent" strip renders 7 rows — fetch them from the screening queue.
+    getScreenQueue().then((q) => {
       if (alive) {
-        setBlocks(l.ok ? (l.data.blocks || []) : []);
-        setBlocksReady(true);
+        setRecent(q.ok ? (q.data.recent || []) : []);
+        setRecentReady(true);
       }
     });
     return () => {
@@ -125,7 +123,7 @@ export function AnalyticsView() {
     };
   }, [signedIn]);
 
-  const loading = !summary || !blocksReady;
+  const loading = !summary || !recentReady;
 
   const counts = useMemo(() => {
     if (scope === "session") return getSessionMetrics();
@@ -160,12 +158,6 @@ export function AnalyticsView() {
   const aiTotal = Object.values(global?.providers || {}).reduce((a, b) => a + (b || 0), 0);
   const model = usage?.model || "genai";
 
-  const handleCopy = (hash: string) => {
-    void copyText(hash);
-    setCopiedHash(hash);
-    window.setTimeout(() => setCopiedHash(null), 1800);
-  };
-
   // Distribution shares
   const authenticShare = total ? ((counts.AUTHENTIC || 0) / total) * 100 : 0;
   const provenFakeShare = total ? ((counts.PROVEN_FAKE || 0) / total) * 100 : 0;
@@ -178,10 +170,10 @@ export function AnalyticsView() {
       <div className="section__head rv">
         <div>
           <Kicker>Analytics</Kicker>
-          <h2>Verification statistics</h2>
+          <h2>Screening statistics</h2>
         </div>
         <p>
-          How many files have been checked, what the checks found, and how the detection engines are doing.
+          How many documents have been screened, what the checks found, and how the detection engines are doing.
         </p>
       </div>
 
@@ -222,9 +214,9 @@ export function AnalyticsView() {
                 <span style={{ color: "var(--seal-2)", display: "inline-flex" }}>
                   <IconShield size={15} />
                 </span>
-                <span className="distribution-card__title">Verification Results</span>
+                <span className="distribution-card__title">Screening Results</span>
               </div>
-              <span className="stat-note"><CountUp target={total} /> verifications</span>
+              <span className="stat-note"><CountUp target={total} /> screenings</span>
             </div>
 
             <div className="distribution-bar" role="meter" aria-label="Verdict distribution" aria-valuenow={total}>
@@ -322,7 +314,7 @@ export function AnalyticsView() {
                 <span style={{ color: "var(--seal-2)", display: "inline-flex" }}>
                   <IconCheck size={13} />
                 </span>
-                <span><CountUp target={counts.AUTHENTIC || 0} /> verified and trusted — signature and content checks passed.</span>
+                <span><CountUp target={counts.AUTHENTIC || 0} /> resolved and trusted — screening and face checks passed.</span>
               </div>
             </Card>
 
@@ -335,26 +327,26 @@ export function AnalyticsView() {
                       <span className="latency-stage__dot" />
                       <div>
                         <div className="latency-stage__name">Hash the file</div>
-                        <div className="latency-stage__val">SHA-256 digest in your browser</div>
+                        <div className="latency-stage__val">SHA-256 digest computed in your browser</div>
                       </div>
                     </div>
                     <div className="latency-stage">
                       <span className="latency-stage__dot" style={{ background: "var(--seal-2)" }} />
                       <div>
-                        <div className="latency-stage__name">Look up the ledger</div>
-                        <div className="latency-stage__val">Check if this digest is signed and recorded</div>
+                        <div className="latency-stage__name">Run 4-module screening</div>
+                        <div className="latency-stage__val">Format, watchlist, AI tamper &amp; face checks</div>
                       </div>
                     </div>
                     <div className="latency-stage">
                       <span className="latency-stage__dot" style={{ background: "var(--slate)" }} />
                       <div>
-                        <div className="latency-stage__name">Run AI image screening</div>
-                        <div className="latency-stage__val">Detect AI-generated or edited content</div>
+                        <div className="latency-stage__name">Record the outcome</div>
+                        <div className="latency-stage__val">Risk score saved to the screening queue</div>
                       </div>
                     </div>
                   </div>
                   <p className="stat-note mt-3">
-                    Built from the last <CountUp target={global!.latency!.samples} /> verifications · <CountUp target={aiTotal} /> AI screens
+                    Built from the last <CountUp target={global!.latency!.samples} /> screenings · <CountUp target={aiTotal} /> AI screens
                     run{Object.keys(global!.providers || {}).length
                       ? ` across ${Object.entries(global!.providers)
                           .map(([p, n]) => `${p}${n ? ` (${n})` : ""}`)
@@ -366,7 +358,7 @@ export function AnalyticsView() {
                 <EmptyNote>
                   No timing data yet.
                   <br />
-                  Run a few verifications and the timings will show up here.
+                  Run a few screenings and the timings will show up here.
                 </EmptyNote>
               )}
             </Card>
@@ -427,21 +419,21 @@ export function AnalyticsView() {
                 <div className="failopen-banner mt-4">
                   <span className="live-chip">
                     <span className="dot" aria-hidden="true" />
-                    Verification always works
+                    Screening always works
                   </span>
                   <span className="failopen-banner__desc">
-                    If the AI allowance runs out, image screening falls back to rule-based checks. Signing and
-                    signature verification are never affected.
+                    If the AI allowance runs out, image screening falls back to rule-based checks. The core
+                    format, watchlist and face modules are never affected.
                   </span>
                 </div>
               </Card>
             </div>
           )}
 
-          {/* ------------------------------------------------ Recent Ledger Activity */}
+          {/* ------------------------------------------------ Recent Screening Activity */}
           <div className="mt-5 rv rv--d4">
             <Card
-              title="Recent verifications"
+              title="Latest screenings"
               icon={<IconGrid size={14} />}
               aside={<span className="stat-note">Newest first</span>}
             >
@@ -450,45 +442,42 @@ export function AnalyticsView() {
                   <EmptyNote>
                     <span className="big">Sign-in required</span>
                     <br />
-                    The recent-record list is limited to signed-in authorities. The overall figures above stay
+                    The recent-screening list is limited to signed-in authorities. The overall figures above stay
                     visible to everyone.
                   </EmptyNote>
-                ) : !blocksReady ? (
-                  <EmptyNote>Loading recent records…</EmptyNote>
-                ) : blocks.length === 0 ? (
-                  <EmptyNote>Nothing verified yet.</EmptyNote>
+                ) : !recentReady ? (
+                  <EmptyNote>Loading recent screenings…</EmptyNote>
+                ) : recent.length === 0 ? (
+                  <EmptyNote>Nothing screened yet.</EmptyNote>
                 ) : (
                   <div className="ledger-stream__list">
-                    {blocks.slice(0, 7).map((b) => (
-                      <div className="ledger-stream__row" key={b.file_hash}>
+                    {recent.slice(0, 7).map((r) => (
+                      <div className="ledger-stream__row" key={r.id}>
                         <div className="ledger-stream__status">
-                          {b.is_revoked ? (
-                            <Pill tone="danger">REVOKED</Pill>
+                          {r.verdict === "CLEAR" ? (
+                            <Pill tone="seal">CLEAR</Pill>
+                          ) : r.verdict === "FLAGGED" ? (
+                            <Pill tone="danger">FLAGGED</Pill>
                           ) : (
-                            <Pill tone="seal">ANCHORED</Pill>
+                            <Pill tone="amber">REVIEW</Pill>
                           )}
                         </div>
                         <div className="ledger-stream__meta">
                           <div className="ledger-stream__name">
-                            <strong>{b.filename || "Signed Payload"}</strong>
+                            <strong>{r.filename || "Screened payload"}</strong>
                             <span className="stat-note" style={{ marginLeft: 8 }}>
-                              {b.signer_institution || "Authority"} · {b.signer_name}
+                              {r.doc_type || "doc"} · {r.checkpoint || "desk"}
                             </span>
                           </div>
                           <div className="ledger-stream__hash">
-                            <span className="mono">{shortHash(b.file_hash, 24)}</span>
-                            <button
-                              type="button"
-                              className="stream-copy-btn"
-                              onClick={() => handleCopy(b.file_hash)}
-                              title="Copy SHA-256 digest"
-                            >
-                              <IconCopy size={11} /> {copiedHash === b.file_hash ? "Copied" : "Copy"}
-                            </button>
+                            <span className="stat-note">
+                              risk {(r.risk_score ?? 0).toFixed(0)}/100 · {Math.round((r.confidence ?? 0) * 100)}% conf
+                              {r.screener ? ` · ${r.screener}` : ""}
+                            </span>
                           </div>
                         </div>
                         <div className="ledger-stream__time mono stat-note">
-                          <IconClock size={11} /> {timeLabel(b.timestamp)}
+                          <IconClock size={11} /> {timeLabel(r.created_at)}
                         </div>
                       </div>
                     ))}

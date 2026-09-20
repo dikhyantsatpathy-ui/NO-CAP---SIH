@@ -31,7 +31,7 @@ def face_verification(document_bytes: bytes | None = None,
     ArcFace cosine pass threshold drops 0.60 -> 0.52 so a legitimate aged
     document is not rejected on pixel drift alone. The adjustment is surfaced
     through `signals` ('Age Drift Compensation Active') so the desk — and the
-    ledger reasons array — can see exactly why the threshold moved.
+    explainable reasons array — can see exactly why the threshold moved.
     """
     from face_match import compare_faces
     result = {

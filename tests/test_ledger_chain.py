@@ -1,12 +1,10 @@
 """
 Unit and integration tests for:
-1. Cryptographic Append-Only Hash-Chain Ledger verification (/api/screen/ledger/verify)
-2. Aadhaar 5-Class YOLO Field Extraction (/api/screen/aadhaar-fields)
-3. Challenge-Response Webcam Liveness Verification (/api/screen/liveness)
-4. Forensic Court Dossier cryptographic block hash rendering
+1. Aadhaar 5-Class YOLO Field Extraction (/api/screen/aadhaar-fields)
+2. Challenge-Response Webcam Liveness Verification (/api/screen/liveness)
+3. Forensic Court Dossier rendering
 """
 
-import hashlib
 import io
 import os
 import sys
@@ -50,136 +48,6 @@ def client(monkeypatch):
     return TestClient(app, cookies={"nischay_session": sess_token})
 
 
-def test_ledger_verify_empty(client):
-    """Empty database returns valid genesis state."""
-    resp = client.get("/api/screen/ledger/verify")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["valid"] is True
-    assert data["total_blocks"] == 0
-    assert data["status"] == "EMPTY_CHAIN"
-
-
-def test_ledger_verify_unbroken_chain(client, monkeypatch):
-    """Sequential valid blocks pass cryptographic hash chain verification."""
-    SessionLocal = main.SessionLocal
-    db = SessionLocal()
-    try:
-        genesis = "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000"
-        hash1 = hashlib.sha256(f"{genesis}:hash1:CLEAR:12".encode("utf-8")).hexdigest()
-        rep1 = ScreeningReport(
-            id="blk_001",
-            file_hash="hash1",
-            filename="passport1.jpg",
-            doc_type="passport",
-            checkpoint="Raxaul ICP",
-            verdict="CLEAR",
-            risk_score=12,
-            confidence=0.95,
-            extracted_fields="{}",
-            signals="[]",
-            previous_hash=genesis,
-            ledger_hash=hash1,
-            ledger_status="AUTHENTIC",
-            screener="officer@ssb.gov.in",
-            created_at=now_utc(),
-        )
-        db.add(rep1)
-        db.flush()
-
-        hash2 = hashlib.sha256(f"{hash1}:hash2:REVIEW:50".encode("utf-8")).hexdigest()
-        rep2 = ScreeningReport(
-            id="blk_002",
-            file_hash="hash2",
-            filename="visa2.jpg",
-            doc_type="visa",
-            checkpoint="Raxaul ICP",
-            verdict="REVIEW",
-            risk_score=50,
-            confidence=0.88,
-            extracted_fields="{}",
-            signals="[]",
-            previous_hash=hash1,
-            ledger_hash=hash2,
-            ledger_status="AUTHENTIC",
-            screener="officer@ssb.gov.in",
-            created_at=now_utc(),
-        )
-        db.add(rep2)
-        db.commit()
-    finally:
-        db.close()
-
-    resp = client.get("/api/screen/ledger/verify")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["valid"] is True
-    assert data["total_blocks"] == 2
-    assert data["head_hash"] == hash2
-
-
-def test_ledger_tamper_detection(client):
-    """Altering any historical record breaks the hash chain and pinpoints the block."""
-    SessionLocal = main.SessionLocal
-    db = SessionLocal()
-    try:
-        genesis = "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000"
-        hash1 = hashlib.sha256(f"{genesis}:hash1:CLEAR:12".encode("utf-8")).hexdigest()
-        rep1 = ScreeningReport(
-            id="blk_001",
-            file_hash="hash1",
-            filename="passport1.jpg",
-            doc_type="passport",
-            checkpoint="Raxaul ICP",
-            verdict="CLEAR",
-            risk_score=12,
-            confidence=0.95,
-            extracted_fields="{}",
-            signals="[]",
-            previous_hash=genesis,
-            ledger_hash=hash1,
-            ledger_status="AUTHENTIC",
-            screener="officer@ssb.gov.in",
-            created_at=now_utc(),
-        )
-        db.add(rep1)
-        db.flush()
-
-        hash2 = hashlib.sha256(f"{hash1}:hash2:CLEAR:10".encode("utf-8")).hexdigest()
-        rep2 = ScreeningReport(
-            id="blk_002",
-            file_hash="hash2",
-            filename="visa2.jpg",
-            doc_type="visa",
-            checkpoint="Raxaul ICP",
-            verdict="CLEAR",
-            risk_score=10,
-            confidence=0.90,
-            extracted_fields="{}",
-            signals="[]",
-            previous_hash=hash1,
-            ledger_hash=hash2,
-            ledger_status="AUTHENTIC",
-            screener="officer@ssb.gov.in",
-            created_at=now_utc(),
-        )
-        db.add(rep2)
-        db.commit()
-
-        # Malicious actor tampers with rep1's risk score directly in DB
-        rep1.risk_score = 99
-        db.commit()
-    finally:
-        db.close()
-
-    resp = client.get("/api/screen/ledger/verify")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["valid"] is False
-    assert data["status"] == "CORRUPTED_CHAIN"
-    assert data["broken_at"] == "blk_001"
-
-
 def test_aadhaar_fields_endpoint(client):
     """POST /api/screen/aadhaar-fields returns detected zones and model metadata."""
     img_data = _synth_image(200, 200)
@@ -211,13 +79,13 @@ def test_liveness_endpoint(client):
     assert res["challenge"] == "blink"
 
 
-def test_dossier_contains_block_hash(client):
-    """Forensic Court Dossier renders cryptographic ledger block hash and previous hash."""
+def test_dossier_renders(client):
+    """Forensic Court Dossier renders screening record, adjudication and latency."""
     SessionLocal = main.SessionLocal
     db = SessionLocal()
     try:
         rep = ScreeningReport(
-            id="test_dossier_hash_block",
+            id="test_dossier_rep",
             file_hash="deadbeef12345678",
             filename="passport_custody.jpg",
             doc_type="passport",
@@ -228,9 +96,6 @@ def test_dossier_contains_block_hash(client):
             extracted_fields='{"passport":"K1234567"}',
             signals='["ICAO TD3 checksums valid"]',
             modules='{"extraction":{"ran":true},"validation":{"verdict":"PASS"},"tampering":{"verdict":"PASS"},"face":{"verdict":"PASS"}}',
-            ledger_status="AUTHENTIC",
-            previous_hash="PREV_HASH_ABCDEF123456",
-            ledger_hash="CURR_HASH_FEDCBA654321",
             screener="officer@ssb.gov.in",
             created_at=now_utc(),
         )
@@ -239,8 +104,9 @@ def test_dossier_contains_block_hash(client):
     finally:
         db.close()
 
-    resp = client.get("/api/screen/dossier/test_dossier_hash_block")
+    resp = client.get("/api/screen/dossier/test_dossier_rep")
     assert resp.status_code == 200
-    assert "CURR_HASH_FEDCBA654321" in resp.text
-    assert "PREV_HASH_ABCDEF123456" in resp.text
-    assert "Ledger Block Hash" in resp.text
+    assert "Evidentiary Forensic Dossier" in resp.text
+    assert "CRYPTOGRAPHIC CUSTODY SEAL" in resp.text
+    assert "Screened By" in resp.text
+    assert "officer@ssb.gov.in" in resp.text

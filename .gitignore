@@ -67,3 +67,5 @@ frontend/dist/
 frontend/.env
 frontend/smoke/out.*
 .vite/
+.vercel
+.env*

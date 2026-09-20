@@ -1,10 +1,7 @@
 // ============================================================================
-// NoticeBoard — the public bulletin of signed authority broadcasts.
-//
-// Shows the most recent 24h of notices as a live feed; "view all" expands the
-// feed card itself (no modal) so the page stays scrollable. Signed-in
-// authorities can retract their own notices; everyone can re-verify a
-// notice's digest (ledger-only check) or copy its hash.
+// NoticeBoard — officer bulletin of authority broadcasts. Lives inside the
+// screening desk (authority session only). Signed-in officers can post/retract
+// their own notices; every broadcast carries an SHA-256 digest of its content.
 // ============================================================================
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,14 +9,11 @@ import {
   createBroadcast,
   deleteBroadcast,
   getBroadcasts,
-  verifyHash,
   type Broadcast,
-  type VerifyResult,
 } from "../api";
-import { recordMetric, useToast } from "../app/state";
+import { useToast } from "../app/state";
 import { copyText, parseUtc, shortHash, timeLabel, urgencyMeta } from "../app/util";
 import { Button, Card, EmptyNote, IconBolt, IconClock, IconLayers, IconShield, Pill } from "./ui";
-import { VerdictCard } from "./VerdictCard";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -50,7 +44,6 @@ function NoticeContent({ b }: { b: Broadcast }) {
 export function NoticeBoard() {
   const { toast } = useToast();
   const [rows, setRows] = useState<Broadcast[]>([]);
-  const [authed, setAuthed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyHash, setBusyHash] = useState<string | null>(null);
 
@@ -61,15 +54,10 @@ export function NoticeBoard() {
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
 
-  // verification of a notice digest (opens its VerdictCard inline)
-  const [verifying, setVerifying] = useState<string | null>(null);
-  const [verdict, setVerdict] = useState<{ name: string; result: VerifyResult } | null>(null);
-
   const load = useCallback(async () => {
     const res = await getBroadcasts(200);
     if (res.ok) {
       setRows(res.data.broadcasts);
-      setAuthed(res.data.authed);
     }
     setLoading(false);
   }, []);
@@ -86,21 +74,8 @@ export function NoticeBoard() {
     if (await copyText(h)) toast("Digest copied.", "success");
   };
 
-  const verifyDigest = async (b: Broadcast) => {
-    setVerifying(b.file_hash);
-    setVerdict(null);
-    const res = await verifyHash(b.file_hash);
-    if (res.ok) {
-      recordMetric(res.data.verdict);
-      setVerdict({ name: b.file_hash, result: res.data });
-    } else {
-      toast(res.error, "error");
-    }
-    setVerifying(null);
-  };
-
   const retract = async (b: Broadcast) => {
-    if (!window.confirm(`Retract "${b.title}"? The digest stays in the ledger, marked revoked.`)) return;
+    if (!window.confirm(`Retract "${b.title}"? The digest stays recorded as REVOKED.`)) return;
     setBusyHash(b.file_hash);
     const res = await deleteBroadcast(b.file_hash);
     if (res.ok) {
@@ -169,7 +144,7 @@ export function NoticeBoard() {
             </div>
             <div className="notice-empty-state__title">Provenance bulletin operational</div>
             <p className="notice-empty-state__desc">
-              No emergency notices or retractions have been issued on the ledger yet.
+              No emergency notices or retractions have been issued yet.
             </p>
           </div>
         ) : activeTab === "24h" && recent.length === 0 ? (
@@ -182,15 +157,6 @@ export function NoticeBoard() {
             <p className="notice-empty-state__desc">
               Zero emergency broadcasts or security retractions issued across the network in the last 24 hours.
             </p>
-            <div style={{ marginTop: 14 }}>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => setActiveTab("archive")}
-              >
-                <IconLayers size={13} /> View archive ({rows.length})
-              </button>
-            </div>
           </div>
         ) : (
           <div
@@ -226,13 +192,6 @@ export function NoticeBoard() {
                       </div>
                     )}
                     <div className="notice-row__actions">
-                      <button
-                        className="mini-btn"
-                        onClick={() => void verifyDigest(b)}
-                        disabled={verifying === b.file_hash}
-                      >
-                        {verifying === b.file_hash ? "Checking…" : "Verify digest"}
-                      </button>
                       <button className="mini-btn" onClick={() => void copyHash(b.file_hash)}>
                         Copy hash
                       </button>
@@ -254,18 +213,12 @@ export function NoticeBoard() {
         )}
         <div className="notice-row__actions" style={{ margin: "10px 12px 0", borderTop: "1px solid var(--line)", paddingTop: 10 }}>
           <span className="stat-note">
-            {activeTab === "24h" ? `Viewing past 24h window (${recent.length} notices)` : `Full ledger archive (${rows.length} notices)`}
+            {activeTab === "24h" ? `Viewing past 24h window (${recent.length} notices)` : `Full notice archive (${rows.length} notices)`}
           </span>
-          {!authed && (
-            <span className="stat-note" style={{ marginLeft: "auto" }}>
-              retraction requires authority session
-            </span>
-          )}
         </div>
       </Card>
 
-      {authed && (
-        <div className="notice-compose mt-3">
+      <div className="notice-compose mt-3">
           <button type="button" className="mini-btn" onClick={() => setComposing((v) => !v)}>
             {composing ? "Cancel" : "Post an authority notice"}
           </button>
@@ -310,18 +263,6 @@ export function NoticeBoard() {
             </div>
           )}
         </div>
-      )}
-
-      {verdict && (
-        <div style={{ marginTop: 18 }}>
-          <VerdictCard
-            result={verdict.result}
-            name={verdict.name}
-            rawBlob={null}
-            onVerifyAnother={() => setVerdict(null)}
-          />
-        </div>
-      )}
     </>
   );
 }

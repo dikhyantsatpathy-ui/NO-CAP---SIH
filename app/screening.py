@@ -5,8 +5,8 @@ MHA identity-document screening pipeline — SIH 2026 PS SIH26188.
 Affairs). The flow is the statement's own: Upload -> Extract -> Analyze ->
 Verify -> Assess Risk. Every conclusion is *explainable*: each risk point
 carries a human-readable reason, the same file is cross-referenced against
-the provenance ledger AND the AI detectors, and the system keeps an audit
-trail while storing ZERO raw document bytes or text (only SHA-256 hashes,
+the watchlist AND the AI detectors, and the system keeps an audit trail
+while storing ZERO raw document bytes or text (only SHA-256 hashes,
 masked identifiers, and explainable signals — same zero-storage philosophy
 as the rest of nocap).
 
@@ -328,11 +328,6 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else ""
     started = time.monotonic()
 
-    # ---- Audit-trail record ------------------------------------------------
-    # Every screening pass is itself the durable, tamper-evident record
-    # (stored in screening_reports; no external chain is consulted).
-    ledger_status = "LOCAL"
-
     # ---- Module 1: Extract (OCR/MRZ + declared merge) --------------------------
     extract_res = extract_document(data, filename, doc_type or "", declared)
     fields = extract_res["fields"]
@@ -409,7 +404,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     # ---- Analyze: signals, each one explainable ----------------------------
     reasons = []
     # Face-verification signals (e.g. 'Age Drift Compensation Active') surface
-    # any threshold adjustment here, so the desk and the ledger row both see
+    # any threshold adjustment here, so the desk and the saved report both see
     # why the ArcFace threshold moved for an aged document photo.
     for sig in (face_res.get("signals") or []):
         reasons.append(sig)
@@ -624,35 +619,6 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     risk = max(0, min(100, risk))
     verdict = _grade(risk)
 
-    # ---- Immutable hash-chain ledger block ---------------------------------
-    # ledger_hash = SHA-256(previous_hash ":" file_hash ":" verdict ":" risk).
-    # ":"-delimiting forbids the concatenation-ambiguity classes (e.g. a block
-    # with prev="ab" / file_hash="c" vs prev="a" / file_hash="bc"), so the four
-    # named fields are cryptographically unambiguous. Editing ANY historical row
-    # invalidates the digest for every successor — tamper-evidence by geometry.
-    previous_hash = "GENESIS"   # block 0 anchors the chain
-    if db is not None:
-        try:
-            from sqlalchemy import text as _text
-            # Serialize concurrent appends so two blocks never claim the same
-            # parent. Postgres-only: on SQLite this function does not exist AND
-            # a failed execute would poison the session transaction, so gate by
-            # dialect before running it (single writer suffices on SQLite).
-            if getattr((db.get_bind().dialect if hasattr(db, "get_bind") else None),
-                       "name", "") == "postgresql":
-                db.execute(_text("SELECT pg_advisory_xact_lock(86720126)"))
-            head = (db.query(ScreeningReport.ledger_hash)
-                    .order_by(ScreeningReport.created_at.desc(),
-                              ScreeningReport.id.desc())
-                    .first())
-            if head and head[0]:
-                previous_hash = head[0]
-        except Exception:
-            pass  # lock-less backend: single-writer guarantees must suffice
-    ledger_hash = hashlib.sha256(
-        f"{previous_hash}:{file_hash}:{verdict}:{risk}".encode("utf-8")
-    ).hexdigest()
-
     report = {
         "id": uuid.uuid4().hex[:16],
         "file_hash": file_hash,
@@ -664,9 +630,6 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "syndicate_alerts": syndicate_alerts,
         "risk_score": risk,
         "confidence": confidence,
-        "ledger_status": ledger_status,
-        "previous_hash": previous_hash,
-        "ledger_hash": ledger_hash,
         "masked_fields": {k: (mask(v) if isinstance(v, str) else v)
                           for k, v in fields.items()},
         "watchlist_hits": hits,
@@ -712,13 +675,12 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         id=report["id"], file_hash=file_hash, filename=report["filename"],
         doc_type=report["doc_type"], checkpoint=report["checkpoint"],
         verdict=verdict, risk_score=risk, confidence=confidence,
-        previous_hash=previous_hash, ledger_hash=ledger_hash,
         extracted_fields=json.dumps(report["masked_fields"]),
         signals=json.dumps(reasons),
         ai_detection=json.dumps(report["ai_detection"]),
         modules=json.dumps({k: report["modules"].get(k, {}).get("verdict")
                             for k in ("validation", "tampering", "face")}),
-        ledger_status=ledger_status, screener=screener,
+        screener=screener,
         latency_ms=report.get("latency_ms"),
         created_at=report["created_at"],
     ))

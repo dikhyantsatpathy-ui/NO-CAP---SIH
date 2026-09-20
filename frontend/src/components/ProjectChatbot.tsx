@@ -280,8 +280,8 @@ export default function ProjectChatbot() {
           <div className="guide-bot__msgs" ref={listRef} onClick={onListClick}>
             {msgs.length === 0 && (
               <p className="guide-bot__welcome">
-                Ask about <strong>cryptographic signing</strong>, <strong>Merkle tree blockchain anchoring</strong>,{" "}
-                <strong>kill-switch revocation</strong>, <strong>MHA identity screening</strong>,{" "}
+                Ask about <strong>AI document screening</strong>, <strong>4-module forensics</strong>,{" "}
+                <strong>adjudication &amp; watchlists</strong>, <strong>MHA identity checks</strong>,{" "}
                 <strong>FastAPI backend routes</strong>, <strong>React components</strong>, or any file in the <strong>entire repository</strong>.
               </p>
             )}

@@ -217,9 +217,6 @@ export interface ScreenReport {
   verdict: ScreenVerdict;
   risk_score: number;
   confidence: number;
-  ledger_status: string;
-  previous_hash?: string | null;
-  ledger_hash?: string | null;
   screener?: string | null;
   created_at: string;
   adjudication?: string | null;
@@ -413,20 +410,6 @@ export function getDossierUrl(reportId: string, autoPrint: boolean = false): str
   return `/api/screen/dossier/${encodeURIComponent(reportId)}${autoPrint ? "?print=true" : ""}`;
 }
 
-export interface LedgerVerificationResult {
-  valid: boolean;
-  total_blocks: number;
-  head_hash: string | null;
-  genesis_hash: string;
-  broken_at?: string | null;
-  reason?: string | null;
-  status: string;
-}
-
-export function verifyLedgerChain() {
-  return request<LedgerVerificationResult>("/api/screen/ledger/verify");
-}
-
 export interface AadhaarFieldBox {
   label: string;
   class_id?: number;
@@ -476,63 +459,40 @@ export function verifyLiveness(frames: Blob[], challenge: string = "blink", meta
 }
 
 // ----------------------------------------------------------------------------
-// Public provenance & analytics — the original NoCap surfaces, re-integrated on
-// top of the SIH26188 screening ledger (statistics, notice board, digest
-// verification, analytics).
+// Screening lookup & analytics — verified-digest surface for the screening
+// desk. The lookup re-verifies a file/text/digest against past screening
+// records; analytics aggregates verdict mix + latency. No raw bytes, no PII.
 // ----------------------------------------------------------------------------
 
 export type VerdictKind = "AUTHENTIC" | "PROVEN_FAKE" | "REVOKED" | "UNSIGNED";
 
-export interface SignerSummary {
-  name?: string;
-  institution?: string;
-  designation?: string;
-  signature_guidance?: string;
-}
-
-export interface LedgerReceipt {
-  found: boolean;
-  hash?: string;
-  filename?: string;
-  signature?: string;
-  signed_at?: string;
-  merkle_root?: string | null;
-  ipfs_cid?: string | null;
-  tx_hash?: string | null;
-  retracted?: boolean;
-  revoked?: boolean;
-  signer_name?: string;
-  signer_institution?: string | null;
-  signer_designation?: string | null;
-  issuer_pubkey?: string | null;
-  blockchain_explorer?: string | null;
-}
-
-export interface VerifyResult {
+/** Latest matching screening record for a digest (adjudication-aware verdict). */
+export interface ScreeningLookup {
   verdict: VerdictKind;
   message: string;
   hash: string;
   filename: string;
-  signer?: SignerSummary;
-  tx_hash: string | null;
-  retracted?: boolean;
+  checkpoint: string;
   headline: string;
   guidance: string;
-  forensic_leaning?: string;
-  forensic_tool?: string | null;
-  forensic_confidence?: number;
+  reasons: string[];
+  screening: {
+    verdict: ScreenVerdict;
+    risk_score: number;
+    confidence: number;
+    adjudication?: string | null;
+    adjudicator?: string | null;
+    adjudication_note?: string | null;
+    adjudicated_at?: string | null;
+    screener?: string | null;
+    created_at: string;
+  } | null;
   ai_detection?: AiDetection | null;
   ai_score?: number;
   ai_model?: string | null;
   ai_provider?: string | null;
   ai_explanation?: string;
   ai_suspected?: boolean;
-  edited_suspected?: boolean;
-  likely_forged?: boolean;
-  forgery_warned?: boolean;
-  reasons?: string[];
-  ledger?: LedgerReceipt;
-  blockchain_explorer?: string | null;
 }
 
 export interface Broadcast {
@@ -551,11 +511,6 @@ export interface Broadcast {
   has_media: boolean;
   is_mine: boolean;
   can_delete: boolean;
-}
-
-export interface Stats {
-  signed_docs: number;
-  trusted_issuers: number;
 }
 
 export interface AnalyticsPayload {
@@ -583,55 +538,24 @@ export interface AnalyticsSummary {
   cached: boolean;
 }
 
-export interface LedgerBlock {
-  id: string;
-  signer_email: string;
-  signer_name: string;
-  signer_institution: string;
-  signer_designation: string;
-  filename: string;
-  file_hash: string;
-  sig_hex: string;
-  timestamp: string;
-  ipfs_cid: string;
-  tx_hash: string | null;
-  merkle_root: string | null;
-  is_revoked: boolean;
-  crypto_mode: string;
-  is_compromised: boolean;
-}
-
-export interface LedgerPayload {
-  signers: Record<string, unknown>;
-  blocks: LedgerBlock[];
-  total: number;
-  is_super_admin: boolean;
-}
-
-/** Files over ~3.5MB skip the raw upload: the browser sends this sample prefix
- *  plus the FULL-file digest, keeping the request under the platform cap. */
-export const LARGE_FILE_SAMPLE_BYTES = 2 * 1024 * 1024;
-
-export function getStats() {
-  return request<Stats>("/api/stats");
-}
-
+/** Screening lookup: re-check a file against the latest matching screening pass. */
 export function verifyFile(file: Blob, filename: string, clientHash?: string) {
   const fd = new FormData();
   fd.append("file", file, filename);
   if (clientHash) fd.append("client_hash", clientHash);
-  return request<VerifyResult>("/api/verify", { method: "POST", body: fd });
+  return request<ScreeningLookup>("/api/verify", { method: "POST", body: fd });
 }
 
+/** Screening lookup: paste raw text, hashed client-side the same way. */
 export function verifyText(rawText: string) {
   const fd = form({ raw_text: rawText });
-  return request<VerifyResult>("/api/verify", { method: "POST", body: fd });
+  return request<ScreeningLookup>("/api/verify", { method: "POST", body: fd });
 }
 
-/** Ledger-only check: re-verify a digest with no uploaded content. */
+/** Screening lookup: re-check a digest with no uploaded content. */
 export function verifyHash(hash: string) {
   const fd = form({ client_hash: hash });
-  return request<VerifyResult>("/api/verify", { method: "POST", body: fd });
+  return request<ScreeningLookup>("/api/verify", { method: "POST", body: fd });
 }
 
 export function getBroadcasts(limit = 200) {
@@ -659,12 +583,4 @@ export function getAnalytics() {
 /** One round trip for the whole dashboard (tallies + latency + quota). */
 export function getAnalyticsSummary() {
   return request<AnalyticsSummary>("/api/analytics/summary");
-}
-
-export function getLedger(limit?: number, offset?: number) {
-  const params = new URLSearchParams();
-  if (limit != null) params.set("limit", String(limit));
-  if (offset) params.set("offset", String(offset));
-  const q = params.toString();
-  return request<LedgerPayload>(`/api/ledger${q ? `?${q}` : ""}`);
 }

@@ -1,8 +1,8 @@
 // ============================================================================
 // AuthorityView — the screening console (SSB border inspection / SIH26188):
 // Google Single Sign-In gate, the 4-module screening desk, adjudication queue,
-// cross-border syndicate monitor, watchlist, and (super-admin) officer role
-// approvals. The signing/ledger/admin capabilities were removed.
+// cross-border syndicate monitor, watchlist, officer bulletin, and (super-admin)
+// role approvals. The signing/ledger/anchor capabilities were removed.
 // ============================================================================
 
 import { useEffect, useRef, useState } from "react";
@@ -26,10 +26,8 @@ import {
   SCREEN_WATCHLIST_LABELS,
   SCREEN_WATCHLIST_PLACEHOLDERS,
   screenDocument,
-  verifyLedgerChain,
   verifyLiveness,
   type AadhaarFieldBox,
-  type LedgerVerificationResult,
   type LivenessResult,
   type OfficerEntry,
   type ScreenDocType,
@@ -41,7 +39,7 @@ import {
   type WatchlistEntry,
 } from "../api";
 import { SPECIMEN_PRESETS, generateSpecimenFile, type SpecimenPreset } from "../app/specimens";
-import { useAuth, useToast } from "../app/state";
+import { useAuth, recordScreeningMetric, useToast } from "../app/state";
 import { initials } from "../app/util";
 import {
   Button,
@@ -60,6 +58,7 @@ import {
   useGsiReady,
 } from "../components/ui";
 import { FALLBACK_CLIENT_ID } from "./gsi";
+import { NoticeBoard } from "../components/NoticeBoard";
 
 // ----------------------------------------------------------------------------
 // Auth gate + Google sign-in button
@@ -849,8 +848,6 @@ export function ScreeningDesk() {
   const [syndicateFilter, setSyndicateFilter] = useState("");
   const [aadhaarBoxes, setAadhaarBoxes] = useState<AadhaarFieldBox[] | null>(null);
   const [aadhaarBusy, setAadhaarBusy] = useState(false);
-  const [ledgerVerifyResult, setLedgerVerifyResult] = useState<LedgerVerificationResult | null>(null);
-  const [ledgerBusy, setLedgerBusy] = useState(false);
 
   const handleInspectAadhaar = async () => {
     const f = file[0];
@@ -864,22 +861,6 @@ export function ScreeningDesk() {
     if (res.ok) {
       setAadhaarBoxes(res.data.fields);
       toast(`Detected ${res.data.count} field zones using 5-class YOLO model.`, "info");
-    } else {
-      toast(res.error, "error");
-    }
-  };
-
-  const handleVerifyLedger = async () => {
-    setLedgerBusy(true);
-    const res = await verifyLedgerChain();
-    setLedgerBusy(false);
-    if (res.ok) {
-      setLedgerVerifyResult(res.data);
-      if (res.data.valid) {
-        toast(`Ledger integrity verified (${res.data.total_blocks} blocks unbroken).`, "success");
-      } else {
-        toast(`Ledger verification failed: ${res.data.reason}`, "error");
-      }
     } else {
       toast(res.error, "error");
     }
@@ -937,6 +918,7 @@ export function ScreeningDesk() {
     setBusy(false);
     if (res.ok) {
       setReport(res.data);
+      recordScreeningMetric(res.data.verdict);
       toast(
         `Screen complete — ${res.data.verdict} (risk ${res.data.risk_score}/100).`,
         res.data.verdict === "FLAGGED" ? "error" : res.data.verdict === "REVIEW" ? "warn" : "success",
@@ -1235,32 +1217,10 @@ export function ScreeningDesk() {
                 <span className="stat-note"> /100 risk</span>
               </span>
               <span className="stat-note">confidence {(report.confidence * 100).toFixed(0)}%</span>
-              <Pill tone="slate">
-                record: {report.ledger_status}
-              </Pill>
-              {report.ledger_hash && (
-                <span
-                  className="mono stat-note"
-                  style={{ fontSize: 10, background: "var(--surface-3)", padding: "3px 7px", borderRadius: 4, border: "1px solid var(--line-2)" }}
-                  title={`Block Hash: ${report.ledger_hash}\nPrevious Block Hash: ${report.previous_hash || "genesis"}`}
-                >
-                  block: {report.ledger_hash.slice(0, 8)}…
-                </span>
-              )}
               {report.watchlist_hits && report.watchlist_hits.length > 0 && (
                 <Pill tone="danger">watchlist hit</Pill>
               )}
               <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-                <button
-                  type="button"
-                  className="btn btn--outline btn--sm"
-                  style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}
-                  disabled={ledgerBusy}
-                  onClick={() => void handleVerifyLedger()}
-                  title="Verify cryptographic SHA-256 hash-chain across all historical screening blocks"
-                >
-                  🔗 {ledgerBusy ? "Verifying…" : "Verify Chain"}
-                </button>
                 <a
                   href={`/api/screen/dossier/${encodeURIComponent(report.id)}`}
                   target="_blank"
@@ -1278,37 +1238,6 @@ export function ScreeningDesk() {
               {formatScreenDocType(report.doc_type)} · {report.checkpoint || "no checkpoint"} · {report.created_at}
             </div>
           </div>
-
-          {ledgerVerifyResult && (
-            <div
-              className="mt-3"
-              style={{
-                background: ledgerVerifyResult.valid ? "rgba(16, 185, 129, 0.12)" : "rgba(239, 68, 68, 0.14)",
-                border: `1px solid ${ledgerVerifyResult.valid ? "rgba(16, 185, 129, 0.4)" : "rgba(239, 68, 68, 0.5)"}`,
-                borderRadius: 6,
-                padding: "8px 12px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 8
-              }}
-            >
-              <div>
-                <strong>{ledgerVerifyResult.valid ? "✅ Hash-Chain Ledger Verified:" : "❌ Ledger Tampering Detected:"}</strong>{" "}
-                <span>{ledgerVerifyResult.reason || ledgerVerifyResult.status}</span>{" "}
-                <span className="mono stat-note">({ledgerVerifyResult.total_blocks} blocks)</span>
-              </div>
-              <button
-                type="button"
-                className="btn btn--outline btn--sm"
-                style={{ fontSize: 10, padding: "2px 6px" }}
-                onClick={() => setLedgerVerifyResult(null)}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
 
           <div className="risk-meter mt-3">
             <span className={`risk-meter__fill risk-meter__fill--${vm.pill}`} style={{ width: `${report.risk_score}%` }} />
@@ -1739,6 +1668,10 @@ export function AuthorityView() {
           <OfficerDirectory />
         </div>
       )}
+
+      <div className="rv rv--d4 mt-4">
+        <NoticeBoard />
+      </div>
 
       <div style={{ height: 16 }} />
     </section>

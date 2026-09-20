@@ -191,7 +191,6 @@ def test_evidentiary_dossier_endpoint(monkeypatch):
             extracted_fields='{"passport":"L898902C","name":"VIKRAM SHARMA"}',
             signals='["ICAO TD3 checksums valid"]',
             modules='{"extraction":{"ran":true},"validation":{"verdict":"PASS"},"tampering":{"verdict":"PASS"},"face":{"verdict":"PASS"}}',
-            ledger_status="AUTHENTIC",
             screener="officer@example.com",
             created_at=now_utc(),
         )
