@@ -291,11 +291,10 @@ Explain Mode, theme, specimen presets, offline chatbot KB (`knowledge.ts`) with 
 - Face M4 (ArcFace path + dHash always) **+ Age-Aware Adaptive Thresholding**
 - **Append-only cryptographic hash-chain ledger** (`GET /api/screen/ledger/verify` + block hashes on dossiers + UI “Verify Chain” button)
 - **Aadhaar 5-class YOLO field extraction route + UI chips** (`POST /api/screen/aadhaar-fields`)
-- **Interactive challenge-response webcam liveness** (`POST /api/screen/liveness` + LiveCapture wiring + camera selector + HUD)
-- **Frontend Cyber Command Redesign**: Segregated sub-nav tab bar (`Screening Desk`, `Adjudication Queue`, `Syndicate Monitor`, `Watchlist`, `Blockchain Ledger`, `Officer Roster`, `Bulletins`) with dedicated sortable/filterable sub-tables and metric badges.
+- **Interactive challenge-response webcam liveness** (`POST /api/screen/liveness` + LiveCapture wiring)
 - Gemini chat + offline KB + Explain Mode + specimens
 - Frontend production build clean (`npm run build` → `app/static/index.html`)
-- **104 pytest passed, 1 skipped, 0 failures**
+- **102 pytest passed, 1 skipped, 0 failures**
 
 **Still environment-dependent / partial:**
 - ArcFace quality depends on presence of `FACE_EMBED_MODEL` + `onnxruntime` (dHash always available)
@@ -305,7 +304,9 @@ Explain Mode, theme, specimen presets, offline chatbot KB (`knowledge.ts`) with 
 - Weight files remain gitignored (by design)
 
 **Intentionally de-scoped / residual:**
+- Full interactive multi-round liveness challenge UI polish (core endpoint + basic wiring present)
 - Re-evaluation of unsigned `evaluator@ssb.gov.in` fallback scope (still deliberate for demos)
+- Commit hygiene / clean history (working tree changes exist; stage when ready)
 
 ---
 
@@ -315,16 +316,14 @@ Explain Mode, theme, specimen presets, offline chatbot KB (`knowledge.ts`) with 
 1. ~~Wire `extract_aadhaar_fields` into endpoint + UI~~ → **DONE** (`POST /api/screen/aadhaar-fields` + 5-Class ID Zones chips)
 2. ~~Implement age-aware threshold adjustment~~ → **DONE** (dynamic ArcFace/dHash relaxation for docs > 4 years)
 3. ~~Append-only SHA-256 checksum chain~~ → **DONE** (ledger verify endpoint + dossier seals + UI banner)
-4. ~~Interactive challenge-response liveness~~ → **DONE** (endpoint + LiveCapture HUD overlay + randomized challenge + 3-frame burst + biometric gate)
-5. ~~External Blockchain Ledger Notarization~~ → **DONE** (`POST /api/screen/ledger/anchor`, `GET /api/screen/ledger/anchor`, `scripts/anchor_ledger.py` CLI with `--verify`/`--remote`, Gist/HMAC-SHA256 non-repudiation notary)
-6. ~~Frontend UI Overhaul with Tabbed Sub-Tables~~ → **DONE** (Segregated `AuthorityView` into modular architecture under `frontend/src/views/authority/` with dedicated sub-components for Desk, Queue, Syndicate, Watchlist, Ledger, Roster, Scorecard, and LiveCapture)
-7. ~~Nested Expandable Sub-Tables~~ → **DONE** (Added interactive accordion sub-tables across all operational views: Queue 4-module check evidence + extracted attributes + blockchain linkage; Syndicate linked border incidents; Ledger cryptographic transaction payloads; Watchlist encounter histories; Officer duty shift assignments)
-8. ~~Commit hygiene & production deployment~~ → **DONE** (Clean commits on `main`, pushed to `https://github.com/dikhyantsatpathy-ui/NO-CAP---SIH.git`, live and verified on `https://no-cap-sih.vercel.app`)
+4. ~~Interactive challenge-response liveness~~ → **DONE** (endpoint + LiveCapture integration)
 
 **Still open / owner decisions:**
 1. Confirm Aadhaar class-name semantics with a real prediction strip on diverse samples (provisional labels still in use).
 2. Re-evaluate unsigned `evaluator@ssb.gov.in` fallback scope for queue/report visibility in production deployments.
-3. Any new feature must continue to preserve zero-raw-storage, offline heuristics, and the existing risk-explainability model.
+3. Commit hygiene: stage the de-blockchain + ArcFace + YOLO + ledger + liveness changes into clean, reviewable commits.
+4. Optional future hardening: stronger multi-round liveness UI, continuous chain monitoring alerts, or external notarization of the ledger root.
+5. Any new feature must continue to preserve zero-raw-storage, offline heuristics, and the existing risk-explainability model.
 
 ---
 

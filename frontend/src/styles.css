@@ -1446,3 +1446,215 @@
   }
 }
 
+/* ── NESTED EXPANDABLE SUB-TABLES ─────────────────────────────────────────── */
+.subtable-row--expanded {
+  background: var(--row-hover) !important;
+  border-bottom: none !important;
+}
+.subtable-expand-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  border-radius: var(--r-xs);
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.15s ease;
+}
+.subtable-expand-btn:hover {
+  background: var(--paper-2);
+  border-color: var(--ink);
+  color: var(--ink);
+  transform: scale(1.05);
+}
+.subtable-expand-btn--active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.nested-subtable-row td {
+  padding: 0 !important;
+  border-bottom: 2px solid var(--line-2) !important;
+  background: var(--paper) !important;
+}
+
+.nested-subtable-wrapper {
+  margin: 8px 12px 14px 12px;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--seal);
+  border-radius: var(--r-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  animation: subtableFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes subtableFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.nested-subtable-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.nested-subtable-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.nested-subtable-tab-btn {
+  background: transparent;
+  border: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+  padding: 4px 10px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.12s ease;
+}
+.nested-subtable-tab-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.nested-subtable-tab-btn--active {
+  background: var(--card);
+  color: var(--seal-ink, #059669);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  font-weight: 700;
+}
+
+.nested-subtable-inner {
+  padding: 10px 14px;
+  overflow-x: auto;
+}
+
+.nested-subtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.nested-subtable th {
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--line-2);
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+}
+.nested-subtable td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  vertical-align: middle;
+}
+.nested-subtable tr:last-child td {
+  border-bottom: none;
+}
+.nested-subtable tr:hover td {
+  background: var(--row-hover);
+}
+
+.filter-pill-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.filter-pill-btn {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 4px 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.14s ease;
+}
+.filter-pill-btn:hover {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+.filter-pill-btn--active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.filter-pill-btn--active .sub-tab-badge {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.action-btn-sm {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 4px 8px;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.14s ease;
+}
+.action-btn-sm:hover {
+  background: var(--paper-2);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.badge-chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.badge-chain--unverified {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+
