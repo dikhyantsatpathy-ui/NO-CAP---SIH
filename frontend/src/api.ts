@@ -227,6 +227,8 @@ export interface ScreenReport {
   signals?: string[];
   ai_detection?: AiDetection | null;
   file_hash?: string;
+  block_hash?: string | null;
+  prev_hash?: string | null;
   watchlist_hits?: { field: string; mask: string }[];
   reasons?: string[];
   latency_ms?: number;
@@ -616,4 +618,30 @@ export function triggerLedgerAnchor() {
     signature: string;
     manifest: Record<string, unknown>;
   }>("/api/screen/ledger/anchor", { method: "POST" });
-}
+}
+
+export interface LedgerVerifyResult {
+  valid: boolean;
+  total_blocks: number;
+  verified_blocks?: number;
+  head_hash: string | null;
+  genesis_hash: string;
+  broken_at: string | null;
+  reason?: string;
+  status: string;
+  anchor: {
+    anchored: boolean;
+    in_sync: boolean;
+    anchor_head_hash?: string;
+    anchor_type?: string;
+    public_url?: string;
+    anchored_at?: string;
+    signature?: string;
+    hint?: string;
+  };
+}
+
+export function verifyLedgerChain() {
+  return request<LedgerVerifyResult>("/api/screen/ledger/verify");
+}
+
