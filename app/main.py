@@ -803,7 +803,47 @@ def explain(result: dict) -> str:
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip().replace("postgres://", "postgresql://", 1)
+def clean_postgres_dsn(url: str) -> str:
+    """Sanitizes PostgreSQL DSN strings to prevent libpq URI parser errors:
+    1. Converts multiple '?' query delimiters into '&'.
+    2. Strips duplicate '=' signs in values (e.g. sslmode==require).
+    3. URL-encodes unencoded '=' characters in parameter values (e.g. options=endpoint=ep-xxx).
+    4. Deduplicates duplicate query keys.
+    5. Ensures sslmode=require for Neon serverless endpoints.
+    """
+    if not url or "postgres" not in url:
+        return url
+    url = url.strip().replace("postgres://", "postgresql://", 1)
+    if url.count("?") > 1:
+        first_q = url.find("?")
+        base = url[:first_q]
+        qs = url[first_q + 1:].replace("?", "&")
+        url = f"{base}?{qs}"
+    import urllib.parse
+    p = urllib.parse.urlsplit(url)
+    if not p.query:
+        if "neon.tech" in (p.hostname or ""):
+            return f"{url}?sslmode=require"
+        return url
+    clean_params = {}
+    for pair in p.query.split("&"):
+        if not pair:
+            continue
+        parts = pair.split("=", 1)
+        k = parts[0].strip()
+        v = parts[1].strip() if len(parts) > 1 else ""
+        while v.startswith("="):
+            v = v[1:]
+        if "=" in v:
+            v = urllib.parse.quote(v, safe="")
+        clean_params[k] = v
+    if "neon.tech" in (p.hostname or "") and "sslmode" not in clean_params:
+        clean_params["sslmode"] = "require"
+    new_query = "&".join(f"{k}={v}" if v else k for k, v in clean_params.items())
+    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, new_query, p.fragment))
+
+
+DATABASE_URL = clean_postgres_dsn(os.getenv("DATABASE_URL", ""))
 if not DATABASE_URL:
     DATABASE_URL = "sqlite:////tmp/nocap.db" if os.name != "nt" else "sqlite:///nocap.db"
     print(f"[startup] DATABASE_URL not set; defaulting to local SQLite ({DATABASE_URL})")
@@ -828,7 +868,8 @@ if not _IS_SQLITE:
         conn_kw = dict(kw)
         conn_kw.setdefault("connect_timeout", 4)
         if _NEON_ENDPOINT and "options" not in conn_kw:
-            conn_kw["options"] = f"endpoint={_NEON_ENDPOINT}"
+            if not (_parsed_db and _parsed_db.query and "options=" in _parsed_db.query):
+                conn_kw["options"] = f"endpoint={_NEON_ENDPOINT}"
         last = None
         for attempt in range(2):
             try:

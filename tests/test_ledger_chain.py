@@ -132,3 +132,34 @@ def test_ledger_verify_chain(client):
     assert "total_blocks" in data
     assert "status" in data
 
+
+def test_clean_postgres_dsn():
+    """clean_postgres_dsn sanitizes malformed query strings and duplicate delimiters."""
+    from main import clean_postgres_dsn
+
+    # 1. Double query mark ?
+    url1 = "postgresql://user:pass@ep-red.neon.tech/neondb?sslmode=require?sslmode=require"
+    clean1 = clean_postgres_dsn(url1)
+    assert clean1.count("?") == 1
+    assert "sslmode=require" in clean1
+
+    # 2. Duplicate ==
+    url2 = "postgresql://user:pass@ep-red.neon.tech/neondb?sslmode==require"
+    clean2 = clean_postgres_dsn(url2)
+    assert "sslmode=require" in clean2
+
+    # 3. Unencoded = in value (options=endpoint=ep-123)
+    url3 = "postgresql://user:pass@ep-red.neon.tech/neondb?sslmode=require&options=endpoint=ep-123"
+    clean3 = clean_postgres_dsn(url3)
+    assert "options=endpoint%3Dep-123" in clean3
+
+    # 4. Neon auto sslmode
+    url4 = "postgresql://user:pass@ep-red.neon.tech/neondb"
+    clean4 = clean_postgres_dsn(url4)
+    assert clean4.endswith("?sslmode=require")
+
+    # 5. Non-postgres / empty
+    assert clean_postgres_dsn("") == ""
+    assert clean_postgres_dsn("sqlite:///:memory:") == "sqlite:///:memory:"
+
+
