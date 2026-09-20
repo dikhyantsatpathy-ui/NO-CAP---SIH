@@ -671,6 +671,14 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
     }
 
+    # Hash-chain linkage: compute block hash linking to the previous report
+    prev_row = db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc()).first()
+    prev_hash = prev_row.ledger_hash if (prev_row and getattr(prev_row, "ledger_hash", None)) else "GENESIS"
+    block_payload = f"{prev_hash}:{file_hash}:{verdict}:{risk}:{report['created_at']}:{screener or 'unknown'}"
+    ledger_hash = hashlib.sha256(block_payload.encode("utf-8")).hexdigest()
+    report["block_hash"] = ledger_hash
+    report["prev_hash"] = prev_hash
+
     db.add(ScreeningReport(
         id=report["id"], file_hash=file_hash, filename=report["filename"],
         doc_type=report["doc_type"], checkpoint=report["checkpoint"],
@@ -680,6 +688,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         ai_detection=json.dumps(report["ai_detection"]),
         modules=json.dumps({k: report["modules"].get(k, {}).get("verdict")
                             for k in ("validation", "tampering", "face")}),
+        previous_hash=prev_hash,
+        ledger_hash=ledger_hash,
         screener=screener,
         latency_ms=report.get("latency_ms"),
         created_at=report["created_at"],

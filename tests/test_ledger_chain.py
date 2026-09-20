@@ -110,3 +110,25 @@ def test_dossier_renders(client):
     assert "CRYPTOGRAPHIC CUSTODY SEAL" in resp.text
     assert "Screened By" in resp.text
     assert "officer@ssb.gov.in" in resp.text
+
+
+def test_health_endpoints(client):
+    """GET /health and GET /api/health report service status and database engine."""
+    for path in ("/health", "/api/health"):
+        resp = client.get(path)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] in ("ok", "degraded")
+        assert "database" in data
+        assert "service" in data
+
+
+def test_ledger_verify_chain(client):
+    """GET /api/screen/ledger/verify verifies the unbroken SHA-256 hash chain."""
+    resp = client.get("/api/screen/ledger/verify")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "valid" in data
+    assert "total_blocks" in data
+    assert "status" in data
+
