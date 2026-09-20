@@ -824,6 +824,7 @@ if not _IS_SQLITE:
         pass
 
     def _pg_creator(**kw):
+        global _PRIMARY_LAST_ERROR
         conn_kw = dict(kw)
         conn_kw.setdefault("connect_timeout", 4)
         if _NEON_ENDPOINT and "options" not in conn_kw:
@@ -834,6 +835,7 @@ if not _IS_SQLITE:
                 return psycopg2.connect(DATABASE_URL, **conn_kw)
             except Exception as e:
                 last = e
+                _PRIMARY_LAST_ERROR = f"{type(e).__name__}: {e}"
                 err_str = str(e).lower()
                 if ("could not translate host name" in err_str or "getaddrinfo" in err_str) and _parsed_db and _parsed_db.hostname:
                     # DNS resolution fallback via Google DoH
@@ -847,8 +849,8 @@ if not _IS_SQLITE:
                                 if _ans.get("type") == 1:
                                     conn_kw["hostaddr"] = _ans.get("data")
                                     return psycopg2.connect(DATABASE_URL, **conn_kw)
-                    except Exception:
-                        pass
+                    except Exception as doh_err:
+                        _PRIMARY_LAST_ERROR = f"DoH resolve failed: {doh_err} (orig: {e})"
                 if attempt < 1:
                     time.sleep(0.3)
         raise last or RuntimeError("PostgreSQL connect failed")
@@ -1590,14 +1592,24 @@ def index(request: Request):
 def health_check():
     """Liveness and readiness check: returns service, database status, and system metadata."""
     global _PRIMARY_LAST_FAILED, _PRIMARY_LAST_ERROR
-    db_status = "connected"
     db_type = "sqlite" if _IS_SQLITE else "postgresql"
-    if not _IS_SQLITE and (time.monotonic() - _PRIMARY_LAST_FAILED < 30.0):
-        db_status = "fallback_sqlite"
+    db_status = "connected"
+
+    if not _IS_SQLITE:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            db_status = "connected"
+            _PRIMARY_LAST_FAILED = 0.0
+            _PRIMARY_LAST_ERROR = None
+        except Exception as e:
+            _PRIMARY_LAST_FAILED = time.monotonic()
+            _PRIMARY_LAST_ERROR = f"{type(e).__name__}: {e}"
+            db_status = "fallback_sqlite"
     else:
         try:
-            with get_db() as db:
-                db.execute(text("SELECT 1"))
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
         except Exception as e:
             db_status = f"degraded ({type(e).__name__})"
 
