@@ -803,17 +803,33 @@ def explain(result: dict) -> str:
 
 load_dotenv()
 
-def clean_postgres_dsn(url: str) -> str:
+def clean_postgres_dsn(raw_url: str) -> str:
     """Sanitizes PostgreSQL DSN strings to prevent libpq URI parser errors:
-    1. Converts multiple '?' query delimiters into '&'.
-    2. Strips duplicate '=' signs in values (e.g. sslmode==require).
-    3. URL-encodes unencoded '=' characters in parameter values (e.g. options=endpoint=ep-xxx).
-    4. Deduplicates duplicate query keys.
-    5. Ensures sslmode=require for Neon serverless endpoints.
+    1. Splits off any extraneous environment variables accidentally pasted into DATABASE_URL.
+       Injects any extra KEY=VAL tokens into os.environ if not already set.
+    2. Converts multiple '?' query delimiters into '&'.
+    3. Strips duplicate '=' signs in values (e.g. sslmode==require).
+    4. URL-encodes unencoded '=' characters in parameter values (e.g. options=endpoint=ep-xxx).
+    5. Deduplicates duplicate query keys.
+    6. Ensures sslmode=require for Neon serverless endpoints.
     """
+    if not raw_url:
+        return ""
+    # Check if multiple environment variables or tokens were pasted into DATABASE_URL
+    tokens = raw_url.strip().split()
+    url = tokens[0] if tokens else ""
+    if len(tokens) > 1:
+        for tok in tokens[1:]:
+            if "=" in tok:
+                k, v = tok.split("=", 1)
+                k_clean = k.strip()
+                v_clean = v.strip().strip("'\"")
+                if k_clean and not os.getenv(k_clean):
+                    os.environ[k_clean] = v_clean
+
     if not url or "postgres" not in url:
         return url
-    url = url.strip().replace("postgres://", "postgresql://", 1)
+    url = url.replace("postgres://", "postgresql://", 1)
     if url.count("?") > 1:
         first_q = url.find("?")
         base = url[:first_q]
@@ -841,6 +857,7 @@ def clean_postgres_dsn(url: str) -> str:
         clean_params["sslmode"] = "require"
     new_query = "&".join(f"{k}={v}" if v else k for k, v in clean_params.items())
     return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, new_query, p.fragment))
+
 
 
 DATABASE_URL = clean_postgres_dsn(os.getenv("DATABASE_URL", ""))
