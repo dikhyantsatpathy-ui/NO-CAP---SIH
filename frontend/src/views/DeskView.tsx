@@ -19,6 +19,9 @@ import {
   SCREEN_DOC_TYPES,
   SCREEN_DOC_NUMBER_PLACEHOLDERS,
   screenDocument,
+  getBsaCertificateUrl,
+  getShiftHandoverToken,
+  getBorderThreatMatrix,
   type ComparisonCheck,
   type ScreenDocType,
   type ScreeningSession,
@@ -34,6 +37,7 @@ const CHECKPOINTS = [
   "Panitanki ICP",
   "Jogbani ICP",
   "Jaigaon ICP",
+  "Sonauli ICP",
   "Delhi IGI Airport",
   "Kolkata Airport",
 ];
@@ -43,9 +47,9 @@ function verdictTone(v: string): string {
 }
 
 function statusTone(s: string): string {
-  if (s === "agree") return "ok";
+  if (s === "agree" || s === "bs-ad-harmonized") return "ok";
+  if (s === "phonetic-match" || s === "cross-script") return "info";
   if (s === "disagree") return "bad";
-  if (s === "cross-script") return "info";
   return "mute";
 }
 
@@ -235,7 +239,85 @@ export function DeskView() {
   const [note, setNote] = useState("");
   const [modelHint, setModelHint] = useState<string | null>(null);
 
+  // High-Tech SIH Features (Tactical HUD, Voice Intake, Handover, Threat Matrix)
+  const [tacticalHud, setTacticalHud] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [showHandover, setShowHandover] = useState(false);
+  const [handoverData, setHandoverData] = useState<any>(null);
+  const [showThreatMatrix, setShowThreatMatrix] = useState(false);
+  const [threatData, setThreatData] = useState<any>(null);
+
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const openHandover = async () => {
+    if (!active) return;
+    setBusy(true);
+    const res = await getShiftHandoverToken(active.id);
+    setBusy(false);
+    if (res.ok) {
+      setHandoverData(res.data);
+      setShowHandover(true);
+    } else {
+      toast(`Handover token generation failed: ${res.error}`, "error");
+    }
+  };
+
+  const toggleThreatMatrix = async () => {
+    if (showThreatMatrix) {
+      setShowThreatMatrix(false);
+      return;
+    }
+    const res = await getBorderThreatMatrix();
+    if (res.ok) {
+      setThreatData(res.data);
+      setShowThreatMatrix(true);
+    } else {
+      toast("Failed to load border threat telemetry.", "error");
+    }
+  };
+
+  const toggleVoice = () => {
+    const WinSpeech = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!WinSpeech) {
+      toast("Web Speech API is not supported in this browser.", "warn");
+      return;
+    }
+    if (voiceListening) {
+      setVoiceListening(false);
+      toast("Voice intake deactivated.", "info");
+      return;
+    }
+    try {
+      const recognition = new WinSpeech();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-IN";
+      recognition.onstart = () => {
+        setVoiceListening(true);
+        toast("🎙️ Voice command active — Speak 'SCREEN', 'APPROVE', 'FLAG', or 'RESET'", "info");
+      };
+      recognition.onresult = (event: any) => {
+        const text = (event.results?.[0]?.[0]?.transcript || "").toLowerCase();
+        toast(`Voice Command Detected: "${text}"`, "info");
+        if (text.includes("screen")) {
+          if (file) void screenIntoSession();
+          else toast("Select a specimen or attach document first.", "warn");
+        } else if (text.includes("approve")) {
+          void closeSessionNow("approve");
+        } else if (text.includes("flag")) {
+          void closeSessionNow("flag");
+        } else if (text.includes("next") || text.includes("reset")) {
+          void resetDesk();
+        }
+        setVoiceListening(false);
+      };
+      recognition.onerror = () => setVoiceListening(false);
+      recognition.onend = () => setVoiceListening(false);
+      recognition.start();
+    } catch {
+      setVoiceListening(false);
+    }
+  };
 
   const refreshOpen = useCallback(async () => {
     const res = await getSessions("open");
@@ -325,9 +407,11 @@ export function DeskView() {
         ? "passport"
         : docType === "aadhaar"
           ? "aadhaar"
-          : docType === "other"
-            ? "declared_number"
-            : docType;
+          : docType === "nepali_citizenship"
+            ? "nepali_citizenship"
+            : docType === "other"
+              ? "declared_number"
+              : docType;
     const out: Record<string, string> = {};
     if (docNumber.trim()) out[declKey] = docNumber.trim();
     if (declaredName.trim()) out.name = declaredName.trim();
@@ -410,7 +494,77 @@ export function DeskView() {
   const canClose = active && active.comparison?.checks.some((c) => c.status !== "none");
 
   return (
-    <div className="view">
+    <div className={`view ${tacticalHud ? "tactical-hud" : ""}`}>
+      {/* --- Tactical Command Toolbar ------------------------------------- */}
+      <div className="desk-toolbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px", background: "rgba(13, 21, 39, 0.7)", padding: "10px 16px", borderRadius: "8px", border: "1px solid #1e293b" }}>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <span className="live-pulse" />
+          <span style={{ fontSize: "12px", fontWeight: "bold", letterSpacing: "1px", color: "#38bdf8" }}>
+            SSB NISCHAY TACTICAL DESK
+          </span>
+          <span className="chip chip--ok" style={{ fontSize: "10px" }}>EDGE ONLINE</span>
+        </div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className={`btn btn--small ${voiceListening ? "btn--flag" : ""}`}
+            onClick={toggleVoice}
+            title="Hands-free voice screening intake"
+          >
+            {voiceListening ? "🎙️ LISTENING…" : "🎙️ VOICE INTAKE"}
+          </button>
+          <button
+            type="button"
+            className={`btn btn--small ${showThreatMatrix ? "btn--approve" : ""}`}
+            onClick={() => void toggleThreatMatrix()}
+            title="View multi-checkpoint border threat matrix"
+          >
+            🛰️ SECTOR TELEMETRY
+          </button>
+          <button
+            type="button"
+            className={`btn btn--small ${tacticalHud ? "btn--flag" : ""}`}
+            onClick={() => setTacticalHud(!tacticalHud)}
+            title="Toggle high-contrast sunlight/edge HUD visibility"
+          >
+            🎯 {tacticalHud ? "HUD: HIGH-CONTRAST" : "HUD: CYBER"}
+          </button>
+        </div>
+      </div>
+
+      {/* --- Threat Matrix Telemetry Drawer -------------------------------- */}
+      {showThreatMatrix && threatData && (
+        <div style={{ background: "rgba(13, 21, 39, 0.95)", border: "1px solid #1e293b", borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", borderBottom: "1px solid #1e293b", paddingBottom: "8px" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <span className="k" style={{ color: "#38bdf8", fontWeight: "bold" }}>🛰️ BORDER SECTOR TELEMETRY & FRAUD DENSITY MATRIX</span>
+              <span className="chip chip--warn">THREAT: {threatData.overall_threat_level} ({threatData.national_border_threat_index}/100)</span>
+            </div>
+            <button type="button" className="btn btn--small" onClick={() => setShowThreatMatrix(false)}>✕ CLOSE</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px" }}>
+            {threatData.checkpoints.map((cp: any) => (
+              <div key={cp.id} style={{ background: "#070b14", padding: "12px", borderRadius: "6px", border: "1px solid #1e293b" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                  <strong>{cp.name}</strong>
+                  <span className={`chip chip--${cp.threat_level === "LOW" ? "ok" : cp.threat_level === "GUARDED" ? "info" : "bad"}`} style={{ fontSize: "10px" }}>
+                    {cp.threat_level}
+                  </span>
+                </div>
+                <div style={{ fontSize: "11px", color: "#94a3b8" }}>{cp.state}</div>
+                <div style={{ fontSize: "12px", color: "#f8fafc", marginTop: "6px" }}>
+                  <span style={{ color: "#eab308" }}>Alert: </span>{cp.primary_threat}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "11px", color: "#64748b" }}>
+                  <span>Threat Score: {cp.threat_score}/100</span>
+                  <span className="mono" style={{ color: "#38bdf8" }}>{cp.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* --- Session status rail ------------------------------------------ */}
       {!active && (
         <section className="panel panel--muted">
@@ -587,8 +741,35 @@ export function DeskView() {
 
                 {/* --- Comparison + approval bar --------------------------- */}
                 {active.documents.length > 1 && active.comparison && (
-                  <ComparisonBoard checks={active.comparison.checks} />
+                  <>
+                    <ComparisonBoard checks={active.comparison.checks} />
+                    {active.comparison?.zkp_gates && (
+                      <div className="zkp-panel" style={{ marginTop: "16px", padding: "14px 16px", background: "rgba(13, 21, 39, 0.7)", border: "1px solid #1e293b", borderRadius: "8px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+                          <span className="k" style={{ color: "#38bdf8", letterSpacing: "1px", fontWeight: "bold" }}>
+                            🔐 ZERO-KNOWLEDGE PROOF (ZKP) PRIVACY GATES
+                          </span>
+                          <span className="chip chip--ok">ZERO-STORAGE PRIVACY ENGINE</span>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+                          {Object.entries(active.comparison.zkp_gates).map(([k, gate]: [string, any]) => (
+                            <div key={k} style={{ background: "#070b14", padding: "10px 12px", borderRadius: "6px", border: "1px solid #1e293b" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                <span className={`chip chip--${gate.proven ? "ok" : "warn"}`} style={{ fontSize: "10px" }}>
+                                  {gate.status}
+                                </span>
+                                <code className="mono text-xs" style={{ color: "#64748b" }}>{gate.zk_proof_hash}</code>
+                              </div>
+                              <div style={{ fontWeight: 600, fontSize: "12px", color: "#f8fafc" }}>{gate.assertion}</div>
+                              <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>{gate.method}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
+
                 {active.documents.length > 0 && (
                   <section className="approval">
                     <div className="approval__note">
@@ -620,6 +801,25 @@ export function DeskView() {
                         </button>
                       )}
                     </div>
+
+                    <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="btn btn--small"
+                        style={{ borderColor: "#38bdf8", color: "#38bdf8", background: "rgba(56, 189, 248, 0.08)" }}
+                        onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
+                      >
+                        ⚖️ EXPORT BSA 2023 COURT CERTIFICATE (SEC 65B)
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--small"
+                        style={{ borderColor: "#eab308", color: "#eab308", background: "rgba(234, 179, 8, 0.08)" }}
+                        onClick={() => void openHandover()}
+                      >
+                        📦 AIR-GAPPED SHIFT HANDOVER TOKEN
+                      </button>
+                    </div>
                   </section>
                 )}
               </>
@@ -650,6 +850,25 @@ export function DeskView() {
                     <span>docs {active.document_count}</span>
                   </div>
                   {active.note && <p className="signed__note">note: {active.note}</p>}
+                  
+                  <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      style={{ borderColor: "#38bdf8", color: "#38bdf8" }}
+                      onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
+                    >
+                      ⚖️ VIEW STATUTORY BSA 2023 COURT CERTIFICATE
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      style={{ borderColor: "#eab308", color: "#eab308" }}
+                      onClick={() => void openHandover()}
+                    >
+                      📦 AIR-GAPPED SHIFT HANDOVER TOKEN
+                    </button>
+                  </div>
                 </div>
                 <button className="btn btn--primary" onClick={() => void resetDesk()}>
                   START NEXT TRAVELLER
@@ -671,6 +890,105 @@ export function DeskView() {
           }}
           onCancel={() => setShowWebcam(false)}
         />
+      )}
+
+      {showHandover && handoverData && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(3, 7, 18, 0.85)",
+          backdropFilter: "blur(6px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          padding: "20px"
+        }}>
+          <div style={{
+            background: "#0d1527",
+            border: "1px solid #1e293b",
+            borderRadius: "10px",
+            maxWidth: "640px",
+            width: "100%",
+            padding: "24px",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "20px" }}>📦</span>
+                <h3 style={{ margin: 0, fontSize: "16px", color: "#f8fafc", fontWeight: 700 }}>AIR-GAPPED SHIFT HANDOVER TOKEN</h3>
+              </div>
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => setShowHandover(false)}
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+            
+            <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px" }}>
+              Cryptographically sealed session packet for offline officer shift transitions, USB flash export, or physical border outpost synchronization without internet connectivity.
+            </p>
+
+            <div style={{ background: "#050811", border: "1px solid #1e293b", borderRadius: "6px", padding: "12px", marginBottom: "16px", fontSize: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                <span style={{ color: "#64748b" }}>SESSION:</span>
+                <span className="mono" style={{ color: "#38bdf8" }}>{handoverData.session_id}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                <span style={{ color: "#64748b" }}>SIGNATURE (HMAC-SHA256):</span>
+                <span className="mono" style={{ color: "#22c55e", fontSize: "11px" }}>{handoverData.hmac_signature?.slice(0, 24)}...</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#64748b" }}>ISSUED AT:</span>
+                <span style={{ color: "#f8fafc" }}>{handoverData.issued_at}</span>
+              </div>
+            </div>
+
+            <label className="field" style={{ marginBottom: "16px" }}>
+              <span className="field__label">BASE64 ENCODED DISK TOKEN</span>
+              <textarea
+                readOnly
+                rows={5}
+                className="mono"
+                style={{ width: "100%", fontSize: "11px", background: "#070b14", color: "#94a3b8", resize: "none" }}
+                value={handoverData.token}
+              />
+            </label>
+
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => {
+                  navigator.clipboard.writeText(handoverData.token);
+                  alert("Handover token copied to clipboard!");
+                }}
+              >
+                📋 COPY TOKEN
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary btn--small"
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(handoverData, null, 2)], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `HANDOVER_TOKEN_${handoverData.session_id.slice(0, 8)}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                💾 DOWNLOAD JSON PACKET
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

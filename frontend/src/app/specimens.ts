@@ -92,6 +92,26 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     description: "Digitally manipulated card with spliced portrait and spliced DOB zone.",
     filename: "aadhaar_card_tampered.png",
   },
+  {
+    id: "nepali_citizenship_clean",
+    title: "Nepali Nagarikta (Citizenship Cert)",
+    badge: "1950 Treaty Bilateral",
+    docType: "nepali_citizenship",
+    checkpoint: "Panitanki ICP (WB/Nepal Border)",
+    docNumber: "12-01-75-03421",
+    description: "Government of Nepal Citizenship Certificate (नेपाली नागरिकता प्रमाणपत्र) with Bikram Sambat date.",
+    filename: "nepali_nagarikta_clean.png",
+  },
+  {
+    id: "nepali_citizenship_tampered",
+    title: "Forged Nepali Nagarikta",
+    badge: "Altered BS Date / Seal",
+    docType: "nepali_citizenship",
+    checkpoint: "Raxaul ICP (Bihar/Nepal Border)",
+    docNumber: "12-01-75-03421",
+    description: "Forged citizenship document with tampered issuing officer seal and invalid Bikram Sambat calendar date.",
+    filename: "nepali_nagarikta_tampered.png",
+  },
 ];
 
 export async function generateSpecimenFile(preset: SpecimenPreset): Promise<File> {
@@ -400,6 +420,87 @@ export async function generateSpecimenFile(preset: SpecimenPreset): Promise<File
     ctx.textAlign = "center";
     ctx.fillText("मेरा आधार, मेरी पहचान (आधार — आम आदमी का अधिकार)", 450, 544);
     ctx.textAlign = "start";
+  } else if (preset.docType === "nepali_citizenship") {
+    // Nepali Nagarikta styling (Government of Nepal Crimson & Seal)
+    ctx.fillStyle = "#831843"; // Deep Crimson
+    ctx.fillRect(20, 20, 860, 65);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillText("नेपाल सरकार / GOVERNMENT OF NEPAL", 110, 50);
+    ctx.font = "13px sans-serif";
+    ctx.fillText("गृह मन्त्रालय / MINISTRY OF HOME AFFAIRS", 110, 72);
+
+    // Nepal Double-Triangle Flag
+    ctx.fillStyle = "#dc2626";
+    ctx.beginPath();
+    ctx.moveTo(45, 30);
+    ctx.lineTo(85, 52);
+    ctx.lineTo(55, 52);
+    ctx.lineTo(85, 75);
+    ctx.lineTo(45, 75);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.strokeRect(20, 85, 860, 470);
+
+    const isTampered = preset.id === "nepali_citizenship_tampered";
+
+    // Photo Box
+    ctx.fillStyle = isTampered ? "#fef08a" : "#f1f5f9";
+    ctx.fillRect(50, 115, 160, 200);
+    ctx.strokeStyle = isTampered ? "#dc2626" : "#cbd5e1";
+    ctx.lineWidth = isTampered ? 3 : 1;
+    ctx.strokeRect(50, 115, 160, 200);
+
+    // Silhouette
+    ctx.fillStyle = "#475569";
+    ctx.beginPath();
+    ctx.arc(130, 180, 38, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(130, 280, 60, Math.PI, 0, false);
+    ctx.fill();
+
+    // Document Data in Devanagari & English
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText("नागरिकता प्रमाणपत्र नं / Citizenship Cert No:", 250, 135);
+    ctx.font = "bold 20px monospace";
+    ctx.fillStyle = "#831843";
+    ctx.fillText(preset.docNumber, 250, 165);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "14px sans-serif";
+    ctx.fillText("नाम, थर / Full Name: RAM BAHADUR THAPA (राम बहादुर थापा)", 250, 210);
+    ctx.fillText("जन्म स्थान / Place of Birth: झापा, नेपाल (Jhapa, Nepal)", 250, 240);
+    ctx.fillText(isTampered ? "जन्म मिति (BS): २०५२/०६/१५ (Altered Calendar Record)" : "जन्म मिति (BS): २०५२/०६/१५ BS (Harmonizes with 1995-10-01 AD)", 250, 270);
+    ctx.fillText("नागरिकताको किसिम: बंशज (Citizenship by Descent)", 250, 300);
+    ctx.fillText("जारी जिल्ला / Issuing District: जिल्ला प्रशासन कार्यालय, झापा", 250, 330);
+
+    // Official Stamped Seal
+    ctx.strokeStyle = isTampered ? "#ef4444" : "#1d4ed8";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(760, 220, 55, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillStyle = isTampered ? "#ef4444" : "#1d4ed8";
+    ctx.textAlign = "center";
+    ctx.fillText(isTampered ? "SEAL TAMPERED" : "नेपाल सरकार", 760, 215);
+    ctx.fillText("DISTRICT ADM", 760, 232);
+    ctx.textAlign = "start";
+
+    // Bottom Bilateral Treaty notice
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(50, 420, 800, 70);
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.strokeRect(50, 420, 800, 70);
+    ctx.fillStyle = "#334155";
+    ctx.font = "12px sans-serif";
+    ctx.fillText("IND-NEP BILATERAL PROTOCOL: Recognized travel document under 1950 Treaty of Peace & Friendship.", 70, 450);
+    ctx.fillText("Article VII: Equal national treatment & free movement for Nepalese and Indian nationals.", 70, 472);
   }
 
   // Watermark for demo

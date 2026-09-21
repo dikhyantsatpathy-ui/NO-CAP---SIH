@@ -273,6 +273,7 @@ export const SCREEN_DOC_TYPES = [
   "driving_licence",
   "voter_id",
   "aadhaar",
+  "nepali_citizenship",
   "other",
 ] as const;
 
@@ -289,6 +290,7 @@ export const SCREEN_DOC_LABELS: Record<ScreenDocType, string> = {
   driving_licence: "DRIVING LICENCE",
   voter_id: "VOTER ID",
   aadhaar: "AADHAAR",
+  nepali_citizenship: "NEPALI NAGARIKTA",
   other: "OTHER",
 };
 
@@ -298,7 +300,8 @@ export const SCREEN_DOC_NUMBER_PLACEHOLDERS: Record<ScreenDocType, string> = {
   visa: "e.g. V1234567",
   driving_licence: "e.g. KA0120201234567",
   voter_id: "e.g. ABC1234567",
-  aadhaar: "e.g. XXXX-XXXX-XXXX",
+  aadhaar: "12-digit UID (e.g. 5489 2104 9931)",
+  nepali_citizenship: "Cert No (e.g. 12-01-75-03421)",
   other: "Number printed on the document",
 };
 
@@ -423,6 +426,43 @@ export function getSyndicateAlerts(checkpoint?: string) {
 
 export function getDossierUrl(reportId: string, autoPrint: boolean = false): string {
   return `/api/screen/dossier/${encodeURIComponent(reportId)}${autoPrint ? "?print=true" : ""}`;
+}
+
+export function getBsaCertificateUrl(sessionId: string): string {
+  return `/api/screen/bsa65b/${encodeURIComponent(sessionId)}`;
+}
+
+export function getShiftHandoverToken(sessionId: string) {
+  return request<{
+    handover_id: string;
+    session_id: string;
+    timestamp: string;
+    screener: string;
+    verdict: string;
+    risk_score: number;
+    seal: string;
+    qr_packet_string: string;
+    qr_packet: Record<string, unknown>;
+  }>(`/api/screen/handover/${encodeURIComponent(sessionId)}`);
+}
+
+export function getBorderThreatMatrix() {
+  return request<{
+    timestamp: string;
+    overall_threat_level: string;
+    national_border_threat_index: number;
+    active_syndicates_flagged: number;
+    checkpoints: Array<{
+      id: string;
+      name: string;
+      state: string;
+      threat_level: string;
+      threat_score: number;
+      primary_threat: string;
+      active_alerts: number;
+      status: string;
+    }>;
+  }>("/api/border/threat_matrix");
 }
 
 export interface AadhaarFieldBox {
@@ -685,6 +725,7 @@ export interface SessionComparison {
   checks: ComparisonCheck[];
   verdict: ComparisonVerdict;
   risk_bump: number;
+  zkp_gates?: Record<string, any> | null;
 }
 
 export interface ScreeningSession {

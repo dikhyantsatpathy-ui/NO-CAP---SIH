@@ -1264,3 +1264,60 @@ body {
   color: #f8fafc;
   line-height: 1.4;
 }
+
+/* --- High-Contrast Tactical HUD Mode (Border Outposts & Sunlight Legibility) --- */
+.desk-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(13, 21, 39, 0.7);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tactical-hud {
+  filter: contrast(115%) saturate(110%);
+}
+
+.tactical-hud .panel,
+.tactical-hud .board,
+.tactical-hud .doc-card,
+.tactical-hud .desk-toolbar {
+  background: #000000 !important;
+  border: 2px solid #eab308 !important;
+  box-shadow: 0 0 12px rgba(234, 179, 8, 0.25) !important;
+}
+
+.tactical-hud .panel__title,
+.tactical-hud .board__title,
+.tactical-hud .desk-toolbar span.k {
+  color: #facc15 !important;
+  font-weight: 800 !important;
+  text-shadow: 0 0 4px rgba(250, 204, 21, 0.4);
+}
+
+.tactical-hud .tbl th {
+  background: #18181b !important;
+  color: #fef08a !important;
+  border-bottom: 2px solid #eab308 !important;
+}
+
+.tactical-hud .tbl td {
+  border-bottom: 1px solid #3f3f46 !important;
+}
+
+.btn--listening {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border-color: #ef4444 !important;
+  color: #fca5a5 !important;
+  animation: pulse-red 1s infinite alternate;
+}
+
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 rgba(239, 68, 68, 0.4); }
+  100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.8); }
+}
