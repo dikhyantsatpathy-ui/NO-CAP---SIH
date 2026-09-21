@@ -72,6 +72,26 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     description: "Income Tax Department Permanent Account Number format with 4th-char check.",
     filename: "pan_card_income_tax.png",
   },
+  {
+    id: "aadhaar_clean",
+    title: "Clean Indian Aadhaar Card",
+    badge: "UIDAI Verified",
+    docType: "aadhaar",
+    checkpoint: "Panitanki ICP (WB/Nepal Border)",
+    docNumber: "6543 8901 2345",
+    description: "Standard 12-digit UIDAI card with photo, DOB, gender and secure QR zone.",
+    filename: "aadhaar_card_uidai_clean.png",
+  },
+  {
+    id: "aadhaar_tampered",
+    title: "Tampered Aadhaar Card",
+    badge: "Altered Photo/Text",
+    docType: "aadhaar",
+    checkpoint: "Raxaul ICP (Bihar/Nepal Border)",
+    docNumber: "6543 8901 2345",
+    description: "Digitally manipulated card with spliced portrait and spliced DOB zone.",
+    filename: "aadhaar_card_tampered.png",
+  },
 ];
 
 export async function generateSpecimenFile(preset: SpecimenPreset): Promise<File> {
@@ -232,7 +252,7 @@ export async function generateSpecimenFile(preset: SpecimenPreset): Promise<File
     ctx.fillText("Vehicle Class: LMV, MCWG", 260, 270);
     ctx.fillText("Valid Till (NT): 11/04/2038", 260, 300);
     ctx.fillText("Issuing Authority: DL-04 RTO JANAKPURI DELHI", 260, 330);
-  } else {
+  } else if (preset.docType === "pan") {
     // PAN Card Layout
     ctx.fillStyle = "#1e293b"; // Dark Slate
     ctx.fillRect(20, 20, 860, 65);
@@ -277,6 +297,109 @@ export async function generateSpecimenFile(preset: SpecimenPreset): Promise<File
     ctx.fillStyle = "#334155";
     ctx.font = "bold 11px sans-serif";
     ctx.fillText("SECURE QR", 745, 185);
+  } else if (preset.docType === "aadhaar") {
+    // Top Tricolor accent line
+    ctx.fillStyle = "#f97316"; // Saffron
+    ctx.fillRect(20, 20, 860, 6);
+    ctx.fillStyle = "#10b981"; // Green
+    ctx.fillRect(20, 26, 860, 6);
+
+    // UIDAI Header bar
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(20, 32, 860, 65);
+    ctx.fillStyle = "#1e293b";
+    ctx.font = "bold 17px sans-serif";
+    ctx.fillText("भारत सरकार / GOVERNMENT OF INDIA", 120, 58);
+    ctx.font = "13px sans-serif";
+    ctx.fillStyle = "#64748b";
+    ctx.fillText("भारतीय विशिष्ट पहचान प्राधिकरण / UNIQUE IDENTIFICATION AUTHORITY OF INDIA", 120, 80);
+
+    // Aadhaar Red Sun Emblem Placeholder
+    ctx.fillStyle = "#dc2626";
+    ctx.beginPath();
+    ctx.arc(65, 65, 24, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText("UIDAI", 50, 69);
+
+    // Card frame
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(20, 97, 860, 460);
+
+    const isTampered = preset.id === "aadhaar_tampered";
+
+    // Photo Box
+    ctx.fillStyle = isTampered ? "#fef08a" : "#f1f5f9";
+    ctx.fillRect(50, 125, 175, 220);
+    ctx.strokeStyle = isTampered ? "#dc2626" : "#cbd5e1";
+    ctx.lineWidth = isTampered ? 3 : 1;
+    ctx.strokeRect(50, 125, 175, 220);
+
+    // Portrait Silhouette
+    ctx.fillStyle = isTampered ? "#b45309" : "#475569";
+    ctx.beginPath();
+    ctx.arc(137, 195, 42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(137, 305, 65, Math.PI, 0, false);
+    ctx.fill();
+
+    // Field Details
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillText("दीक्षांत शतपथी / DIKHYANT SATAPATHY", 255, 155);
+
+    ctx.font = "14px sans-serif";
+    ctx.fillStyle = "#475569";
+    ctx.fillText("जन्म तिथि / DOB: 15/08/1992", 255, 190);
+    ctx.fillText("लिंग / Gender: पुरुष / MALE", 255, 220);
+    ctx.fillText("पता: ग्राम- पाणिघाटा, पो- नक्सलबाड़ी, जिला- दार्जिलिंग, पश्चिम बंगाल - 734429", 255, 255);
+    ctx.fillText("Address: Panighata, PS Naxalbari, Dist Darjeeling, WB - 734429", 255, 280);
+
+    // Secure QR Code Box
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(700, 125, 160, 160);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(700, 125, 160, 160);
+    // Draw QR pattern simulation
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(715, 140, 35, 35);
+    ctx.fillRect(810, 140, 35, 35);
+    ctx.fillRect(715, 235, 35, 35);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(723, 148, 19, 19);
+    ctx.fillRect(818, 148, 19, 19);
+    ctx.fillRect(723, 243, 19, 19);
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(728, 153, 9, 9);
+    ctx.fillRect(823, 153, 9, 9);
+    ctx.fillRect(728, 248, 9, 9);
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillText("SECURE QR", 752, 215);
+
+    // Aadhaar Number Box (Big, Bold, 4-digit grouped)
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(150, 380, 600, 70);
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.strokeRect(150, 380, 600, 70);
+
+    ctx.fillStyle = "#b91c1c";
+    ctx.font = "bold 32px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(preset.docNumber, 450, 426);
+    ctx.textAlign = "start";
+
+    // Bottom tagline bar
+    ctx.fillStyle = "#dc2626";
+    ctx.fillRect(20, 520, 860, 37);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("मेरा आधार, मेरी पहचान (आधार — आम आदमी का अधिकार)", 450, 544);
+    ctx.textAlign = "start";
   }
 
   // Watermark for demo

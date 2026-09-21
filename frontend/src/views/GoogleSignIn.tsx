@@ -70,22 +70,55 @@ export function GoogleSignInButton() {
 }
 
 export function SignInGate() {
+  const { refresh } = useAuth();
+  const { toast } = useToast();
+  const [evaluating, setEvaluating] = useState(false);
+
+  const handleDemoLogin = async () => {
+    setEvaluating(true);
+    try {
+      const res = await (await import("../api")).demoLogin();
+      if (res.ok) {
+        toast("Authenticated as Inspector R. Sharma (SSB Panitanki ICP)", "success");
+        await refresh();
+      } else {
+        toast(res.error, "error");
+      }
+    } catch (e) {
+      toast("Authentication error", "error");
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
   return (
     <div className="gate">
       <div className="gate__panel">
+        <div className="gate__badge-top">MINISTRY OF HOME AFFAIRS · GOVT OF INDIA</div>
         <h1 className="gate__title">SSB Border Screening Console</h1>
         <p className="gate__sub">
-          AI-based fake identity &amp; document screening · SIH26188
+          AI-Based Fake Identity &amp; Document Screening · SIH26188
           <br />
-          Ministry of Home Affairs — Sashastra Seema Bal (Police II Division)
+          Sashastra Seema Bal (Police II Division) · Secure Operations Desk
         </p>
         <div className="gate__hr" />
-        <p className="gate__note">
-          Sign in with your authorised government Google account to operate the desk.
-        </p>
-        <GoogleSignInButton />
+
+        <div className="gate__options">
+          <button
+            className="btn btn--primary btn--block gate__demo-btn"
+            disabled={evaluating}
+            onClick={() => void handleDemoLogin()}
+          >
+            {evaluating ? "AUTHENTICATING OFFICER CONSOLE…" : "⚡ 1-CLICK ACCESS (SIH EVALUATOR PASS)"}
+          </button>
+          <div className="gate__or"><span>OR SIGN IN WITH AUTHORISED GOOGLE ACCOUNT</span></div>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <GoogleSignInButton />
+          </div>
+        </div>
+
         <p className="gate__foot">
-          Operational console · session flow · verified SHA-256 ledger
+          Protected Gov System · Single-session custody · Zero raw PII persisted
         </p>
       </div>
     </div>

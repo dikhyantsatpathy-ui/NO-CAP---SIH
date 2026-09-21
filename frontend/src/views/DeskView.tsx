@@ -17,6 +17,7 @@ import {
   getSessions,
   SCREEN_DOC_LABELS,
   SCREEN_DOC_TYPES,
+  SCREEN_DOC_NUMBER_PLACEHOLDERS,
   screenDocument,
   type ComparisonCheck,
   type ScreenDocType,
@@ -242,13 +243,19 @@ export function DeskView() {
     return res.ok ? res.data.sessions : [];
   }, []);
 
+  const [resumingId, setResumingId] = useState<string | null>(null);
+
   const loadDetail = useCallback(async (id: string) => {
     const res = await getSession(id);
     if (res.ok) {
       setActive(res.data);
       setModelHint(null);
+      return true;
+    } else {
+      toast(`Failed to load session ${id}: ${res.error}`, "error");
+      return false;
     }
-  }, []);
+  }, [toast]);
 
   // On mount: reopen the newest OPEN session if there is one, else show start panel.
   useEffect(() => {
@@ -282,8 +289,16 @@ export function DeskView() {
   };
 
   const resumeSession = async (id: string) => {
-    await loadDetail(id);
-    setShowNewForm(false);
+    setResumingId(id);
+    try {
+      const ok = await loadDetail(id);
+      if (ok) {
+        setShowNewForm(false);
+        toast(`Resumed active session ${id}`, "success");
+      }
+    } finally {
+      setResumingId(null);
+    }
   };
 
   const loadSpecimen = async (presetId: string) => {
@@ -308,9 +323,11 @@ export function DeskView() {
     const declKey =
       docType === "passport" || docType === "visa"
         ? "passport"
-        : docType === "other"
-          ? "declared_number"
-          : docType;
+        : docType === "aadhaar"
+          ? "aadhaar"
+          : docType === "other"
+            ? "declared_number"
+            : docType;
     const out: Record<string, string> = {};
     if (docNumber.trim()) out[declKey] = docNumber.trim();
     if (declaredName.trim()) out.name = declaredName.trim();
@@ -440,8 +457,12 @@ export function DeskView() {
                       <td>{s.checkpoint}</td>
                       <td className="cell-sub">{s.document_count} doc(s)</td>
                       <td>
-                        <button className="btn btn--small" onClick={() => void resumeSession(s.id)}>
-                          RESUME
+                        <button
+                          className="btn btn--small btn--primary"
+                          disabled={resumingId === s.id}
+                          onClick={() => void resumeSession(s.id)}
+                        >
+                          {resumingId === s.id ? "RESUMING…" : "RESUME"}
                         </button>
                       </td>
                     </tr>
@@ -499,7 +520,7 @@ export function DeskView() {
                       <input
                         value={docNumber}
                         onChange={(e) => setDocNumber(e.target.value)}
-                        placeholder="e.g. K1234567"
+                        placeholder={SCREEN_DOC_NUMBER_PLACEHOLDERS[docType] || "e.g. K1234567"}
                       />
                     </label>
                     <label className="field">

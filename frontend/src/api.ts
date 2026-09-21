@@ -73,6 +73,12 @@ export function googleLogin(credential: string) {
   });
 }
 
+export function demoLogin() {
+  return request<{ status: string }>("/api/admin/demo_login", {
+    method: "POST",
+  });
+}
+
 export function logout() {
   return request<{ status: string }>("/api/admin/logout", { method: "POST" });
 }
