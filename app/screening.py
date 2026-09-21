@@ -707,6 +707,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         created_at=report["created_at"],
         session_id=session_id or report.get("session_id"),
         field_hashes=json.dumps(_fh) if _fh else None,
+        ephemeral_raw_fields=json.dumps(extract_res.get("fields", {})) if extract_res.get("fields") else None,
     ))
     db.commit()
     return report

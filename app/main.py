@@ -1024,6 +1024,7 @@ class ScreeningReport(Base):
     created_at = Column(String, nullable=False)
     session_id = Column(String, index=True, nullable=True)   # owning border session (SIH26188)
     field_hashes = Column(Text, nullable=True)               # per-field sha256 digests for cross-doc compare
+    ephemeral_raw_fields = Column(Text, nullable=True)       # TEMPORARY raw JSON, wiped when session closes
 
 class WatchlistEntry(Base):
     """Privacy-preserving watchlist for the screening desk: stores ONLY the
@@ -1854,6 +1855,7 @@ def _screen_row(r):
         "masked_fields": _safe_json(r.extracted_fields),
         "session_id": getattr(r, "session_id", None),
         "field_hashes": _safe_json(getattr(r, "field_hashes", None)),
+        "raw_fields": _safe_json(getattr(r, "ephemeral_raw_fields", None)),
     }
 
 _SYNC_SCREENED_EXTS = ("pdf", "jpg", "jpeg", "png", "webp", "bmp")
@@ -2031,7 +2033,8 @@ def _session_docs(db, session_id):
 def _comparison_for_rows(docs):
     cmp_data = [
         {"doc_type": d.get("doc_type"), "field_hashes": d.get("field_hashes") or {},
-         "masked": d.get("masked") or d.get("masked_fields") or {}}
+         "masked": d.get("masked") or d.get("masked_fields") or {},
+         "raw_fields": d.get("raw_fields") or {}}
         for d in docs
     ]
     return build_comparison(cmp_data)

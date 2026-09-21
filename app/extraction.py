@@ -145,9 +145,11 @@ def _extract_image(data: bytes) -> dict:
     from screening import extract_fields
     from identity import ocr_extract
     from mrz import parse_mrz
+    from llm import extract_document_data
 
     out = {"fields": {}, "mrz": None,
-           "ocr": {"ran": False, "reason": "not run"}, "pdf_no_text": False}
+           "ocr": {"ran": False, "reason": "not run"}, "pdf_no_text": False,
+           "llm_extraction": {"ran": False, "reason": "not run"}}
 
     text, ocr_meta = ocr_extract(data)
     out["ocr"] = ocr_meta
@@ -170,6 +172,16 @@ def _extract_image(data: bytes) -> dict:
                 out["fields"]["mrz_valid"] = True
         except Exception:
             out["mrz"] = None
+
+    # LLM Structured Extraction pass
+    llm_res = extract_document_data(data)
+    out["llm_extraction"] = {"ran": llm_res.get("ran", False), "reason": llm_res.get("reason", "unknown")}
+    if llm_res.get("ran") and llm_res.get("fields"):
+        # Merge LLM extracted fields into out["fields"] where gaps exist
+        for k, v in llm_res["fields"].items():
+            if v and not out["fields"].get(k):
+                out["fields"][k] = v
+
     return out
 
 
@@ -228,7 +240,7 @@ def _extract_aadhaar_image(data: bytes) -> dict:
     boxes = extract_aadhaar_fields(data)
     if not boxes:
         # Model absent (e.g. Vercel) or no zones found: degrade to the generic
-        # image pass so Aadhaar still screens with whole-card OCR + heuristics.
+        # image pass so Aadhaar still screens with whole-card OCR + LLM heuristics.
         out.update(_extract_image(data))
         return out
 

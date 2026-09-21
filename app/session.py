@@ -140,6 +140,8 @@ def _entry(doc: dict, key: str):
         return {"h": e, "s": "latin"}
     return None
 
+from llm import analyze_session_discrepancies
+
 
 def build_comparison(docs: list[dict]) -> dict:
     """Compare the field records of the documents in one session.
@@ -214,6 +216,21 @@ def build_comparison(docs: list[dict]) -> dict:
         verdict = "CONSISTENT"
     else:
         verdict = "INCOMPLETE"
+        
+    # AI Semantic Discrepancy Matching Override
+    raw_docs_data = [d.get("raw_fields") for d in docs if d.get("raw_fields")]
+    if len(raw_docs_data) > 1 and verdict == "DISCREPANCY":
+        ai_res = analyze_session_discrepancies(raw_docs_data)
+        if ai_res.get("ran") and ai_res.get("result"):
+            ai_verdict = ai_res["result"].get("verdict")
+            if ai_verdict == "CONSISTENT" or ai_res["result"].get("semantic_match"):
+                verdict = "CONSISTENT"
+                bump = 0 # reset risk bump if AI cleared it
+                for c in checks:
+                    if c["status"] == "disagree":
+                        c["status"] = "semantic-match"
+                        c["detail"] += f" [AI Overruled: {ai_res['result'].get('reasoning')}]"
+                        
     return {"checks": checks, "verdict": verdict, "risk_bump": bump}
 
 
