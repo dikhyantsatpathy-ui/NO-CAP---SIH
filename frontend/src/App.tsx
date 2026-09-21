@@ -1,228 +1,202 @@
 // ============================================================================
-// App shell — top bar, status band, footer.
-// The console is a single officer view: the SSB border screening desk
-// (Google sign-in gate; signed-out visitors see the login screen).
+// App shell — SSB Border Screening Console (SIH26188).
+// Clean tabbed console: Desk / Review Queue / Crypto Ledger / Watchlist / Staff.
+// One traveller per session on the Desk; flagged sessions settle in the Review
+// Queue; approved-and-settled sessions chain into the Crypto Ledger as SHA-256
+// blocks. Zero raw identifiers are persisted anywhere.
 // ============================================================================
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth, useToast } from "./app/state";
-import { useExplain } from "./app/explain";
-import { useTheme } from "./app/theme";
-import { useGlobalReveals } from "./app/motion";
-import { prefetchAnalyticsSummary } from "./app/analyticsCache";
 import { initials } from "./app/util";
-import { IconBar, IconMoon, IconQuestion, IconShield, IconSun } from "./components/ui";
-import ProjectChatbot from "./components/ProjectChatbot";
-import { AuthorityView } from "./views/AuthorityView";
-import { AnalyticsView } from "./views/AnalyticsView";
+import { SignInGate } from "./views/GoogleSignIn";
+import { DeskView } from "./views/DeskView";
+import { ReviewQueueView } from "./views/ReviewQueueView";
+import { LedgerView } from "./views/LedgerView";
+import { WatchlistView } from "./views/WatchlistView";
+import { StaffView } from "./views/StaffView";
 
-type ViewKey = "desk" | "analytics";
+type ViewKey = "desk" | "review" | "ledger" | "watchlist" | "staff";
 
-const NAV_TABS: { key: ViewKey; label: string; icon: ReactNode }[] = [
-  { key: "desk", label: "Screening Desk", icon: <IconShield size={13} /> },
-  { key: "analytics", label: "Analytics", icon: <IconBar size={13} /> },
+const ICONS: Record<ViewKey, ReactNode> = {
+  desk: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  ),
+  review: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6h11M9 12h11M9 18h11" />
+      <circle cx="4.5" cy="6" r="1.4" />
+      <circle cx="4.5" cy="12" r="1.4" />
+      <circle cx="4.5" cy="18" r="1.4" />
+    </svg>
+  ),
+  ledger: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="3" width="14" height="18" rx="1.5" />
+      <path d="M9 8h6M9 12h6M9 16h6" />
+    </svg>
+  ),
+  watchlist: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  staff: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20c1-4 3.6-6 6.5-6s5.5 2 6.5 6" />
+      <circle cx="17.5" cy="9" r="2.5" />
+      <path d="M15.5 14.5c2.3.2 4 1.9 4.8 4.5" />
+    </svg>
+  ),
+};
+
+const NAV: { key: ViewKey; label: string }[] = [
+  { key: "desk", label: "Desk" },
+  { key: "review", label: "Review Queue" },
+  { key: "ledger", label: "Crypto Ledger" },
+  { key: "watchlist", label: "Watchlist" },
+  { key: "staff", label: "Staff" },
 ];
 
 function BrandMark() {
-  // A checkpost seal: a passport-style clipped shield in the seal colour,
-  // inner tick asserting the screened identity.
   return (
     <svg className="brand__mark" viewBox="0 0 64 64" aria-hidden="true">
-      <rect width="64" height="64" rx="14" fill="var(--seal)" />
-      <g
-        fill="none"
-        stroke="var(--paper)"
-        strokeWidth="3.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M32 8 l18 9 c0 12 -4 22 -18 30 c-14 -8 -18 -18 -18 -30 Z" />
-        <circle cx="32" cy="27" r="5.5" />
-        <path d="M26 36 l4 4 7-8" />
+      <rect width="64" height="64" rx="8" fill="var(--seal)" />
+      <g fill="none" stroke="var(--ink-on-seal)" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M32 8l18 9c0 12-4 22-18 30-14-8-18-18-18-30z" />
+        <path d="M25 32l5 5 10-11" />
       </g>
-      <path d="M20 52 c12 5 12 5 24 0" stroke="var(--paper)" strokeWidth="2.6" strokeLinecap="round" fill="none" />
     </svg>
   );
 }
 
-/** Fixed top progress bar + page-wide `--scroll` (0..1) custom property used
- *  by parallax / reactive elements. Both update on the same rAF. */
-function ScrollProgress() {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      const doc = document.documentElement;
-      const max = doc.scrollHeight - window.innerHeight;
-      const p = max > 0 ? Math.min(1, window.scrollY / max) : 0;
-      doc.style.setProperty("--scroll", p.toFixed(4));
-      if (ref.current) ref.current.style.transform = `scaleX(${p})`;
-    };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-
-  return <div className="scroll-progress" ref={ref} aria-hidden="true" />;
-}
-
 function TopBar() {
-  const { me, signedIn, signOut } = useAuth();
+  const { me, signOut } = useAuth();
   const { toast } = useToast();
-  const { on, toggle } = useExplain();
-  const [theme, toggleTheme] = useTheme();
+  const [signingOut, setSigningOut] = useState(false);
 
-  const doLogout = async () => {
+  const doSignOut = async () => {
+    setSigningOut(true);
     await signOut();
-    toast("Officer session ended.", "info");
+    toast("Officer session closed.", "info");
   };
 
   return (
     <header className="topbar">
-      <div className="shell topbar__inner">
-        <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
-          <BrandMark />
-          <span>
-            <span className="brand__name">SSB Border Screening</span>
-            <span className="brand__sub">Fake Identity &amp; Document Screening · SIH26188</span>
-          </span>
-        </a>
-
-        {me && signedIn && (
-          <span className="session-chip">
-            <span className="dot" aria-hidden="true" />
-            {initials(me.name)} {me.name}
-            {me.is_super_admin ? " · S-ADMIN" : ""}
-          </span>
+      <div className="topbar__brand">
+        <BrandMark />
+        <div>
+          <div className="topbar__title">SSB BORDER SCREENING CONSOLE</div>
+          <div className="topbar__sub">
+            Ministry of Home Affairs · Sashastra Seema Bal (Police II Division) · SIH26188
+          </div>
+        </div>
+      </div>
+      <div className="topbar__right">
+        {me && (
+          <div className="officer">
+            <span className="officer__chip">
+              <span className="officer__badge">{initials(me.name)}</span>
+              <span className="officer__meta">
+                <span className="officer__name">{me.name}</span>
+                <span className="officer__role">
+                  {me.designation || (me.pending_approval ? "PENDING APPROVAL" : "SIGNER")}
+                  {me.is_super_admin ? " · SUPERVISOR" : ""}
+                </span>
+              </span>
+            </span>
+            <button className="btn btn--small" disabled={signingOut} onClick={() => void doSignOut()}>
+              SIGN OUT
+            </button>
+          </div>
         )}
-        {me && signedIn && (
-          <button className="link-btn" onClick={() => void doLogout()}>
-            Sign out
-          </button>
-        )}
-
-        <button
-          className={`ex-toggle ${on ? "ex-toggle--on" : "ex-toggle--off"}`}
-          data-explain-toggle
-          onClick={toggle}
-          aria-pressed={on}
-          title={on ? "Explain mode is active — click to turn off" : "Explain mode is disabled — click to turn on"}
-        >
-          <IconQuestion size={15} />
-          <span className="ex-toggle__label">Explain</span>
-          <span className="toggle-track" aria-hidden="true">
-            <span className="toggle-thumb" />
-          </span>
-          <span className="ex-toggle__status">{on ? "ON" : "OFF"}</span>
-        </button>
-
-        <button
-          className="theme-toggle"
-          onClick={toggleTheme}
-          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          title={theme === "dark" ? "Light mode" : "Dark mode"}
-        >
-          {theme === "dark" ? <IconSun size={15} /> : <IconMoon size={15} />}
-        </button>
       </div>
     </header>
   );
 }
 
-function StatusBand() {
+function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => void }) {
   return (
-    <div className="status-band">
-      <div className="shell status-band__inner">
-        <span>
-          <span className="dot" style={{ background: "var(--status-dot)" }} aria-hidden="true" />
-          SCREENING DESK — OPERATIONAL
-        </span>
-        <span className="sep">|</span>
-        <span>
-          AI DETECTOR <b style={{ color: "var(--status-strong)" }}>heuristic + cloud + on-device</b>
-        </span>
-        <span className="sep">|</span>
-        <span>FOUR-MODULE FORENSICS</span>
-        <span className="sep">|</span>
-        <span>ZERO-STORAGE AUDIT TRAIL</span>
-      </div>
-    </div>
-  );
-}
-
-function NavTabs({ view, onView }: { view: ViewKey; onView: (v: ViewKey) => void }) {
-  return (
-    <nav className="shell nav-tabs" aria-label="Console sections">
-      {NAV_TABS.map((t) => (
+    <nav className="nav" aria-label="Console sections">
+      {NAV.map((n) => (
         <button
-          key={t.key}
-          type="button"
-          className={`nav-tab${view === t.key ? " nav-tab--active" : ""}`}
-          onClick={() => onView(t.key)}
-          aria-pressed={view === t.key}
+          key={n.key}
+          className={`nav__tab${active === n.key ? " nav__tab--active" : ""}`}
+          onClick={() => onPick(n.key)}
         >
-          {t.icon}
-          <span>{t.label}</span>
+          <span className="nav__icon">{ICONS[n.key]}</span>
+          {n.label}
         </button>
       ))}
     </nav>
   );
 }
 
-function SiteFooter() {
+function StatusBand() {
   return (
-    <footer className="site-footer">
-      SSB Border Screening Console — AI-assisted fake identity &amp; document screening for the Ministry of Home Affairs.
-      <div className="team">
-        Dikhyant Satapathy · Supriya Mandal · Asutosh Nayak · Sushumna Meghavaram · Ayush Kumar Lenka · Sidharth Priyadarshi
-      </div>
-    </footer>
+    <div className="statusband">
+      <span className="statusband__item">
+        <span className="dot dot--ok" /> OPERATIONAL
+      </span>
+      <span className="statusband__item">SESSION FLOW — ONE TRAVELLER AT A TIME</span>
+      <span className="statusband__item">ZERO-STORAGE AUDIT — SHA-256 DIGESTS ONLY</span>
+      <span className="statusband__item">CHAINED SESSION LEDGER</span>
+      <span className="statusband__item statusband__item--right mono">SIH26188 // CLASSIFIED — OFFICIAL USE</span>
+    </div>
   );
 }
 
 export function App() {
+  const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
+  const prevView = useRef<ViewKey>("desk");
 
-  // Scroll-reveals re-bind for the active section.
-  useGlobalReveals(view);
-
-  // Prefetch the analytics payload once at load so the tab opens instantly.
+  // Re-assert Desk when the officer session changes so a fresh officer is not
+  // dropped into another signer's open session pane.
   useEffect(() => {
-    void prefetchAnalyticsSummary();
-  }, []);
+    if (prevView.current !== view) {
+      prevView.current = view;
+      return;
+    }
+    if (signedIn && me) setView("desk");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn, me]);
 
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-  }, [view]);
+  if (booting) {
+    return (
+      <div className="boot">
+        <BrandMark />
+        <span className="mono">ESTABLISHING SECURE CONSOLE…</span>
+      </div>
+    );
+  }
 
-  const openView = (v: ViewKey) => {
-    setView(v);
-  };
+  if (!signedIn) {
+    return <SignInGate />;
+  }
 
   return (
-    <div className="app">
-      <ScrollProgress />
+    <div className="console">
       <TopBar />
-      <NavTabs view={view} onView={openView} />
-
-      <main className="shell app__main">
-        {view === "desk" && <AuthorityView />}
-        {view === "analytics" && <AnalyticsView />}
-      </main>
-
+      <NavTabs active={view} onPick={setView} />
       <StatusBand />
-      <SiteFooter />
-      <ProjectChatbot />
+      <main className="console__main">
+        {view === "desk" && <DeskView />}
+        {view === "review" && <ReviewQueueView />}
+        {view === "ledger" && <LedgerView />}
+        {view === "watchlist" && <WatchlistView />}
+        {view === "staff" && <StaffView />}
+      </main>
+      <footer className="foot">
+        <span className="mono">
+          SIH26188 · AI-BASED FAKE IDENTITY &amp; DOCUMENT SCREENING · CONSERVED DATA POLICY ACTIVE
+        </span>
+      </footer>
     </div>
   );
 }

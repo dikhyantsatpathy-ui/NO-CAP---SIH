@@ -11,7 +11,7 @@ type Entry = { id: string; tags: string[]; q: string; a: string; s?: string };
 const ENTRIES: Entry[] = [
   {
     id: "what",
-    tags: ["what", "is", "nocap", "project", "veri_source", "about", "sih", "genesis", "ssb", "border"],
+    tags: ["what", "is", "nocap", "project", "about", "sih", "genesis", "ssb", "border"],
     q: "What is this project?",
     a: "*SSB Border Screening (SIH26188)* is an **AI-based fake identity & document screening console** for the border inspection desk. Officers upload an identity document (plus an optional live face capture) and the system runs a four-module forensic pipeline — extract, validate, tamper-detect, face-match — returning a risk score and a CLEAR / REVIEW / FLAGGED verdict with one explainable reason per risk point. Every run is attributed to the screening officer and recorded in a hash-only audit trail.",
     s: "README.md + frontend/views/AuthorityView.tsx",

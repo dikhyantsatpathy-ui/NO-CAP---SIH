@@ -9,7 +9,7 @@ Every /api/chat query receives the COMPLETE CODEBASE DATABASE in Gemini's 1-mill
 context window. Files most relevant to the query are prioritized at the top of the context
 block right after the Architectural Blueprint, followed by the rest of the repository.
 Every file is injected with 1-based line numbers, allowing the AI to pinpoint exact lines
-(e.g., `app/main.py:1124`, `frontend/src/views/AuthorityView.tsx:42`).
+(e.g., `app/main.py:1124`, `frontend/src/views/DeskView.tsx:42`).
 """
 
 import os
@@ -188,10 +188,9 @@ def _architecture_blueprint() -> str:
         "   - Multi-provider AI & heuristic content detection (Sightengine, local ONNX, frequency heuristics).\n"
         "   - Privacy-preserving watchlist matching using SHA-256 digests over normalized identifiers (no raw IDs stored).\n\n"
         "3. **Frontend Application (`frontend/src/`)**:\n"
-        "   - `App.tsx`: Main shell, explain-mode toggle, responsive topbar.\n"
-        "   - View: `AuthorityView.tsx` (Google sign-in gate, screening desk, shift export, watchlist, role directory, dossier).\n"
-        "   - Components: `ScreeningDesk.tsx` pieces, `ProjectChatbot.tsx` (AI guide), role directory.\n"
-        "   - Utilities: `api.ts` (API client), `app/state.tsx` (auth session + toasts), `explain.tsx` (interactive UI guidance tooltips), `knowledge.ts` (curated offline fallback), `specimens.ts` (sample documents for demo passes).\n\n"
+        "   - `App.tsx`: Main 5-tab console shell (Desk / Review Queue / Crypto Ledger / Watchlist / Staff) with Google sign-in gate.\n"
+        "   - Views: `DeskView.tsx` (session flow — one traveller per session, documents screened one by one, cross-compared, then approved or flagged), `ReviewQueueView.tsx` (supervisory adjudication of flagged sessions), `LedgerView.tsx` (chained SHA-256 session ledger + tamper verify), `WatchlistView.tsx` (hash-only watchlist), `StaffView.tsx` (officer roster / role assignment), `GoogleSignIn.tsx`.\n"
+        "   - Utilities: `api.ts` (API client incl. session + ledger endpoints), `app/state.tsx` (auth session + toasts), `app/util.ts` (hash/time formatting), `specimens.ts` (sample documents for demo passes), `knowledge.ts` (curated offline fallback).\n\n"
         "4. **Documentation & Study Guides (`scripts/`, `README.md`)**:\n"
         "   - Comprehensive deep-dives: `THE_COMPLETE_GUIDE.md`, `BACKEND_STUDY_GUIDE.md`, `CODE_WALKTHROUGH.md`, `SIH_PRESENTATION.md`, `MHA_SCREENING.md`.\n"
     )
@@ -227,7 +226,7 @@ def codebase_context(question: str) -> str:
         "identity screening algorithms, verification pipelines, configuration, and documentation "
         "guides is included in full below with 1-based line numbers. "
         "Every single file is accessible to you. When answering, search and cite exact file paths "
-        "and line numbers (e.g. `app/main.py:1124-1140` or `frontend/src/views/AuthorityView.tsx:35`). "
+        "and line numbers (e.g. `app/main.py:1124-1140` or `frontend/src/views/DeskView.tsx:35`). "
         "Be technically rigorous, precise, and directly quote code snippets when explaining logic.\n\n"
         + "\n\n".join(parts)
     )

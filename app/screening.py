@@ -304,7 +304,8 @@ def _grade(score: int) -> str:
 def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                   checkpoint: str | None, declared: dict | None,
                   screener: str | None = None,
-                  live_frame: bytes | None = None) -> dict:
+                  live_frame: bytes | None = None,
+                  session_id: str | None = None) -> dict:
     """Full Upload->Extract->Analyze->Verify->AssessRisk pass. Returns a
     report dict AND persists an immutable ScreeningReport row.
 
@@ -619,6 +620,15 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     risk = max(0, min(100, risk))
     verdict = _grade(risk)
 
+    # Cross-document fingerprints (session flow, SIH26188): per-field sha256 of
+    # the normalized value, so a later session close can compare this document
+    # against the others in the same session WITHOUT storing raw values.
+    try:
+        from session import field_hashes as _field_hashes
+        _fh = _field_hashes(fields)
+    except Exception:
+        _fh = {}
+
     report = {
         "id": uuid.uuid4().hex[:16],
         "file_hash": file_hash,
@@ -632,6 +642,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "confidence": confidence,
         "masked_fields": {k: (mask(v) if isinstance(v, str) else v)
                           for k, v in fields.items()},
+        "field_hashes": _fh,
+        "session_id": session_id,
         "watchlist_hits": hits,
         "reasons": reasons,
         "ai_detection": {k: ai_det.get(k) for k in
@@ -693,6 +705,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         screener=screener,
         latency_ms=report.get("latency_ms"),
         created_at=report["created_at"],
+        session_id=session_id or report.get("session_id"),
+        field_hashes=json.dumps(_fh) if _fh else None,
     ))
     db.commit()
     return report

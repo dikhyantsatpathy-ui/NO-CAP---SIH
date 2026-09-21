@@ -224,6 +224,8 @@ export interface ScreenReport {
   adjudication_note?: string | null;
   adjudicated_at?: string | null;
   masked_fields: Record<string, string | boolean | null>;
+  field_hashes?: Record<string, { h: string; s: string }> | null;
+  session_id?: string | null;
   signals?: string[];
   ai_detection?: AiDetection | null;
   file_hash?: string;
@@ -340,13 +342,17 @@ export interface ScreenTravelValidity {
   detail: string;
 }
 
-/** Run a screening pass on an uploaded identity document (officer only). */
+/** Run a screening pass on an uploaded identity document (officer only).
+ *  When sessionId is given (SIH26188 session flow) the resulting audit row is
+ *  attached to that border session and its per-field digests are persisted for
+ *  cross-document comparison. */
 export function screenDocument(
   file: File,
   docType: string,
   checkpoint: string,
   declared?: Record<string, string>,
   liveFrame?: Blob | null,
+  sessionId?: string,
 ) {
   const fd = form({ doc_type: docType, checkpoint });
   fd.append("file", file, file.name);
@@ -354,6 +360,7 @@ export function screenDocument(
     fd.append("declared", JSON.stringify(declared));
   }
   if (liveFrame) fd.append("live_frame", liveFrame, "holder_live.jpg");
+  if (sessionId) fd.append("session_id", sessionId);
   return request<ScreenReport>("/api/screen", { method: "POST", body: fd });
 }
 
@@ -643,5 +650,129 @@ export interface LedgerVerifyResult {
 
 export function verifyLedgerChain() {
   return request<LedgerVerifyResult>("/api/screen/ledger/verify");
+}
+
+// ----------------------------------------------------------------------------
+// Border screening SESSIONS (SIH26188) — one traveller per session.
+// Documents are screened into a session one at a time, cross-compared for
+// discrepancies, then approved (chained SHA-256 block into the ledger) or
+// flagged for the supervisory review queue.
+// ----------------------------------------------------------------------------
+
+export type SessionStatus = "open" | "approved" | "flagged" | "rejected";
+export type SessionVerdict = "PENDING" | "CLEAR" | "REVIEW" | "FLAGGED";
+
+export type ComparisonStatus = "agree" | "disagree" | "cross-script" | "single" | "none";
+export type ComparisonVerdict = "CONSISTENT" | "DISCREPANCY" | "INCOMPLETE";
+
+export interface ComparisonCheck {
+  field: string;
+  label: string;
+  status: ComparisonStatus;
+  detail: string;
+  docs: string[];
+  mask?: string | null;
+  masks?: Record<string, string | null> | null;
+}
+
+export interface SessionComparison {
+  checks: ComparisonCheck[];
+  verdict: ComparisonVerdict;
+  risk_bump: number;
+}
+
+export interface ScreeningSession {
+  id: string;
+  status: SessionStatus;
+  verdict: SessionVerdict | null;
+  risk_score: number | null;
+  checkpoint: string;
+  screener: string | null;
+  comparison: SessionComparison | null;
+  note: string;
+  adjudicator: string | null;
+  adjudicated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  block_hash: string | null;
+  prev_hash: string | null;
+  document_count?: number;
+}
+
+export interface ScreeningSessionDetail extends ScreeningSession {
+  documents: ScreenReport[];
+  comparison: SessionComparison;
+}
+
+export interface SessionLedgerPayload {
+  blocks: ScreeningSession[];
+  head_hash: string | null;
+  total_blocks: number;
+}
+
+export interface SessionLedgerVerify {
+  valid: boolean;
+  total_blocks: number;
+  verified_blocks?: number;
+  head_hash: string | null;
+  broken_at: string | null;
+  status: string;
+  reason?: string;
+}
+
+/** Open a new border session for the person now at the desk. */
+export function createSession(checkpoint: string) {
+  return request<ScreeningSession>("/api/sessions", {
+    method: "POST",
+    body: form({ checkpoint }),
+  });
+}
+
+/** List sessions (own lane; supervisors see the whole desk). */
+export function getSessions(status?: string, checkpoint?: string) {
+  const q: string[] = [];
+  if (status) q.push(`status=${encodeURIComponent(status)}`);
+  if (checkpoint) q.push(`checkpoint=${encodeURIComponent(checkpoint)}`);
+  const url = q.length ? `/api/sessions?${q.join("&")}` : "/api/sessions";
+  return request<{ sessions: ScreeningSession[] }>(url);
+}
+
+/** Full session detail: documents + live cross-document comparison. */
+export function getSession(sessionId: string) {
+  return request<ScreeningSessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+/** Desk officer closes the session: 'approve' signs it into the ledger;
+ *  'flag' routes it to the supervisory review queue. */
+export function closeSession(sessionId: string, verdict: "approve" | "flag", note?: string) {
+  return request<ScreeningSessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/close`,
+    { method: "POST", body: form({ verdict, note: note || "" }) },
+  );
+}
+
+/** Supervisory officer settles a FLAGGED session (CLEARED / CONFIRMED_FRAUD / INCONCLUSIVE). */
+export function adjudicateSession(
+  sessionId: string,
+  decision: "CLEARED" | "CONFIRMED_FRAUD" | "INCONCLUSIVE",
+  note?: string,
+) {
+  return request<ScreeningSessionDetail>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/adjudicate`,
+    { method: "POST", body: form({ decision, note: note || "" }) },
+  );
+}
+
+/** Signed session blocks (the border ledger), oldest first. */
+export function getSessionLedger() {
+  return request<SessionLedgerPayload>("/api/sessions/ledger/blocks");
+}
+
+/** Tamper-check the whole session ledger end to end. */
+export function verifySessionLedger() {
+  return request<SessionLedgerVerify>("/api/sessions/ledger/verify");
 }
 

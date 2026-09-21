@@ -56,8 +56,8 @@ resurrect it.
   modules, deleted mock registries (`verification_providers.py`) and DigiLocker
   (`digilocker_provider.py`), removed the `/api/identity/*` route suite,
   refreshed the frontend desk, migrated the DB (masked screening rows only).
-- `a88f01a` **feat: drop Aadhaar/UIDAI/QR-crypto** (pushed to `origin`
-  and `crypto-knights`) — full Aadhaar strip per user directive ("completely
+- `a88f01a` **feat: drop Aadhaar/UIDAI/QR-crypto** (pushed to `origin`)
+  — full Aadhaar strip per user directive ("completely
   lean into the direction for SIH"): removed the Aadhaar doc type, the
   Aadhaar-SecureQR `crypto_mode` toggle, the `UIDAI_AADHAAR_PUBKEY_PEM` env
   var, the Verhoeff checksum, QR decode / QR-portrait plumbing, and the
@@ -276,10 +276,10 @@ auto-downloaded). **Removed:** the Web3/IPFS vars
 python -m pytest -q            # 95 passed
 python -m pyflakes app/... tests/...   # zero warnings (do not pass requirements.txt)
 cd frontend && npm run build   # regenerates ../app/static/index.html
-git add -A && git commit -m "..." && git push origin main && git push crypto-knights main
+git add -A && git commit -m "..." && git push origin main
 ```
 
-Remotes: `origin` = Veri_source.git, `crypto-knights` = Crypto-Knights.git.
+Remote: `origin` = https://github.com/dikhyantsatpathy-ui/NO-CAP---SIH.git
 Live `/api/screen`
 requires an admin session cookie (anonymous POST → `{"detail":"ACCESS DENIED:
 Missing or invalid secure session cookie."}`). Tests: `test_screening.py`,

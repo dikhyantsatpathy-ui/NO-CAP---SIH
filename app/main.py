@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 
@@ -46,6 +46,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # like onnxruntime / the cloud SDK are loaded lazily inside the package, so this
 # never slows down cold starts for the default heuristic path).
 from screening import run_screening
+# Border SESSION orchestration: cross-document comparison + signed session
+# ledger blocks (SIH26188). Pure hash-based; imports screening's norm/mask.
+from session import build_comparison, session_payload, chain_hash
 # Passport/Visa MRZ / Driving-Licence / PAN / Voter-ID validation lives in
 # identity.py and feeds the screening desk's Module 2 (document validation)
 # through app/validation.py. Emits explainable checks, stores zero raw bytes.
@@ -1019,6 +1022,8 @@ class ScreeningReport(Base):
     adjudicated_at = Column(String, nullable=True)
     screener = Column(String, nullable=True)         # signed-in officer who ran it
     created_at = Column(String, nullable=False)
+    session_id = Column(String, index=True, nullable=True)   # owning border session (SIH26188)
+    field_hashes = Column(Text, nullable=True)               # per-field sha256 digests for cross-doc compare
 
 class WatchlistEntry(Base):
     """Privacy-preserving watchlist for the screening desk: stores ONLY the
@@ -1032,6 +1037,33 @@ class WatchlistEntry(Base):
     reason = Column(String, nullable=True)
     added_by = Column(String, nullable=False)
     created_at = Column(String, nullable=False)
+
+
+class ScreeningSession(Base):
+    """One traveller at the desk = one border screening session (SIH26188).
+
+    Documents are screened into the session one at a time (each pass writes its
+    own masked ScreeningReport audit row tagged with this session_id); the
+    extracted values are cross-compared; when the session is approved (or a
+    supervisor settles a flagged one) the session's canonical data is reduced
+    to a chained SHA-256 digest stored in `ledger_hash`. Zero raw identifier
+    values are persisted — only digests, masks and comparison flags."""
+    __tablename__ = "screening_sessions"
+    id = Column(String, primary_key=True)
+    status = Column(String, nullable=False, default="open")   # open | approved | flagged | rejected
+    verdict = Column(String, nullable=True)                   # PENDING | CLEAR | REVIEW | FLAGGED
+    risk_score = Column(Integer, nullable=True, default=0)
+    checkpoint = Column(String, nullable=True)
+    screener = Column(String, index=True, nullable=True)      # officer who opened the session
+    comparison = Column(Text, nullable=True)                  # cross-doc comparison JSON (flags only)
+    note = Column(Text, nullable=True)
+    previous_hash = Column(String, nullable=True)             # ledger chain linkage (over closed sessions)
+    ledger_hash = Column(String, nullable=True)               # signed block on approval / settlement
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
+    closed_at = Column(String, nullable=True)
+    adjudicator = Column(String, nullable=True)               # supervisor who settled a flagged session
+    adjudicated_at = Column(String, nullable=True)
 
 
 class NoticeBroadcast(Base):
@@ -1090,6 +1122,14 @@ _MIGRATIONS = [
     # Notice-board timeline + per-report screening latency.
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS latency_ms INTEGER;",
     "CREATE INDEX IF NOT EXISTS ix_notice_broadcasts_ts ON notice_broadcasts(timestamp);",
+    # Border SESSION ledger (SIH26188): per-doc session linkage + cross-doc
+    # field digests, and quick session-list filters.
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS session_id VARCHAR;",
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS field_hashes TEXT;",
+    "CREATE INDEX IF NOT EXISTS ix_screening_reports_session ON screening_reports(session_id);",
+    "CREATE INDEX IF NOT EXISTS ix_sessions_created ON screening_sessions(created_at);",
+    "CREATE INDEX IF NOT EXISTS ix_sessions_status ON screening_sessions(status);",
+    "CREATE INDEX IF NOT EXISTS ix_sessions_screener ON screening_sessions(screener);",
 ]
 
 
@@ -1125,11 +1165,16 @@ if _IS_SQLITE:
     try:
         with engine.connect() as conn:
             cols = [r[0] for r in conn.execute(text("PRAGMA table_info(screening_reports)")).fetchall()]
-            if "latency_ms" not in cols:
-                conn.execute(text("ALTER TABLE screening_reports ADD COLUMN latency_ms INTEGER"))
-                conn.commit()
+            for _sqlite_col, _sqlite_ddl in (
+                ("latency_ms", "INTEGER"),
+                ("session_id", "VARCHAR"),
+                ("field_hashes", "TEXT"),
+            ):
+                if _sqlite_col not in cols:
+                    conn.execute(text(f"ALTER TABLE screening_reports ADD COLUMN {_sqlite_col} {_sqlite_ddl}"))
+                    conn.commit()
     except Exception as e:
-        print(f"[startup] SQLite latency_ms column skipped ({type(e).__name__}): {e}")
+        print(f"[startup] SQLite column-add skipped ({type(e).__name__}): {e}")
 
 
 # --- Neon (serverless Postgres) pauses after ~5 min of idle; the FIRST request
@@ -1807,6 +1852,8 @@ def _screen_row(r):
         "block_hash": getattr(r, "ledger_hash", None),
         "prev_hash": getattr(r, "previous_hash", None),
         "masked_fields": _safe_json(r.extracted_fields),
+        "session_id": getattr(r, "session_id", None),
+        "field_hashes": _safe_json(getattr(r, "field_hashes", None)),
     }
 
 _SYNC_SCREENED_EXTS = ("pdf", "jpg", "jpeg", "png", "webp", "bmp")
@@ -1820,6 +1867,7 @@ async def screen_document(
     checkpoint: str = Form(""),
     declared: str = Form(""),          # optional JSON map of officer-typed fields
     live_frame: UploadFile = Form(None),  # optional M4 webcam capture (image)
+    session_id: str = Form(""),        # optional owning border session (SIH26188)
     admin: str = Depends(get_current_admin_or_evaluator),
 ):
     data = await file.read()
@@ -1846,10 +1894,20 @@ async def screen_document(
                 raise HTTPException(403, "ACCESS DENIED.")
             if not (identity.institution or "").strip() or not (identity.designation or "").strip():
                 raise HTTPException(403, "Role pending: a super admin must approve your post & institution before screening.")
+        session_owner = session_id.strip() or None
+        if session_owner:
+            sess = db.query(ScreeningSession).filter_by(id=session_owner).first()
+            if not sess:
+                raise HTTPException(status_code=404, detail="Screening session not found.")
+            if not is_super_admin(admin) and sess.screener != admin:
+                raise HTTPException(status_code=403, detail="Not your screening session.")
+            if sess.status != "open":
+                raise HTTPException(status_code=409, detail=f"Session is not open (status={sess.status}).")
         report = run_screening(
             db, data, file.filename or "upload",
             (doc_type or "other").strip(), (checkpoint or "").strip(),
             declared_map, screener=admin, live_frame=live_bytes,
+            session_id=session_id.strip() or None,
         )
         return report
 
@@ -1910,6 +1968,320 @@ def screen_adjudicate(
         db.commit()
         return {"ok": True, "id": report_id, "adjudication": decision}
 
+# ==============================================================================
+# [ BORDER SCREENING SESSIONS (SIH26188) ]
+# One traveller at the desk = one session. Documents are screened into the
+# session (each pass still writes its own masked ScreeningReport audit row
+# tagged with the session_id); identifier values are cross-compared for
+# discrepancies; the desk approves (signs a chained SHA-256 block into the
+# ledger) or flags for the supervisory review queue. Zero raw values stored.
+# ==============================================================================
+
+def _session_pub(s, doc_count=None):
+    """ScreeningSession row -> safe public-shaped dict."""
+    d = {
+        "id": s.id,
+        "status": s.status,
+        "verdict": s.verdict,
+        "risk_score": s.risk_score,
+        "checkpoint": s.checkpoint or "",
+        "screener": s.screener,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+        "closed_at": s.closed_at,
+        "comparison": _safe_json(s.comparison),
+        "note": s.note or "",
+        "adjudicator": s.adjudicator,
+        "adjudicated_at": s.adjudicated_at,
+        "block_hash": s.ledger_hash,
+        "prev_hash": s.previous_hash,
+    }
+    if doc_count is not None:
+        d["document_count"] = doc_count
+    return d
+
+
+def _get_session_owned(db, session_id, admin, require_open=False):
+    s = db.query(ScreeningSession).filter_by(id=session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Screening session not found.")
+    if not is_super_admin(admin) and s.screener != admin:
+        raise HTTPException(status_code=403, detail="Not your screening session.")
+    if require_open and s.status != "open":
+        raise HTTPException(status_code=409, detail=f"Session is not open (status={s.status}).")
+    return s
+
+
+def _session_docs(db, session_id):
+    """(docs, rows): documents screened into the session, oldest first. Each
+    doc carries its masked fields + per-field digests for cross-comparison."""
+    rows = (db.query(ScreeningReport)
+            .filter_by(session_id=session_id)
+            .order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc())
+            .all())
+    docs = []
+    for r in rows:
+        base = _screen_row(r)
+        base["field_hashes"] = _safe_json(getattr(r, "field_hashes", None)) or {}
+        base["masked"] = _safe_json(r.extracted_fields) or {}
+        docs.append(base)
+    return docs, rows
+
+
+def _comparison_for_rows(docs):
+    cmp_data = [
+        {"doc_type": d.get("doc_type"), "field_hashes": d.get("field_hashes") or {},
+         "masked": d.get("masked") or d.get("masked_fields") or {}}
+        for d in docs
+    ]
+    return build_comparison(cmp_data)
+
+
+def _next_second(ts: str) -> str:
+    """'YYYY-MM-DD HH:MM:SS UTC' -> the same format, one second later."""
+    try:
+        base = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S UTC")
+        return (base + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return ts
+
+
+def _settle_session(db, s, rows, comparison, decision, adjudicator=None, note=""):
+    """Close the session and append its signed block to the session ledger.
+
+    The chain order is canonical: (closed_at ASC, id ASC). closed_at is bumped
+    strictly past the last signed block so same-second commits cannot make the
+    replayed chain disagree with the recorded prev_hash linkage."""
+    signed = (db.query(ScreeningSession)
+              .filter(ScreeningSession.ledger_hash.isnot(None))
+              .order_by(ScreeningSession.closed_at.asc(), ScreeningSession.id.asc())
+              .all())
+    prev_hash = signed[-1].ledger_hash if signed else "GENESIS"
+    closed = now_utc()
+    if signed and signed[-1].closed_at and signed[-1].closed_at >= closed:
+        closed = _next_second(signed[-1].closed_at)
+    doc_blocks = [r.ledger_hash for r in rows if getattr(r, "ledger_hash", None)]
+    payload = session_payload(
+        session_id=s.id, checkpoint=s.checkpoint, screener=s.screener,
+        verdict=s.verdict, risk_score=s.risk_score,
+        doc_blocks=doc_blocks, comparison_verdict=comparison.get("verdict", ""),
+        closed_at=closed,
+    )
+    s.ledger_hash = chain_hash(prev_hash, payload)
+    s.previous_hash = prev_hash
+    s.comparison = json.dumps(comparison)
+    s.closed_at = closed
+    s.updated_at = closed
+    s.adjudicator = adjudicator or None
+    s.adjudicated_at = closed if adjudicator else None
+    if note.strip():
+        s.note = ((s.note or "") + (" " if s.note else "") + note.strip()).strip()
+    db.commit()
+    return s
+
+
+@app.post("/api/sessions")
+@limiter.limit("60/minute")
+def create_session(request: Request, checkpoint: str = Form(""),
+                   admin: str = Depends(get_current_admin)):
+    """Open a border session for the person now at the desk."""
+    with get_db() as db:
+        now = now_utc()
+        s = ScreeningSession(
+            id=uuid.uuid4().hex[:16],
+            status="open", verdict="PENDING", risk_score=0,
+            checkpoint=(checkpoint or "").strip(), screener=admin,
+            comparison=json.dumps(build_comparison([])),
+            note="", created_at=now, updated_at=now,
+        )
+        db.add(s)
+        db.commit()
+        out = _session_pub(s, 0)
+        out["comparison"] = build_comparison([])
+        return out
+
+
+@app.get("/api/sessions")
+@limiter.limit("120/minute")
+def list_sessions(request: Request, status: str = "", checkpoint: str = "",
+                  admin: str = Depends(get_current_admin)):
+    with get_db() as db:
+        q = db.query(ScreeningSession).order_by(ScreeningSession.created_at.desc())
+        if not is_super_admin(admin):
+            q = q.filter(ScreeningSession.screener == admin)
+        if status.strip():
+            q = q.filter(ScreeningSession.status == status.strip().lower())
+        if checkpoint.strip():
+            q = q.filter(ScreeningSession.checkpoint == checkpoint.strip())
+        rows = q.limit(120).all()
+        counts = {}
+        if rows:
+            sids = [r.id for r in rows]
+            counts = dict(
+                db.query(ScreeningReport.session_id, func.count(ScreeningReport.id))
+                .filter(ScreeningReport.session_id.in_(sids))
+                .group_by(ScreeningReport.session_id).all()
+            )
+        return {"sessions": [_session_pub(s, counts.get(s.id, 0)) for s in rows]}
+
+
+@app.get("/api/sessions/{session_id}")
+@limiter.limit("120/minute")
+def session_detail(session_id: str, request: Request, admin: str = Depends(get_current_admin)):
+    with get_db() as db:
+        s = _get_session_owned(db, session_id, admin)
+        docs, _rows = _session_docs(db, session_id)
+        comparison = _comparison_for_rows(docs)
+        pub = _session_pub(s, len(docs))
+        pub["documents"] = docs
+        pub["comparison"] = comparison
+        return pub
+
+
+@app.post("/api/sessions/{session_id}/close")
+@limiter.limit("60/minute")
+def close_session(session_id: str, request: Request,
+                  verdict: str = Form(...), note: str = Form(""),
+                  admin: str = Depends(get_current_admin)):
+    """Desk officer closes the session: 'approve' signs it into the ledger;
+    'flag' routes it to the supervisory review queue. Sessions with unresolved
+    cross-document discrepancies FAIL CLOSED on approval."""
+    act = (verdict or "").strip().lower()
+    if act not in ("approve", "flag"):
+        raise HTTPException(status_code=400, detail="verdict must be 'approve' or 'flag'.")
+    with get_db() as db:
+        s = _get_session_owned(db, session_id, admin, require_open=True)
+        docs, rows = _session_docs(db, session_id)
+        if not rows:
+            raise HTTPException(status_code=400, detail="Session has no documents yet — add at least one first.")
+        comparison = _comparison_for_rows(docs)
+        agg_risk = max(0, min(100, max((d.get("risk_score") or 0) for d in docs)
+                              + (comparison.get("risk_bump") or 0)))
+        s.risk_score = agg_risk
+        if act == "flag":
+            s.status = "flagged"
+            s.verdict = "REVIEW"
+            s.comparison = json.dumps(comparison)
+            s.note = note.strip()
+            s.closed_at = now_utc()
+            s.updated_at = s.closed_at
+            db.commit()
+            pub = _session_pub(s, len(docs))
+            pub["documents"] = docs
+            pub["comparison"] = comparison
+            return pub
+        if comparison["verdict"] == "DISCREPANCY":
+            raise HTTPException(status_code=409,
+                                detail="Cross-document discrepancy detected — flag this session for review instead of approving.")
+        s.status = "approved"
+        s.verdict = "CLEAR"
+        _settle_session(db, s, rows, comparison, "approve", note=note)
+        pub = _session_pub(s, len(docs))
+        pub["documents"] = docs
+        pub["comparison"] = comparison
+        return pub
+
+
+@app.post("/api/sessions/{session_id}/adjudicate")
+@limiter.limit("60/minute")
+def adjudicate_session(session_id: str, request: Request,
+                       decision: str = Form(...), note: str = Form(""),
+                       admin: str = Depends(get_current_admin)):
+    """Supervisory officer settles a FLAGGED session: CLEARED approves and signs
+    it; CONFIRMED_FRAUD / INCONCLUSIVE reject it (also signed, as evidence)."""
+    if not is_super_admin(admin):
+        raise HTTPException(status_code=403, detail="Only a supervisory officer can adjudicate sessions.")
+    dec = (decision or "").strip().upper()
+    if dec not in ("CLEARED", "CONFIRMED_FRAUD", "INCONCLUSIVE"):
+        raise HTTPException(status_code=400, detail="decision must be CLEARED | CONFIRMED_FRAUD | INCONCLUSIVE")
+    with get_db() as db:
+        s = db.query(ScreeningSession).filter_by(id=session_id).first()
+        if not s:
+            raise HTTPException(status_code=404, detail="Screening session not found.")
+        if s.status != "flagged":
+            raise HTTPException(status_code=409, detail="Only flagged sessions can be adjudicated.")
+        docs, rows = _session_docs(db, session_id)
+        comparison = _comparison_for_rows(docs)
+        if dec == "CLEARED":
+            s.status = "approved"
+            s.verdict = "CLEAR"
+        elif dec == "CONFIRMED_FRAUD":
+            s.status = "rejected"
+            s.verdict = "FLAGGED"
+        else:
+            s.status = "rejected"
+            s.verdict = "REVIEW"
+        s.risk_score = max(0, min(100, max((d.get("risk_score") or 0) for d in docs)
+                                  + (comparison.get("risk_bump") or 0)))
+        _settle_session(db, s, rows, comparison, dec, adjudicator=admin, note=note)
+        pub = _session_pub(s, len(docs))
+        pub["documents"] = docs
+        pub["comparison"] = comparison
+        return pub
+
+
+@app.get("/api/sessions/ledger/blocks")
+@limiter.limit("120/minute")
+def session_ledger(request: Request, admin: str = Depends(get_current_admin)):
+    """Signed session blocks (the border ledger), oldest first."""
+    with get_db() as db:
+        rows = (db.query(ScreeningSession)
+                .filter(ScreeningSession.ledger_hash.isnot(None))
+                .order_by(ScreeningSession.closed_at.asc(), ScreeningSession.id.asc())
+                .all())
+        counts = {}
+        if rows:
+            sids = [r.id for r in rows]
+            counts = dict(
+                db.query(ScreeningReport.session_id, func.count(ScreeningReport.id))
+                .filter(ScreeningReport.session_id.in_(sids))
+                .group_by(ScreeningReport.session_id).all()
+            )
+        blocks = [_session_pub(s, counts.get(s.id, 0)) for s in rows]
+        return {"blocks": blocks,
+                "head_hash": rows[-1].ledger_hash if rows else None,
+                "total_blocks": len(blocks)}
+
+
+@app.get("/api/sessions/ledger/verify")
+@limiter.limit("60/minute")
+def session_ledger_verify(request: Request, admin: str = Depends(get_current_admin)):
+    """Recomputes every signed session block from its canonical payload and
+    checks the chain linkage end to end (tamper detection)."""
+    with get_db() as db:
+        rows = (db.query(ScreeningSession)
+                .filter(ScreeningSession.ledger_hash.isnot(None))
+                .order_by(ScreeningSession.closed_at.asc(), ScreeningSession.id.asc())
+                .all())
+        if not rows:
+            return {"valid": True, "total_blocks": 0, "head_hash": None,
+                    "broken_at": None, "verified_blocks": 0, "status": "EMPTY_CHAIN"}
+        expected_prev = "GENESIS"
+        for idx, s in enumerate(rows):
+            doc_blocks = [r.ledger_hash for r in
+                          db.query(ScreeningReport).filter_by(session_id=s.id)
+                          .order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc()).all()
+                          if getattr(r, "ledger_hash", None)]
+            payload = session_payload(
+                session_id=s.id, checkpoint=s.checkpoint, screener=s.screener,
+                verdict=s.verdict, risk_score=s.risk_score, doc_blocks=doc_blocks,
+                comparison_verdict=(_safe_json(s.comparison) or {}).get("verdict", ""),
+                closed_at=s.closed_at or "",
+            )
+            computed = chain_hash(s.previous_hash, payload)
+            if s.previous_hash and idx > 0 and s.previous_hash != expected_prev:
+                return {"valid": False, "total_blocks": len(rows), "verified_blocks": idx,
+                        "broken_at": s.id, "status": "CHAIN_BROKEN_PARENT_MISMATCH",
+                        "reason": f"Block {s.id} parent hash mismatch"}
+            if computed != s.ledger_hash:
+                return {"valid": False, "total_blocks": len(rows), "verified_blocks": idx,
+                        "broken_at": s.id, "status": "CHAIN_BROKEN_TAMPERED_BLOCK",
+                        "reason": f"Block {s.id} payload tampered"}
+            expected_prev = s.ledger_hash
+        return {"valid": True, "total_blocks": len(rows), "verified_blocks": len(rows),
+                "head_hash": rows[-1].ledger_hash, "broken_at": None,
+                "status": "CHAIN_VALID_UNBROKEN"}
+
 @app.get("/api/screen/watchlist")
 @limiter.limit("120/minute")
 def screening_watchlist(request: Request, admin: str = Depends(get_current_admin)):
@@ -1955,7 +2327,7 @@ def screening_shift_export(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["# Veri_source Shift Log — SIH26188 MHA Screening Desk"])
+    writer.writerow(["# SSB Border Screening Shift Log — SIH26188"])
     writer.writerow([f"# Exported by: {admin}", f"# At: {datetime.now(timezone.utc).isoformat()}"])
     writer.writerow([
         "id", "doc_type", "checkpoint", "verdict", "risk_score",
@@ -2294,7 +2666,6 @@ def verify_ledger_chain(request: Request, admin: str = Depends(get_current_admin
     """Audit endpoint: cryptographically verifies the unbroken append-only hash chain
     across all historical screening reports. Detects any database tampering, out-of-order
     insertions, or modified report attributes."""
-    global _LATEST_LEDGER_ANCHOR
     with get_db() as db:
         rows = db.query(ScreeningReport).order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc()).all()
 
@@ -2795,7 +3166,7 @@ GEMINI_SYSTEM_PROMPT = (
     "technical study guide is loaded in full with 1-based line numbers.\n\n"
     "HOW TO ANSWER:\n"
     "- Deep Code Grounding: Read and search the complete CODE DATABASE to answer accurately about ANY part of the project.\n"
-    "- Exact Citations: Always cite exact file paths and line numbers whenever referencing code (e.g. `app/main.py:1124-1175`, `app/screening.py:120`, `frontend/src/views/AuthorityView.tsx:42`).\n"
+    "- Exact Citations: Always cite exact file paths and line numbers whenever referencing code (e.g. `app/main.py:1124-1175`, `app/screening.py:120`, `frontend/src/views/DeskView.tsx:42`).\n"
     "- End-to-End Traces: Explain how frontend, backend, screening modules, database schemas, detectors, and the border desk flow connect across the stack.\n"
     "- Algorithmic Rigor: When explaining algorithms (e.g. ICAO 9303 MRZ check digits, PAN/DL/Voter-ID checksum rules, ELA tamper forensics, face-embedding cosine comparison), detail the exact logic and quote the code lines.\n"
     "- Complete Code Blocks: Provide complete, un-truncated, syntax-highlighted code blocks in markdown when answering implementation questions.\n"

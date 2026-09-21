@@ -30,8 +30,8 @@ def test_index_scans_project_sources():
     # Real project files must be discoverable from the repo root.
     assert "app/main.py" in rels
     assert "app/screening.py" in rels
-    assert any(r.endswith("frontend/src/views/AuthorityView.tsx") for r in rels) or any(
-        r == "frontend/src/views/AuthorityView.tsx" for r in rels
+    assert any(r.endswith("frontend/src/views/DeskView.tsx") for r in rels) or any(
+        r == "frontend/src/views/DeskView.tsx" for r in rels
     )
     assert "README.md" in rels
 
@@ -101,7 +101,7 @@ def test_context_includes_blueprint_and_manifest():
     assert "### COMPLETE PROJECT FILES MANIFEST:" in ctx
     assert "FILE: app/main.py" in ctx
     assert "FILE: app/screening.py" in ctx
-    assert "FILE: frontend/src/components/ProjectChatbot.tsx" in ctx
+    assert "FILE: frontend/src/views/DeskView.tsx" in ctx
 
 
 def test_reload_index():
