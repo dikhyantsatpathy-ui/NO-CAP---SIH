@@ -22,7 +22,7 @@ prove, and never silently clears a real one.
 
 import hashlib
 
-from screening import norm, mask  # type: ignore
+from screening import norm  # type: ignore
 
 
 # Fields whose values must agree across the documents of one person.

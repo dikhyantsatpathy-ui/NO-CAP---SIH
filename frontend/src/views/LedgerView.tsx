@@ -113,54 +113,66 @@ export function LedgerView() {
         ) : (
           <div className="chain">
             {blocks.map((b, i) => (
-              <article key={b.id} className="block">
-                <div className="block__head">
-                  <span className="block__no">BLOCK {String(i + 1).padStart(3, "0")}</span>
-                  <span className={`chip ${verdictChip(b.verdict)}`}>{b.verdict || b.status.toUpperCase()}</span>
-                  <span className="block__meta muted">
-                    {b.checkpoint} · {b.document_count} doc(s) · risk {b.risk_score ?? "—"}
-                  </span>
-                  <button
-                    className="btn btn--small"
-                    onClick={() => setExpanded((cur) => (cur === b.id ? null : b.id))}
-                  >
-                    {expanded === b.id ? "COLLAPSE" : "HASHES"}
-                  </button>
-                </div>
-                <div className="block__row">
-                  <span className="k">prev</span>
-                  <code className="hash mono">{b.prev_hash || "GENESIS"}</code>
-                </div>
-                <div className="block__row">
-                  <span className="k">this</span>
-                  <code className="hash mono">{b.block_hash}</code>
-                </div>
-                <div className="block__meta muted">
-                  signed {timeLabel(b.closed_at || b.updated_at)} · {b.screener || "officer"}
-                  {b.adjudicator ? ` · adjudicated ${b.adjudicator}` : ""}
-                </div>
-                {expanded === b.id && (
-                  <div className="block__detail">
-                    <div className="block__row">
-                      <span className="k">session</span>
-                      <span className="mono">{b.id}</span>
-                    </div>
-                    <div className="block__row">
-                      <span className="k">note</span>
-                      <span>{b.note || "—"}</span>
-                    </div>
-                    {b.comparison && (
-                      <div className="block__row">
-                        <span className="k">comparison</span>
-                        <span>
-                          {b.comparison.verdict} · risk bump +{b.comparison.risk_bump} ·{" "}
-                          {b.comparison.checks.filter((c) => c.status === "disagree").length} disagreement(s)
-                        </span>
-                      </div>
-                    )}
+              <div key={b.id} className="chain__item">
+                {i > 0 && (
+                  <div className="chain__link">
+                    <span className="chain__link-line" />
+                    <span className="chain__link-label mono">LINK · SHA-256</span>
                   </div>
                 )}
-              </article>
+                <article className="block">
+                  <header className="block__head">
+                    <span className={`block__node node--${b.status === "approved" ? "ok" : b.status === "rejected" ? "bad" : "warn"}`} />
+                    <span className="block__no">BLOCK {String(i + 1).padStart(3, "0")}</span>
+                    {i === 0 && <span className="chip chip--seal">GENESIS</span>}
+                    <span className={`chip ${verdictChip(b.verdict)}`}>{b.verdict || b.status.toUpperCase()}</span>
+                    <span className="block__meta mono">
+                      {b.checkpoint} · {b.document_count} doc(s) · risk {b.risk_score ?? "—"}
+                    </span>
+                    <button
+                      className="btn btn--small"
+                      onClick={() => setExpanded((cur) => (cur === b.id ? null : b.id))}
+                    >
+                      {expanded === b.id ? "COLLAPSE" : "HASHES"}
+                    </button>
+                  </header>
+                  <div className="block__grid">
+                    <div className="block__cell">
+                      <span className="k">PREVIOUS</span>
+                      <code className="hash mono">{b.prev_hash || "GENESIS"}</code>
+                    </div>
+                    <div className="block__cell">
+                      <span className="k">THIS BLOCK</span>
+                      <code className="hash mono">{b.block_hash}</code>
+                    </div>
+                  </div>
+                  <div className="block__meta mono">
+                    signed {timeLabel(b.closed_at || b.updated_at)} · {b.screener || "officer"}
+                    {b.adjudicator ? ` · adjudicated ${b.adjudicator}` : ""}
+                  </div>
+                  {expanded === b.id && (
+                    <div className="block__detail">
+                      <div className="block__cell">
+                        <span className="k">SESSION</span>
+                        <span className="mono">{b.id}</span>
+                      </div>
+                      <div className="block__cell">
+                        <span className="k">NOTE</span>
+                        <span>{b.note || "—"}</span>
+                      </div>
+                      {b.comparison && (
+                        <div className="block__cell">
+                          <span className="k">COMPARISON</span>
+                          <span>
+                            {b.comparison.verdict} · risk bump +{b.comparison.risk_bump} ·{" "}
+                            {b.comparison.checks.filter((c) => c.status === "disagree").length} disagreement(s)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </article>
+              </div>
             ))}
           </div>
         )}

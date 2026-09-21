@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import create_engine, Column, String, Integer, Text, Float, text, event, func
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -954,8 +954,14 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Local SQLite fallback engine ensures high availability on serverless cold starts or network outages
-_FALLBACK_DB_PATH = "/tmp/nocap_fallback.db" if os.name != "nt" else os.path.join(STATIC_DIR, "nocap_fallback.db")
+# Local SQLite fallback engine ensures high availability on serverless cold starts or network outages.
+# Keep it OUT of app/static: that directory is the frontend build output and gets emptied on rebuild.
+if os.name != "nt":
+    _FALLBACK_DB_PATH = "/tmp/nocap_fallback.db"
+else:
+    _DATA_DIR = os.path.join(os.path.dirname(STATIC_DIR), "data")
+    os.makedirs(_DATA_DIR, exist_ok=True)
+    _FALLBACK_DB_PATH = os.path.join(_DATA_DIR, "nocap_fallback.db")
 fallback_engine = create_engine(f"sqlite:///{_FALLBACK_DB_PATH}", connect_args={"check_same_thread": False})
 FallbackSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=fallback_engine)
 
@@ -1143,6 +1149,11 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_sessions_created ON screening_sessions(created_at);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_status ON screening_sessions(status);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_screener ON screening_sessions(screener);",
+    # Stale pre-refactor column: signer_identities no longer carries a
+    # cryptographic pub_key (the blockchain ledger replaced it with the
+    # screening_reports/previous_hash chain). Existing Postgres DBs still have
+    # the NOT NULL column, which breaks first-time signer inserts, so drop it.
+    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS pub_key;",
 ]
 
 def _ensure_db_initialized():
@@ -2595,7 +2606,6 @@ def screening_evidentiary_dossier(
 </body>
 </html>"""
 
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html_content)
 
 

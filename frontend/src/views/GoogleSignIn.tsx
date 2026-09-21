@@ -109,7 +109,7 @@ export function SignInGate() {
             disabled={evaluating}
             onClick={() => void handleDemoLogin()}
           >
-            {evaluating ? "AUTHENTICATING OFFICER CONSOLE…" : "⚡ 1-CLICK ACCESS (SIH EVALUATOR PASS)"}
+            {evaluating ? "AUTHENTICATING OFFICER CONSOLE…" : "1-CLICK ACCESS (SIH EVALUATOR PASS)"}
           </button>
           <div className="gate__or"><span>OR SIGN IN WITH AUTHORISED GOOGLE ACCOUNT</span></div>
           <div style={{ display: "flex", justifyContent: "center" }}>

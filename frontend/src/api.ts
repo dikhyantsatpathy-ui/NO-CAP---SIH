@@ -433,17 +433,21 @@ export function getBsaCertificateUrl(sessionId: string): string {
 }
 
 export function getShiftHandoverToken(sessionId: string) {
-  return request<{
-    handover_id: string;
-    session_id: string;
-    timestamp: string;
-    screener: string;
-    verdict: string;
-    risk_score: number;
-    seal: string;
-    qr_packet_string: string;
-    qr_packet: Record<string, unknown>;
-  }>(`/api/screen/handover/${encodeURIComponent(sessionId)}`);
+  return request<ShiftHandoverPacket>(
+    `/api/screen/handover/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+export interface ShiftHandoverPacket {
+  handover_id: string;
+  session_id: string;
+  timestamp: string;
+  screener: string;
+  verdict: string;
+  risk_score: number;
+  seal: string;
+  qr_packet_string: string;
+  qr_packet: Record<string, unknown>;
 }
 
 export function getBorderThreatMatrix() {
@@ -721,11 +725,19 @@ export interface ComparisonCheck {
   masks?: Record<string, string | null> | null;
 }
 
+export interface ZkpGate {
+  assertion: string;
+  proven: boolean;
+  method: string;
+  status: string;
+  zk_proof_hash?: string | null;
+}
+
 export interface SessionComparison {
   checks: ComparisonCheck[];
   verdict: ComparisonVerdict;
   risk_bump: number;
-  zkp_gates?: Record<string, any> | null;
+  zkp_gates?: Record<string, ZkpGate> | null;
 }
 
 export interface ScreeningSession {

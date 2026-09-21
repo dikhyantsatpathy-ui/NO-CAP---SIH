@@ -7,6 +7,12 @@
 // Approving closes the session and appends a chained SHA-256 block; flagging
 // routes it to the supervisory review queue. The desk resets for the next
 // traveller. Zero raw identifiers are persisted anywhere.
+//
+// Also exposed from the desk (real pipelines, quiet UI):
+//   - webcam capture as a document scan source,
+//   - BSA 2023 s.65B court-certificate export for a signed session,
+//   - air-gapped shift-handover token for offline continuity,
+//   - zero-knowledge privacy gates asserted by the comparison layer.
 // ============================================================================
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -15,22 +21,23 @@ import {
   createSession,
   getSession,
   getSessions,
+  getShiftHandoverToken,
+  getBsaCertificateUrl,
   SCREEN_DOC_LABELS,
   SCREEN_DOC_TYPES,
   SCREEN_DOC_NUMBER_PLACEHOLDERS,
   screenDocument,
-  getBsaCertificateUrl,
-  getShiftHandoverToken,
-  getBorderThreatMatrix,
   type ComparisonCheck,
   type ScreenDocType,
   type ScreeningSession,
   type ScreeningSessionDetail,
   type ScreenReport,
+  type ShiftHandoverPacket,
+  type ZkpGate,
 } from "../api";
 import { generateSpecimenFile, SPECIMEN_PRESETS } from "../app/specimens";
 import { useAuth, useToast } from "../app/state";
-import { shortHash, timeLabel } from "../app/util";
+import { copyText, downloadBlob, shortHash, timeLabel } from "../app/util";
 
 const CHECKPOINTS = [
   "Raxaul ICP",
@@ -66,25 +73,24 @@ function DocCard({ doc, index }: { doc: ScreenReport; index: number }) {
         <span className="doc-card__no">DOC {String(index + 1).padStart(2, "0")}</span>
         <span className="chip chip--mute">{SCREEN_DOC_LABELS[doc.doc_type as ScreenDocType] || doc.doc_type}</span>
         <span className={`chip chip--${verdictTone(doc.verdict)}`}>{doc.verdict}</span>
-        <span className="doc-card__risk">RISK {doc.risk_score}</span>
+        <span className="doc-card__risk mono">RISK {doc.risk_score}</span>
       </header>
       <div className="doc-card__grid">
-        {entries.length === 0 && <span className="muted">No fields extracted.</span>}
-        {entries.map(([k, v]) => (
-          <div key={k} className="doc-card__field">
-            <span className="doc-card__k">{k}</span>
-            <span className="doc-card__v mono">{String(v)}</span>
-          </div>
-        ))}
+        {entries.length === 0 ? (
+          <span className="muted">No fields extracted.</span>
+        ) : (
+          entries.map(([k, v]) => (
+            <div key={k} className="doc-card__field">
+              <span className="doc-card__k">{k}</span>
+              <span className="doc-card__v mono">{String(v)}</span>
+            </div>
+          ))
+        )}
       </div>
-      <footer className="doc-card__foot">
-        <span className="mono">{timeLabel(doc.created_at)}</span>
-        <span className="mono" title={doc.file_hash || ""}>
-          file {shortHash(doc.file_hash, 18)}
-        </span>
-        <span className="mono" title={doc.block_hash || ""}>
-          block {doc.block_hash ? shortHash(doc.block_hash, 18) : "—"}
-        </span>
+      <footer className="doc-card__foot mono">
+        <span>{timeLabel(doc.created_at)}</span>
+        <span title={doc.file_hash || ""}>file {shortHash(doc.file_hash, 18)}</span>
+        <span title={doc.block_hash || ""}>block {doc.block_hash ? shortHash(doc.block_hash, 18) : "—"}</span>
       </footer>
     </article>
   );
@@ -94,7 +100,7 @@ function DocCard({ doc, index }: { doc: ScreenReport; index: number }) {
 // Cross-document comparison board (flags + masks only; no raw values).
 // ----------------------------------------------------------------------------
 
-function ComparisonBoard({ checks }: { checks: ComparisonCheck[] }) {
+function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Record<string, ZkpGate> | null }) {
   return (
     <section className="board">
       <h3 className="board__title">CROSS-DOCUMENT COMPARISON</h3>
@@ -118,9 +124,7 @@ function ComparisonBoard({ checks }: { checks: ComparisonCheck[] }) {
                 <span className={`chip chip--${statusTone(c.status)}`}>{c.status.toUpperCase()}</span>
               </td>
               <td className="cell-detail">{c.detail}</td>
-              <td>
-                <span className="mono">{c.docs.join(" + ") || "—"}</span>
-              </td>
+              <td className="mono">{c.docs.join(" + ") || "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -129,12 +133,33 @@ function ComparisonBoard({ checks }: { checks: ComparisonCheck[] }) {
         Comparison persists only digests and flags. Raw values exist in memory during one
         screening pass and are discarded.
       </p>
+
+      {zkp && Object.keys(zkp).length > 0 && (
+        <div className="zkp">
+          <div className="zkp__head">
+            <span className="k">PRIVACY GATES — ZERO-KNOWLEDGE ASSERTIONS</span>
+            <span className="chip chip--seal">DIGEST-ONLY</span>
+          </div>
+          <div className="zkp__grid">
+            {Object.entries(zkp).map(([key, gate]) => (
+              <div key={key} className="zkp__gate">
+                <div className="zkp__gate-top">
+                  <span className={`chip chip--${gate.proven ? "ok" : "warn"}`}>{gate.status}</span>
+                  {gate.zk_proof_hash && <span className="mono zkp__proof">{gate.zk_proof_hash}</span>}
+                </div>
+                <div className="zkp__assertion">{gate.assertion}</div>
+                <div className="zkp__method mono">{gate.method}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
 // ----------------------------------------------------------------------------
-// Webcam Capture Modal
+// Webcam capture modal — one frame becomes the scan source.
 // ----------------------------------------------------------------------------
 
 function WebcamCapture({ onCapture, onCancel }: { onCapture: (f: File) => void; onCancel: () => void }) {
@@ -147,67 +172,140 @@ function WebcamCapture({ onCapture, onCancel }: { onCapture: (f: File) => void; 
       .getUserMedia({ video: { facingMode: "environment" } })
       .then((s) => {
         stream = s;
-        if (videoRef.current) {
-          videoRef.current.srcObject = s;
-        }
+        if (videoRef.current) videoRef.current.srcObject = s;
       })
-      .catch((err) => {
-        console.error("Webcam error:", err);
+      .catch(() => {
+        /* handled by the caller surface */
       });
-    return () => {
-      stream?.getTracks().forEach((t) => t.stop());
-    };
+    return () => stream?.getTracks().forEach((t) => t.stop());
   }, []);
 
   const capture = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (video && canvas) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              const file = new File([blob], `webcam_${Date.now()}.jpg`, { type: "image/jpeg" });
-              onCapture(file);
-            }
-          },
-          "image/jpeg",
-          0.9
-        );
-      }
-    }
+    if (!video || !canvas || !video.videoWidth) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) onCapture(new File([blob], `webcam_${Date.now()}.jpg`, { type: "image/jpeg" }));
+      },
+      "image/jpeg",
+      0.9,
+    );
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        background: "rgba(0,0,0,0.8)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
-      }}
-    >
-      <div style={{ background: "#000", padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", maxWidth: "600px", background: "#111" }} />
-        <canvas ref={canvasRef} style={{ display: "none" }} />
-        <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+    <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Capture document from webcam">
+      <div className="modal">
+        <header className="modal__head">
+          <span className="modal__title">WEBCAM CAPTURE</span>
+          <button className="btn btn--small" onClick={onCancel}>
+            CLOSE
+          </button>
+        </header>
+        <div className="modal__body">
+          <video ref={videoRef} autoPlay playsInline muted className="webcam" />
+          <canvas ref={canvasRef} style={{ display: "none" }} />
+        </div>
+        <footer className="modal__foot">
           <button className="btn btn--primary" onClick={capture}>
-            CAPTURE
+            CAPTURE FRAME
           </button>
           <button className="btn" onClick={onCancel}>
             CANCEL
           </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Air-gapped shift handover token modal.
+// ----------------------------------------------------------------------------
+
+function HandoverModal({
+  packet,
+  onClose,
+}: {
+  packet: ShiftHandoverPacket;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+
+  const copy = async () => {
+    const ok = await copyText(packet.qr_packet_string);
+    toast(ok ? "Handover packet copied to clipboard." : "Clipboard unavailable.", ok ? "success" : "warn");
+  };
+
+  const download = () => {
+    downloadBlob(
+      new Blob([JSON.stringify(packet, null, 2)], { type: "application/json" }),
+      `HANDOVER_${packet.session_id.slice(0, 8)}.json`,
+    );
+  };
+
+  return (
+    <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Shift handover token">
+      <div className="modal">
+        <header className="modal__head">
+          <span className="modal__title">AIR-GAPPED SHIFT HANDOVER TOKEN</span>
+          <button className="btn btn--small" onClick={onClose}>
+            CLOSE
+          </button>
+        </header>
+        <div className="modal__body">
+          <p className="modal__desc">
+            HMAC-SHA256 sealed session packet for offline shift continuity — USB export or 2D QR
+            transfer. No raw identifiers; only digests, masks and flags.
+          </p>
+          <table className="tbl tbl--compact">
+            <tbody>
+              <tr>
+                <td className="k">HANDOVER</td>
+                <td className="mono">{packet.handover_id}</td>
+              </tr>
+              <tr>
+                <td className="k">SESSION</td>
+                <td className="mono">{packet.session_id}</td>
+              </tr>
+              <tr>
+                <td className="k">ISSUED</td>
+                <td className="mono">{packet.timestamp}</td>
+              </tr>
+              <tr>
+                <td className="k">SCREENER</td>
+                <td className="mono">{packet.screener}</td>
+              </tr>
+              <tr>
+                <td className="k">VERDICT / RISK</td>
+                <td className="mono">
+                  {packet.verdict} · {packet.risk_score}
+                </td>
+              </tr>
+              <tr>
+                <td className="k">SEAL</td>
+                <td className="mono">{packet.seal}</td>
+              </tr>
+            </tbody>
+          </table>
+          <label className="field">
+            <span className="field__label">PACKET STRING</span>
+            <textarea className="mono pkt-box" readOnly value={packet.qr_packet_string} rows={5} />
+          </label>
         </div>
+        <footer className="modal__foot">
+          <button className="btn" onClick={() => void copy()}>
+            COPY
+          </button>
+          <button className="btn" onClick={download}>
+            DOWNLOAD JSON
+          </button>
+        </footer>
       </div>
     </div>
   );
@@ -226,7 +324,7 @@ export function DeskView() {
   const [busy, setBusy] = useState(false);
   const [newCheckpoint, setNewCheckpoint] = useState("Raxaul ICP");
   const [showNewForm, setShowNewForm] = useState(false);
-  const [showWebcam, setShowWebcam] = useState(false);
+  const [resumingId, setResumingId] = useState<string | null>(null);
 
   // Document intake form
   const [file, setFile] = useState<File | null>(null);
@@ -239,85 +337,9 @@ export function DeskView() {
   const [note, setNote] = useState("");
   const [modelHint, setModelHint] = useState<string | null>(null);
 
-  // High-Tech SIH Features (Tactical HUD, Voice Intake, Handover, Threat Matrix)
-  const [tacticalHud, setTacticalHud] = useState(false);
-  const [voiceListening, setVoiceListening] = useState(false);
-  const [showHandover, setShowHandover] = useState(false);
-  const [handoverData, setHandoverData] = useState<any>(null);
-  const [showThreatMatrix, setShowThreatMatrix] = useState(false);
-  const [threatData, setThreatData] = useState<any>(null);
-
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  const openHandover = async () => {
-    if (!active) return;
-    setBusy(true);
-    const res = await getShiftHandoverToken(active.id);
-    setBusy(false);
-    if (res.ok) {
-      setHandoverData(res.data);
-      setShowHandover(true);
-    } else {
-      toast(`Handover token generation failed: ${res.error}`, "error");
-    }
-  };
-
-  const toggleThreatMatrix = async () => {
-    if (showThreatMatrix) {
-      setShowThreatMatrix(false);
-      return;
-    }
-    const res = await getBorderThreatMatrix();
-    if (res.ok) {
-      setThreatData(res.data);
-      setShowThreatMatrix(true);
-    } else {
-      toast("Failed to load border threat telemetry.", "error");
-    }
-  };
-
-  const toggleVoice = () => {
-    const WinSpeech = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!WinSpeech) {
-      toast("Web Speech API is not supported in this browser.", "warn");
-      return;
-    }
-    if (voiceListening) {
-      setVoiceListening(false);
-      toast("Voice intake deactivated.", "info");
-      return;
-    }
-    try {
-      const recognition = new WinSpeech();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-IN";
-      recognition.onstart = () => {
-        setVoiceListening(true);
-        toast("🎙️ Voice command active — Speak 'SCREEN', 'APPROVE', 'FLAG', or 'RESET'", "info");
-      };
-      recognition.onresult = (event: any) => {
-        const text = (event.results?.[0]?.[0]?.transcript || "").toLowerCase();
-        toast(`Voice Command Detected: "${text}"`, "info");
-        if (text.includes("screen")) {
-          if (file) void screenIntoSession();
-          else toast("Select a specimen or attach document first.", "warn");
-        } else if (text.includes("approve")) {
-          void closeSessionNow("approve");
-        } else if (text.includes("flag")) {
-          void closeSessionNow("flag");
-        } else if (text.includes("next") || text.includes("reset")) {
-          void resetDesk();
-        }
-        setVoiceListening(false);
-      };
-      recognition.onerror = () => setVoiceListening(false);
-      recognition.onend = () => setVoiceListening(false);
-      recognition.start();
-    } catch {
-      setVoiceListening(false);
-    }
-  };
+  const [showWebcam, setShowWebcam] = useState(false);
+  const [handover, setHandover] = useState<ShiftHandoverPacket | null>(null);
+  const [handoverBusy, setHandoverBusy] = useState(false);
 
   const refreshOpen = useCallback(async () => {
     const res = await getSessions("open");
@@ -325,29 +347,24 @@ export function DeskView() {
     return res.ok ? res.data.sessions : [];
   }, []);
 
-  const [resumingId, setResumingId] = useState<string | null>(null);
-
   const loadDetail = useCallback(async (id: string) => {
     const res = await getSession(id);
     if (res.ok) {
       setActive(res.data);
       setModelHint(null);
       return true;
-    } else {
-      toast(`Failed to load session ${id}: ${res.error}`, "error");
-      return false;
     }
+    toast(`Failed to load session ${id}: ${res.error}`, "error");
+    return false;
   }, [toast]);
 
-  // On mount: reopen the newest OPEN session if there is one, else show start panel.
+  // On mount: reopen the newest OPEN session if there is one, else show the start panel.
   useEffect(() => {
     let mounted = true;
     (async () => {
       const open = await refreshOpen();
       if (!mounted) return;
-      if (open.length > 0) {
-        await loadDetail(open[0].id);
-      }
+      if (open.length > 0) await loadDetail(open[0].id);
       setLoading(false);
     })();
     return () => {
@@ -376,7 +393,7 @@ export function DeskView() {
       const ok = await loadDetail(id);
       if (ok) {
         setShowNewForm(false);
-        toast(`Resumed active session ${id}`, "success");
+        toast(`Resumed active session ${id}.`, "success");
       }
     } finally {
       setResumingId(null);
@@ -405,13 +422,9 @@ export function DeskView() {
     const declKey =
       docType === "passport" || docType === "visa"
         ? "passport"
-        : docType === "aadhaar"
-          ? "aadhaar"
-          : docType === "nepali_citizenship"
-            ? "nepali_citizenship"
-            : docType === "other"
-              ? "declared_number"
-              : docType;
+        : docType === "other"
+          ? "declared_number"
+          : docType;
     const out: Record<string, string> = {};
     if (docNumber.trim()) out[declKey] = docNumber.trim();
     if (declaredName.trim()) out.name = declaredName.trim();
@@ -478,6 +491,15 @@ export function DeskView() {
     }
   };
 
+  const openHandover = async () => {
+    if (!active) return;
+    setHandoverBusy(true);
+    const res = await getShiftHandoverToken(active.id);
+    setHandoverBusy(false);
+    if (res.ok) setHandover(res.data);
+    else toast(`Handover token failed: ${res.error}`, "error");
+  };
+
   const resetDesk = async () => {
     setActive(null);
     setFile(null);
@@ -494,78 +516,8 @@ export function DeskView() {
   const canClose = active && active.comparison?.checks.some((c) => c.status !== "none");
 
   return (
-    <div className={`view ${tacticalHud ? "tactical-hud" : ""}`}>
-      {/* --- Tactical Command Toolbar ------------------------------------- */}
-      <div className="desk-toolbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px", background: "rgba(13, 21, 39, 0.7)", padding: "10px 16px", borderRadius: "8px", border: "1px solid #1e293b" }}>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <span className="live-pulse" />
-          <span style={{ fontSize: "12px", fontWeight: "bold", letterSpacing: "1px", color: "#38bdf8" }}>
-            SSB NISCHAY TACTICAL DESK
-          </span>
-          <span className="chip chip--ok" style={{ fontSize: "10px" }}>EDGE ONLINE</span>
-        </div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            className={`btn btn--small ${voiceListening ? "btn--flag" : ""}`}
-            onClick={toggleVoice}
-            title="Hands-free voice screening intake"
-          >
-            {voiceListening ? "🎙️ LISTENING…" : "🎙️ VOICE INTAKE"}
-          </button>
-          <button
-            type="button"
-            className={`btn btn--small ${showThreatMatrix ? "btn--approve" : ""}`}
-            onClick={() => void toggleThreatMatrix()}
-            title="View multi-checkpoint border threat matrix"
-          >
-            🛰️ SECTOR TELEMETRY
-          </button>
-          <button
-            type="button"
-            className={`btn btn--small ${tacticalHud ? "btn--flag" : ""}`}
-            onClick={() => setTacticalHud(!tacticalHud)}
-            title="Toggle high-contrast sunlight/edge HUD visibility"
-          >
-            🎯 {tacticalHud ? "HUD: HIGH-CONTRAST" : "HUD: CYBER"}
-          </button>
-        </div>
-      </div>
-
-      {/* --- Threat Matrix Telemetry Drawer -------------------------------- */}
-      {showThreatMatrix && threatData && (
-        <div style={{ background: "rgba(13, 21, 39, 0.95)", border: "1px solid #1e293b", borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", borderBottom: "1px solid #1e293b", paddingBottom: "8px" }}>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <span className="k" style={{ color: "#38bdf8", fontWeight: "bold" }}>🛰️ BORDER SECTOR TELEMETRY & FRAUD DENSITY MATRIX</span>
-              <span className="chip chip--warn">THREAT: {threatData.overall_threat_level} ({threatData.national_border_threat_index}/100)</span>
-            </div>
-            <button type="button" className="btn btn--small" onClick={() => setShowThreatMatrix(false)}>✕ CLOSE</button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px" }}>
-            {threatData.checkpoints.map((cp: any) => (
-              <div key={cp.id} style={{ background: "#070b14", padding: "12px", borderRadius: "6px", border: "1px solid #1e293b" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                  <strong>{cp.name}</strong>
-                  <span className={`chip chip--${cp.threat_level === "LOW" ? "ok" : cp.threat_level === "GUARDED" ? "info" : "bad"}`} style={{ fontSize: "10px" }}>
-                    {cp.threat_level}
-                  </span>
-                </div>
-                <div style={{ fontSize: "11px", color: "#94a3b8" }}>{cp.state}</div>
-                <div style={{ fontSize: "12px", color: "#f8fafc", marginTop: "6px" }}>
-                  <span style={{ color: "#eab308" }}>Alert: </span>{cp.primary_threat}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "11px", color: "#64748b" }}>
-                  <span>Threat Score: {cp.threat_score}/100</span>
-                  <span className="mono" style={{ color: "#38bdf8" }}>{cp.status}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* --- Session status rail ------------------------------------------ */}
+    <div className="view">
+      {/* --- No active session: start panel -------------------------------- */}
       {!active && (
         <section className="panel panel--muted">
           <div className="panel__row">
@@ -577,7 +529,7 @@ export function DeskView() {
               </p>
             </div>
             <button className="btn btn--primary" onClick={() => setShowNewForm((v) => !v)}>
-              {showNewForm ? "Cancel" : "OPEN NEW SESSION"}
+              {showNewForm ? "CANCEL" : "OPEN NEW SESSION"}
             </button>
           </div>
           {showNewForm && (
@@ -609,7 +561,7 @@ export function DeskView() {
                     <tr key={s.id}>
                       <td className="mono">{s.id}</td>
                       <td>{s.checkpoint}</td>
-                      <td className="cell-sub">{s.document_count} doc(s)</td>
+                      <td className="mono muted">{s.document_count} doc(s)</td>
                       <td>
                         <button
                           className="btn btn--small btn--primary"
@@ -628,255 +580,223 @@ export function DeskView() {
         </section>
       )}
 
-      {/* -Active session rail --------------------------------------------- */}
+      {/* --- Active session rail ------------------------------------------- */}
       {active && (
-        <div className="session-rail">
-          <section className="panel">
-            <div className="panel__row">
-              <div>
-                <div className="k">SESSION</div>
-                <div className="session-id mono">{active.id}</div>
-                <div className="session-meta">
-                  <span className="chip chip--mute">{active.checkpoint}</span>
-                  <span className={`chip chip--${active.status === "approved" ? "ok" : active.status === "flagged" ? "warn" : active.status === "rejected" ? "bad" : "mute"}`}>
-                    {active.status.toUpperCase()}
-                  </span>
-                  <span className="muted">opened {timeLabel(active.created_at)}</span>
-                  <span className="muted">by {active.screener || me?.name || "officer"}</span>
-                  <span className="muted">{active.document_count} doc(s)</span>
-                </div>
+        <section className="panel">
+          <div className="panel__row">
+            <div>
+              <div className="k">SESSION</div>
+              <div className="session-id mono">{active.id}</div>
+              <div className="session-meta">
+                <span className="chip chip--mute">{active.checkpoint}</span>
+                <span
+                  className={`chip chip--${
+                    active.status === "approved"
+                      ? "ok"
+                      : active.status === "flagged"
+                        ? "warn"
+                        : active.status === "rejected"
+                          ? "bad"
+                          : "mute"
+                  }`}
+                >
+                  {active.status.toUpperCase()}
+                </span>
+                <span className="muted">opened {timeLabel(active.created_at)}</span>
+                <span className="muted">by {active.screener || me?.name || "officer"}</span>
+                <span className="muted">{active.document_count} doc(s)</span>
               </div>
-              {open && (
-                <button className="btn" onClick={() => void refreshOpen()} disabled={busy}>
-                  REFRESH
-                </button>
-              )}
             </div>
-
             {open && (
-              <>
-                {/* --- Document intake ------------------------------------ */}
-                <div className="intake">
-                  <h3 className="board__title">SCREEN DOCUMENT INTO SESSION</h3>
-                  <div className="intake__form">
-                    <label className="field">
-                      <span className="field__label">DOCUMENT TYPE</span>
-                      <select value={docType} onChange={(e) => setDocType(e.target.value as ScreenDocType)}>
-                        {SCREEN_DOC_TYPES.map((t) => (
-                          <option key={t} value={t}>
-                            {SCREEN_DOC_LABELS[t]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="field__label">DECLARED NUMBER</span>
-                      <input
-                        value={docNumber}
-                        onChange={(e) => setDocNumber(e.target.value)}
-                        placeholder={SCREEN_DOC_NUMBER_PLACEHOLDERS[docType] || "e.g. K1234567"}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field__label">DECLARED NAME</span>
-                      <input value={declaredName} onChange={(e) => setDeclaredName(e.target.value)} placeholder="optional" />
-                    </label>
-                    <label className="field">
-                      <span className="field__label">DECLARED DOB</span>
-                      <input value={declaredDob} onChange={(e) => setDeclaredDob(e.target.value)} placeholder="YYYY-MM-DD" />
-                    </label>
-                    <label className="dropzone">
-                      <input
-                        ref={fileInput}
-                        key={fileKey}
-                        type="file"
-                        accept="image/*,.pdf"
-                        onChange={(e) => setFile(e.target.files?.[0] || null)}
-                      />
-                      <span className="dropzone__label">{file ? file.name : "ATTACH DOCUMENT"}</span>
-                      <span className="dropzone__hint">JPEG / PNG / WEBP / PDF</span>
-                    </label>
-                    <button className="btn" style={{ marginBottom: "16px" }} onClick={() => setShowWebcam(true)}>
-                      USE WEBCAM
+              <button className="btn" onClick={() => void refreshOpen()} disabled={busy}>
+                REFRESH
+              </button>
+            )}
+          </div>
+
+          {open && (
+            <>
+              {/* --- Document intake -------------------------------------- */}
+              <div className="intake">
+                <h3 className="board__title">SCREEN DOCUMENT INTO SESSION</h3>
+                <div className="intake__form">
+                  <label className="field">
+                    <span className="field__label">DOCUMENT TYPE</span>
+                    <select value={docType} onChange={(e) => setDocType(e.target.value as ScreenDocType)}>
+                      {SCREEN_DOC_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {SCREEN_DOC_LABELS[t]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span className="field__label">DECLARED NUMBER</span>
+                    <input
+                      value={docNumber}
+                      onChange={(e) => setDocNumber(e.target.value)}
+                      placeholder={SCREEN_DOC_NUMBER_PLACEHOLDERS[docType] || "e.g. K1234567"}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">DECLARED NAME</span>
+                    <input value={declaredName} onChange={(e) => setDeclaredName(e.target.value)} placeholder="optional" />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">DECLARED DOB</span>
+                    <input value={declaredDob} onChange={(e) => setDeclaredDob(e.target.value)} placeholder="YYYY-MM-DD" />
+                  </label>
+                  <label className="dropzone">
+                    <input
+                      key={fileKey}
+                      type="file"
+                      accept="image/*,.pdf"
+                      onChange={(e) => setFile(e.target.files?.[0] || null)}
+                    />
+                    <span className="dropzone__label">{file ? file.name : "ATTACH DOCUMENT"}</span>
+                    <span className="dropzone__hint">JPEG / PNG / WEBP / PDF</span>
+                  </label>
+                  <button className="btn" onClick={() => setShowWebcam(true)}>
+                    SCAN FROM WEBCAM
+                  </button>
+                  <button className="btn btn--primary btn--block" disabled={busy} onClick={() => void screenIntoSession()}>
+                    {busy ? "SCREENING…" : "SCREEN INTO SESSION"}
+                  </button>
+                </div>
+                <div className="specimen-row">
+                  <span className="k">DEMO SPECIMENS</span>
+                  {SPECIMEN_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      className="btn btn--small"
+                      disabled={specimenBusy}
+                      onClick={() => void loadSpecimen(p.id)}
+                    >
+                      {p.title}
                     </button>
-                    <button className="btn btn--primary btn--block" disabled={busy} onClick={() => void screenIntoSession()}>
-                      {busy ? "SCREENING…" : "SCREEN INTO SESSION"}
-                    </button>
-                  </div>
-                  <div className="specimen-row">
-                    <span className="k">DEMO SPECIMENS</span>
-                    {SPECIMEN_PRESETS.map((p) => (
-                      <button
-                        key={p.id}
-                        className="btn btn--small"
-                        disabled={specimenBusy}
-                        onClick={() => void loadSpecimen(p.id)}
-                      >
-                        {p.title}
-                      </button>
+                  ))}
+                </div>
+                {modelHint && <p className="hint">{modelHint}</p>}
+                <p className="hint">
+                  Declared values back-fill only fields the scanner cannot read. Cross-document
+                  comparison uses what the pipeline actually extracted from each scan.
+                </p>
+              </div>
+
+              {/* --- Documents in session --------------------------------- */}
+              {active.documents.length > 0 ? (
+                <div className="docs">
+                  <h3 className="board__title">DOCUMENTS IN SESSION ({active.documents.length})</h3>
+                  <div className="docs__grid">
+                    {active.documents.map((d, i) => (
+                      <DocCard key={d.id} doc={d} index={i} />
                     ))}
                   </div>
-                  {modelHint && <p className="hint">{modelHint}</p>}
-                  <p className="hint">
-                    Declared values back-fill only fields the scanner cannot read. Cross-document
-                    comparison uses what the pipeline actually extracted from each scan.
-                  </p>
                 </div>
+              ) : (
+                <p className="hint">No documents yet. Screen the traveller's first document.</p>
+              )}
 
-                {/* --- Documents in session ------------------------------- */}
-                {active.documents.length > 0 ? (
-                  <div className="docs">
-                    <h3 className="board__title">
-                      DOCUMENTS IN SESSION ({active.documents.length})
-                    </h3>
-                    <div className="docs__grid">
-                      {active.documents.map((d, i) => (
-                        <DocCard key={d.id} doc={d} index={i} />
-                      ))}
-                    </div>
+              {/* --- Comparison + approval bar ----------------------------- */}
+              {active.documents.length > 1 && active.comparison && (
+                <ComparisonBoard checks={active.comparison.checks} zkp={active.comparison.zkp_gates} />
+              )}
+
+              {active.documents.length > 0 && (
+                <section className="approval">
+                  <div className="approval__note">
+                    <span className="k">OFFICER NOTE</span>
+                    <input
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="reason / observation (optional)"
+                    />
                   </div>
-                ) : (
-                  <p className="hint">No documents yet. Screen the traveller's first document.</p>
-                )}
-
-                {/* --- Comparison + approval bar --------------------------- */}
-                {active.documents.length > 1 && active.comparison && (
-                  <>
-                    <ComparisonBoard checks={active.comparison.checks} />
-                    {active.comparison?.zkp_gates && (
-                      <div className="zkp-panel" style={{ marginTop: "16px", padding: "14px 16px", background: "rgba(13, 21, 39, 0.7)", border: "1px solid #1e293b", borderRadius: "8px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-                          <span className="k" style={{ color: "#38bdf8", letterSpacing: "1px", fontWeight: "bold" }}>
-                            🔐 ZERO-KNOWLEDGE PROOF (ZKP) PRIVACY GATES
-                          </span>
-                          <span className="chip chip--ok">ZERO-STORAGE PRIVACY ENGINE</span>
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
-                          {Object.entries(active.comparison.zkp_gates).map(([k, gate]: [string, any]) => (
-                            <div key={k} style={{ background: "#070b14", padding: "10px 12px", borderRadius: "6px", border: "1px solid #1e293b" }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                                <span className={`chip chip--${gate.proven ? "ok" : "warn"}`} style={{ fontSize: "10px" }}>
-                                  {gate.status}
-                                </span>
-                                <code className="mono text-xs" style={{ color: "#64748b" }}>{gate.zk_proof_hash}</code>
-                              </div>
-                              <div style={{ fontWeight: 600, fontSize: "12px", color: "#f8fafc" }}>{gate.assertion}</div>
-                              <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>{gate.method}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                  <div className="approval__actions">
+                    {canClose && hasDiscrepancy && (
+                      <span className="chip chip--bad">DISCREPANCY — APPROVE LOCKED, FLAG FOR REVIEW</span>
                     )}
-                  </>
-                )}
-
-                {active.documents.length > 0 && (
-                  <section className="approval">
-                    <div className="approval__note">
-                      <span className="k">OFFICER NOTE</span>
-                      <input
-                        value={note}
-                        onChange={(e) => setNote(e.target.value)}
-                        placeholder="reason / observation (optional)"
-                      />
-                    </div>
-                    <div className="approval__actions">
-                      {canClose && hasDiscrepancy && (
-                        <span className="chip chip--bad">
-                          DISCREPANCY — APPROVE LOCKED, FLAG FOR REVIEW
-                        </span>
-                      )}
-                      {canClose && !hasDiscrepancy && (
-                        <button
-                          className="btn btn--approve"
-                          disabled={busy}
-                          onClick={() => void closeSessionNow("approve")}
-                        >
-                          {busy ? "SIGNING…" : "APPROVE · SIGN INTO LEDGER"}
-                        </button>
-                      )}
-                      {canClose && (
-                        <button className="btn btn--flag" disabled={busy} onClick={() => void closeSessionNow("flag")}>
-                          FLAG FOR REVIEW
-                        </button>
-                      )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        className="btn btn--small"
-                        style={{ borderColor: "#38bdf8", color: "#38bdf8", background: "rgba(56, 189, 248, 0.08)" }}
-                        onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
-                      >
-                        ⚖️ EXPORT BSA 2023 COURT CERTIFICATE (SEC 65B)
+                    {canClose && !hasDiscrepancy && (
+                      <button className="btn btn--approve" disabled={busy} onClick={() => void closeSessionNow("approve")}>
+                        {busy ? "SIGNING…" : "APPROVE · SIGN INTO LEDGER"}
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn--small"
-                        style={{ borderColor: "#eab308", color: "#eab308", background: "rgba(234, 179, 8, 0.08)" }}
-                        onClick={() => void openHandover()}
-                      >
-                        📦 AIR-GAPPED SHIFT HANDOVER TOKEN
+                    )}
+                    {canClose && (
+                      <button className="btn btn--flag" disabled={busy} onClick={() => void closeSessionNow("flag")}>
+                        FLAG FOR REVIEW
                       </button>
-                    </div>
-                  </section>
-                )}
-              </>
-            )}
+                    )}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
 
-            {/* --- Closed session ------------------------------------------ */}
-            {closed && active.block_hash && (
-              <div className="signed">
-                <div className={`signed__banner banner--${active.status === "approved" ? "ok" : active.status === "rejected" ? "bad" : "warn"}`}>
-                  <span className="signed__verdict">
+          {/* --- Closed session: signature seal ---------------------------- */}
+          {closed && active.block_hash && (
+            <div className={`signed signed--${active.status === "approved" ? "ok" : active.status === "rejected" ? "bad" : "warn"}`}>
+              <header className="signed__head">
+                <svg className="signed__mark" viewBox="0 0 64 64" aria-hidden="true">
+                  <rect width="64" height="64" rx="8" fill="currentColor" opacity="0.12" />
+                  <path
+                    d="M32 10l16 8c0 11-4 20-16 28-12-8-16-17-16-28z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M25 32l5 5 10-11" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <div className="signed__headtext">
+                  <span className="signed__title">
                     {active.status === "approved"
                       ? "SESSION APPROVED — SIGNED INTO LEDGER"
                       : active.status === "rejected"
                         ? "SESSION REJECTED — SIGNED AS EVIDENCE"
                         : "SESSION FLAGGED — AWAITING SUPERVISORY REVIEW"}
                   </span>
+                  <span className="signed__sub mono">IMMUTABLE CHAINED RECORD · ZERO RAW IDENTIFIERS STORED</span>
                 </div>
-                <div className="signed__hash">
-                  <span className="k">SESSION BLOCK HASH</span>
-                  <code className="hash mono">{active.block_hash}</code>
-                  <span className="k">PREVIOUS BLOCK</span>
+                <span className="chip chip--seal">SHA-256</span>
+              </header>
+
+              <div className="signed__hashgrid">
+                <div className="signed__hashcell">
+                  <span className="k">SIGNATURE · THIS BLOCK</span>
+                  <code className="hash hash--big mono">{active.block_hash}</code>
+                </div>
+                <div className="signed__hashcell">
+                  <span className="k">LINKED FROM · PREVIOUS BLOCK</span>
                   <code className="hash mono">{active.prev_hash || "GENESIS"}</code>
-                  <div className="signed__meta">
-                    <span>verdict {active.verdict || "—"}</span>
-                    <span>risk {active.risk_score}</span>
-                    <span>closed {timeLabel(active.closed_at || "")}</span>
-                    {active.adjudicator && <span>settled by {active.adjudicator}</span>}
-                    <span>docs {active.document_count}</span>
-                  </div>
-                  {active.note && <p className="signed__note">note: {active.note}</p>}
-                  
-                  <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="btn btn--small"
-                      style={{ borderColor: "#38bdf8", color: "#38bdf8" }}
-                      onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
-                    >
-                      ⚖️ VIEW STATUTORY BSA 2023 COURT CERTIFICATE
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--small"
-                      style={{ borderColor: "#eab308", color: "#eab308" }}
-                      onClick={() => void openHandover()}
-                    >
-                      📦 AIR-GAPPED SHIFT HANDOVER TOKEN
-                    </button>
-                  </div>
                 </div>
+              </div>
+
+              <div className="signed__meta mono">
+                <span>verdict {active.verdict || "—"}</span>
+                <span>risk {active.risk_score}</span>
+                <span>closed {timeLabel(active.closed_at || "")}</span>
+                {active.adjudicator && <span>settled by {active.adjudicator}</span>}
+                <span>docs {active.document_count}</span>
+              </div>
+              {active.note && <p className="signed__note">officer note: {active.note}</p>}
+
+              <footer className="signed__actions">
+                <button
+                  className="btn btn--ghost"
+                  onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
+                >
+                  BSA 2023 · S.65B COURT CERTIFICATE
+                </button>
+                <button className="btn btn--ghost" disabled={handoverBusy} onClick={() => void openHandover()}>
+                  {handoverBusy ? "SEALING…" : "AIR-GAPPED HANDOVER TOKEN"}
+                </button>
                 <button className="btn btn--primary" onClick={() => void resetDesk()}>
                   START NEXT TRAVELLER
                 </button>
-              </div>
-            )}
-          </section>
-        </div>
+              </footer>
+            </div>
+          )}
+        </section>
       )}
 
       {loading && <p className="hint">Loading desk…</p>}
@@ -892,104 +812,7 @@ export function DeskView() {
         />
       )}
 
-      {showHandover && handoverData && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: "rgba(3, 7, 18, 0.85)",
-          backdropFilter: "blur(6px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 9999,
-          padding: "20px"
-        }}>
-          <div style={{
-            background: "#0d1527",
-            border: "1px solid #1e293b",
-            borderRadius: "10px",
-            maxWidth: "640px",
-            width: "100%",
-            padding: "24px",
-            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)"
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span style={{ fontSize: "20px" }}>📦</span>
-                <h3 style={{ margin: 0, fontSize: "16px", color: "#f8fafc", fontWeight: 700 }}>AIR-GAPPED SHIFT HANDOVER TOKEN</h3>
-              </div>
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={() => setShowHandover(false)}
-              >
-                ✕ CLOSE
-              </button>
-            </div>
-            
-            <p style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "16px" }}>
-              Cryptographically sealed session packet for offline officer shift transitions, USB flash export, or physical border outpost synchronization without internet connectivity.
-            </p>
-
-            <div style={{ background: "#050811", border: "1px solid #1e293b", borderRadius: "6px", padding: "12px", marginBottom: "16px", fontSize: "12px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                <span style={{ color: "#64748b" }}>SESSION:</span>
-                <span className="mono" style={{ color: "#38bdf8" }}>{handoverData.session_id}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                <span style={{ color: "#64748b" }}>SIGNATURE (HMAC-SHA256):</span>
-                <span className="mono" style={{ color: "#22c55e", fontSize: "11px" }}>{handoverData.hmac_signature?.slice(0, 24)}...</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#64748b" }}>ISSUED AT:</span>
-                <span style={{ color: "#f8fafc" }}>{handoverData.issued_at}</span>
-              </div>
-            </div>
-
-            <label className="field" style={{ marginBottom: "16px" }}>
-              <span className="field__label">BASE64 ENCODED DISK TOKEN</span>
-              <textarea
-                readOnly
-                rows={5}
-                className="mono"
-                style={{ width: "100%", fontSize: "11px", background: "#070b14", color: "#94a3b8", resize: "none" }}
-                value={handoverData.token}
-              />
-            </label>
-
-            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={() => {
-                  navigator.clipboard.writeText(handoverData.token);
-                  alert("Handover token copied to clipboard!");
-                }}
-              >
-                📋 COPY TOKEN
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary btn--small"
-                onClick={() => {
-                  const blob = new Blob([JSON.stringify(handoverData, null, 2)], { type: "application/json" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `HANDOVER_TOKEN_${handoverData.session_id.slice(0, 8)}.json`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                💾 DOWNLOAD JSON PACKET
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {handover && <HandoverModal packet={handover} onClose={() => setHandover(null)} />}
     </div>
   );
 }

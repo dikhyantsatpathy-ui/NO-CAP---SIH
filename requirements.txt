@@ -15,4 +15,5 @@ pydantic
 
 # Local-only (NOT installed on Vercel): on-device AI pretrained model runtime.
 # Only needed if you run AI_DETECTOR_PROVIDER=self-hosted on a laptop/worker.
-# onnxruntimehttpx
+# onnxruntime
+# httpx

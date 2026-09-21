@@ -138,6 +138,12 @@ function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => 
 }
 
 function StatusBand() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const utc = now.toISOString().slice(11, 19);
   return (
     <div className="statusband">
       <span className="statusband__item">
@@ -146,7 +152,11 @@ function StatusBand() {
       <span className="statusband__item">SESSION FLOW — ONE TRAVELLER AT A TIME</span>
       <span className="statusband__item">ZERO-STORAGE AUDIT — SHA-256 DIGESTS ONLY</span>
       <span className="statusband__item">CHAINED SESSION LEDGER</span>
-      <span className="statusband__item statusband__item--right mono">SIH26188 // CLASSIFIED — OFFICIAL USE</span>
+      <span className="statusband__item statusband__item--right">
+        <span className="clock mono">UTC {utc}</span>
+        <span className="divider" />
+        <span className="mono">SIH26188 // OFFICIAL USE</span>
+      </span>
     </div>
   );
 }

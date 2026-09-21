@@ -1,23 +1,37 @@
 import base64
 import json
 import os
-from openai import OpenAI
 from pydantic import BaseModel, Field
+
+# The OpenAI SDK is an optional runtime dependency: it is only needed when a
+# LiteLLM/OpenAI-compatible endpoint is configured (LITELLM_URL). When it is
+# missing the app degrades gracefully to rule-based/on-device screening
+# instead of crashing at import time (which also keeps the offline test suite,
+# Vercel edge runtime, and self-hosted installs without cloud keys working).
+try:
+    from openai import OpenAI as _OpenAI
+except ImportError:  # pragma: no cover - SDK intentionally optional
+    _OpenAI = None  # type: ignore[assignment,misc]
 
 _client = None
 
-def get_client() -> OpenAI | None:
+def get_client():
+    """Return the cached LiteLLM/OpenAI-compatible client, or None when the
+    SDK is not installed or no endpoint is configured."""
     global _client
     if _client is not None:
         return _client
-    
+
+    if _OpenAI is None:
+        return None  # openai SDK not installed
+
     url = os.getenv("LITELLM_URL", "http://localhost:4000")
     key = os.getenv("LITELLM_API_KEY", "dummy-key")
-    
+
     if not url:
         return None
-        
-    _client = OpenAI(
+
+    _client = _OpenAI(
         base_url=url,
         api_key=key,
     )
