@@ -144,43 +144,6 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
     adapts the threshold to account for natural physiological aging across long-validity
     documents (e.g., 10-year passports).
     """
-    import os
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
-        try:
-            import httpx
-            
-            # Prepare payload
-            payload = {}
-            if isinstance(document_photo, bytes):
-                import base64
-                payload["doc_face_b64"] = base64.b64encode(document_photo).decode("ascii")
-            else:
-                payload["doc_face_b64"] = str(document_photo)
-                
-            if doc_age_years is not None:
-                payload["doc_age_years"] = str(doc_age_years)
-            if emb_same is not None:
-                payload["emb_same"] = str(emb_same)
-                
-            files = {}
-            if isinstance(selfie, bytes):
-                files["live_frame"] = ("live.png", selfie, "image/png")
-            else:
-                # If selfie is b64, we need to decode it for the file upload
-                import base64
-                files["live_frame"] = ("live.png", base64.b64decode(selfie.strip()), "image/png")
-                
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/face_match",
-                data=payload,
-                files=files,
-                timeout=20.0
-            )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
     qr_bytes = _coerce_image_bytes(document_photo)
     sl_bytes = _coerce_image_bytes(selfie)
     if qr_bytes is None or sl_bytes is None:

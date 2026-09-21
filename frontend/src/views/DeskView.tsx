@@ -129,6 +129,86 @@ function ComparisonBoard({ checks }: { checks: ComparisonCheck[] }) {
 }
 
 // ----------------------------------------------------------------------------
+// Webcam Capture Modal
+// ----------------------------------------------------------------------------
+
+function WebcamCapture({ onCapture, onCancel }: { onCapture: (f: File) => void; onCancel: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "environment" } })
+      .then((s) => {
+        stream = s;
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+        }
+      })
+      .catch((err) => {
+        console.error("Webcam error:", err);
+      });
+    return () => {
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const capture = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video && canvas) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const file = new File([blob], `webcam_${Date.now()}.jpg`, { type: "image/jpeg" });
+              onCapture(file);
+            }
+          },
+          "image/jpeg",
+          0.9
+        );
+      }
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        background: "rgba(0,0,0,0.8)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+      }}
+    >
+      <div style={{ background: "#000", padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
+        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", maxWidth: "600px", background: "#111" }} />
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+        <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+          <button className="btn btn--primary" onClick={capture}>
+            CAPTURE
+          </button>
+          <button className="btn" onClick={onCancel}>
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
 // The desk
 // ----------------------------------------------------------------------------
 
@@ -141,6 +221,7 @@ export function DeskView() {
   const [busy, setBusy] = useState(false);
   const [newCheckpoint, setNewCheckpoint] = useState("Raxaul ICP");
   const [showNewForm, setShowNewForm] = useState(false);
+  const [showWebcam, setShowWebcam] = useState(false);
 
   // Document intake form
   const [file, setFile] = useState<File | null>(null);
@@ -440,6 +521,9 @@ export function DeskView() {
                       <span className="dropzone__label">{file ? file.name : "ATTACH DOCUMENT"}</span>
                       <span className="dropzone__hint">JPEG / PNG / WEBP / PDF</span>
                     </label>
+                    <button className="btn" style={{ marginBottom: "16px" }} onClick={() => setShowWebcam(true)}>
+                      USE WEBCAM
+                    </button>
                     <button className="btn btn--primary btn--block" disabled={busy} onClick={() => void screenIntoSession()}>
                       {busy ? "SCREENING…" : "SCREEN INTO SESSION"}
                     </button>
@@ -556,6 +640,17 @@ export function DeskView() {
       )}
 
       {loading && <p className="hint">Loading desk…</p>}
+
+      {showWebcam && (
+        <WebcamCapture
+          onCapture={(f) => {
+            setFile(f);
+            setFileKey((k) => k + 1);
+            setShowWebcam(false);
+          }}
+          onCancel={() => setShowWebcam(false)}
+        />
+      )}
     </div>
   );
 }

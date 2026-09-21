@@ -631,6 +631,19 @@ def onnx_score(output) -> int:
 
 
 def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
+    ml_url = os.getenv("ML_SERVICE_URL")
+    if ml_url:
+        try:
+            import httpx
+            res = httpx.post(
+                f"{ml_url.rstrip('/')}/api/ml/detect_image",
+                files={"file": ("image.png", image_bytes, "image/png")},
+                timeout=15.0
+            )
+            if res.status_code == 200:
+                return res.json()
+        except Exception:
+            pass # fallback to local if remote fails
     try:
         _load_engine()
     except Exception as exc:

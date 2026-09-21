@@ -291,22 +291,6 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
     """Public extractor: runs YOLO ONNX if available, else robust CV pipeline."""
     if not image_bytes:
         return []
-    
-    # Remote microservice bypass
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
-        try:
-            import httpx
-            # timeout=10.0 so we don't hang vercel if the free tier is asleep
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/yolo_roi",
-                files={"file": ("image.png", image_bytes, "image/png")},
-                timeout=15.0
-            )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
     rgb = _open_rgb(image_bytes)
     if rgb is None:
         return []
@@ -376,21 +360,6 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
     """
     if not image_bytes:
         return []
-        
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
-        try:
-            import httpx
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/aadhaar_fields",
-                files={"file": ("image.png", image_bytes, "image/png")},
-                timeout=15.0
-            )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
-            
     rgb = _open_rgb(image_bytes)
     session = _get_aadhaar_session()
     if rgb is None or session is None:

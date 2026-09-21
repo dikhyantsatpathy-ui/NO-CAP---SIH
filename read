@@ -1,0 +1,44 @@
+order Screening Application Updates
+ML Microservice Extracted
+To bypass Vercel's strict 128MB serverless function limit, the heavy Machine Learning and Computer Vision models have been successfully extracted into a standalone FastAPI microservice!
+
+This microservice acts as an inference engine that the core app communicates with securely over HTTP.
+
+What was moved to ml_service/:
+YOLO ROI Extraction (yolo_roi.py): Runs ONNX-based object detection (yolov8n.onnx and card.onnx) for isolating document zones (Face, MRZ, MRZ Zone).
+Aadhaar Field Detection (aadhaar_fields.onnx): Extracts Aadhaar specific fields.
+Face Matching (face_match.py): Validates the extracted document portrait against the live selfie using ArcFace/FaceNet embeddings.
+AI Generation Detection (main.py -> detect_image): Runs the Vision Transformer (ViT-Base) ONNX model to distinguish between authentic photographs and AI-generated/manipulated imagery.
+Microservice Architecture:
+Framework: FastAPI
+Model runtime: onnxruntime (CPU execution provider)
+HTTP Client: Handled inside the core app via httpx
+🚀 How to deploy the Microservice for FREE
+You requested a free hosting solution for this microservice. I highly recommend Render or Hugging Face Spaces, both of which offer generous free tiers with Docker support.
+
+Using Render (Recommended):
+
+Push this repository to GitHub.
+Sign up at render.com and create a new Web Service.
+Connect your repository.
+Set the "Root Directory" to ml_service.
+Render will automatically detect the Dockerfile and build/deploy it for free!
+Copy the resulting URL (e.g., https://your-ml-service.onrender.com).
+Using Hugging Face Spaces:
+
+Create a new Space at huggingface.co/spaces.
+Select Docker as the Space SDK.
+Upload the contents of the ml_service/ folder to the space.
+It will automatically build and expose the FastAPI endpoints.
+Connecting the Vercel App
+Once your microservice is deployed and you have its URL, you need to tell your Vercel app where to send ML requests. Go to your Vercel Project Dashboard -> Settings -> Environment Variables and add:
+
+Key: ML_SERVICE_URL
+Value: https://your-ml-service-url.com (from Render or HF Spaces)
+Redeploy your Vercel app, and it will automatically route all heavy ML inference to your new free-tier microservice, completely bypassing the 128MB bundle limit!
+
+📸 Webcam Integration Complete
+As requested, the frontend has been updated to support a webcam-first intake flow.
+
+The Desk view now features a "Capture Document" and "Capture Selfie" flow using the device camera.
+Frames are captured, converted to blobs, and sent directly to the backend for screening, adhering to the zero-storage policy.
