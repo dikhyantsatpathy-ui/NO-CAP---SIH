@@ -79,7 +79,7 @@ def test_missing_cookie_rejected():
 
 
 def test_super_admins_are_configurable_and_authoritative():
-    from main import SUPER_ADMINS, is_super_admin
+    from main import SUPER_ADMINS, is_super_admin, get_super_admins
 
     assert isinstance(SUPER_ADMINS, list) and SUPER_ADMINS
     assert is_super_admin(SUPER_ADMINS[0]) is True
@@ -87,6 +87,19 @@ def test_super_admins_are_configurable_and_authoritative():
     assert is_super_admin("sushumnameghavaram@gmail.com") is True
     assert is_super_admin("SUSHUMNAMEGHAVARAM@GMAIL.COM") is True
     assert is_super_admin("nobody@example.com") is False
+
+    # Test dynamic runtime environment configuration
+    old_env = os.environ.get("SUPER_ADMINS")
+    try:
+        os.environ["SUPER_ADMINS"] = "dynamic_admin@test.gov.in, another@test.gov.in"
+        assert "dynamic_admin@test.gov.in" in get_super_admins()
+        assert is_super_admin("dynamic_admin@test.gov.in") is True
+        assert is_super_admin("DYNAMIC_ADMIN@TEST.GOV.IN") is True
+    finally:
+        if old_env is not None:
+            os.environ["SUPER_ADMINS"] = old_env
+        else:
+            os.environ.pop("SUPER_ADMINS", None)
 
 
 if __name__ == "__main__":

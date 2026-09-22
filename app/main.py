@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -831,7 +832,6 @@ def explain(result: dict) -> str:
 # [ COLUMN 1: ENVIRONMENT & DB CONFIG ]
 # ==============================================================================
 
-load_dotenv()
 
 def clean_postgres_dsn(raw_url: str) -> str:
     """Sanitizes PostgreSQL DSN strings to prevent libpq URI parser errors:
@@ -1000,22 +1000,35 @@ if not GOOGLE_CLIENT_ID:
 #   * ALLOWED_EMAILS   - optional comma-separated exact emails (e.g. personal
 #                        gmail accounts, which carry no `hd` claim).
 # Super admins ALWAYS bypass the gate so the owner can never be locked out.
-ALLOWED_DOMAINS = {d.strip().lower() for d in os.getenv("ALLOWED_DOMAINS", "").split(",") if d.strip().lower()}
-ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip().lower()}
+def get_allowed_domains() -> set:
+    return {d.strip().lower() for d in os.getenv("ALLOWED_DOMAINS", "").split(",") if d.strip().lower()}
 
-# SUPER_ADMINS is a comma-separated env override (real deployments set it in
-# secrets/Vercel). When unset the fallback list keeps demo/local sign-ins
-# working so the owner is never locked out of the console.
-SUPER_ADMINS = [e.strip().lower() for e in os.getenv("SUPER_ADMINS", "").split(",") if e.strip().lower()] or [
-    "asutoshn06@gmail.com",
-    "ayushlenka2020@gmail.com",
-    "dikhyantsatpathy@gmail.com",
-    "sushumnameghavaram@gmail.com"
-]
+def get_allowed_emails() -> set:
+    return {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip().lower()}
+
+def get_super_admins() -> list:
+    """Dynamically loads authorized super-admin emails from the environment (SUPER_ADMINS).
+    Avoids hardcoding PII/personal emails in source code while providing a safe sandbox fallback.
+    """
+    raw = os.getenv("SUPER_ADMINS", "")
+    admins = [e.strip().lower() for e in raw.split(",") if e.strip().lower()]
+    if not admins:
+        # If SUPER_ADMINS is not explicitly set, fallback to ALLOWED_EMAILS or generic sandbox admin
+        allowed = list(get_allowed_emails())
+        return allowed if allowed else ["admin@ssb.gov.in"]
+    return admins
+
+# Module-level references for backwards compatibility
+ALLOWED_DOMAINS = get_allowed_domains()
+ALLOWED_EMAILS = get_allowed_emails()
+SUPER_ADMINS = get_super_admins()
 
 def is_super_admin(email: str) -> bool:
     clean = (email or "").strip().lower()
-    return clean in [e.strip().lower() for e in SUPER_ADMINS] or clean == "evaluator@ssb.gov.in"
+    if not clean:
+        return False
+    admins = {e.strip().lower() for e in get_super_admins()}
+    return clean in admins or clean == "evaluator@ssb.gov.in"
 
 # ==============================================================================
 # [ COLUMN 2: DATABASE MODELS ]
@@ -1821,9 +1834,11 @@ def admin_login(request: Request, credential: str = Form(...)):
         if not is_super_admin(email):
             hd = str(idinfo.get("hd") or "").strip().lower()
             suffix = email.split("@", 1)[1] if "@" in email else ""
-            if (hd and hd in ALLOWED_DOMAINS) or (suffix in ALLOWED_DOMAINS):
+            allowed_domains = get_allowed_domains()
+            allowed_emails = get_allowed_emails()
+            if (hd and hd in allowed_domains) or (suffix in allowed_domains):
                 allowed = True
-            elif email in ALLOWED_EMAILS:
+            elif email in allowed_emails:
                 allowed = True
         else:
             allowed = True
@@ -1832,8 +1847,9 @@ def admin_login(request: Request, credential: str = Form(...)):
             raise ValueError("ACCESS DENIED: your Google account is not authorized to use this system.")
 
         with get_db() as db: get_or_create_signer_identity(db, email, idinfo.get("name"))
+        is_secure = os.getenv("VERCEL") == "1" or request.url.scheme == "https" or os.getenv("ENVIRONMENT") == "production"
         res = JSONResponse(content={"status": "SUCCESS", "admin": email})
-        res.set_cookie(key="nischay_session", value=make_session_token(email), httponly=True, secure=os.getenv("VERCEL") == "1", samesite="lax", max_age=86400)
+        res.set_cookie(key="nischay_session", value=make_session_token(email), httponly=True, secure=is_secure, samesite="lax", max_age=86400)
         return res
     except Exception:
         raise HTTPException(401, "AUTH FAILED: your Google credential could not be verified.")
@@ -1853,8 +1869,9 @@ def admin_demo_login(request: Request):
             db.commit()
         except Exception:
             db.rollback()
+    is_secure = os.getenv("VERCEL") == "1" or request.url.scheme == "https" or os.getenv("ENVIRONMENT") == "production"
     res = JSONResponse(content={"status": "SUCCESS", "admin": demo_email})
-    res.set_cookie(key="nischay_session", value=make_session_token(demo_email), httponly=True, secure=os.getenv("VERCEL") == "1", samesite="lax", max_age=86400)
+    res.set_cookie(key="nischay_session", value=make_session_token(demo_email), httponly=True, secure=is_secure, samesite="lax", max_age=86400)
     return res
 
 @app.post("/api/admin/logout")
