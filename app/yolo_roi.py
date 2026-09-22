@@ -300,22 +300,29 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
     if ml_url:
         try:
             timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
-            target_url = f"{ml_url.rstrip('/')}/api/ml/yolo_roi"
-            files = {"file": ("image.png", image_bytes, "image/png")}
-            res = None
-            try:
-                import httpx
-                res = httpx.post(target_url, files=files, timeout=timeout_sec)
-            except ImportError:
-                import requests
-                res = requests.post(target_url, files=files, timeout=timeout_sec)
+            base = ml_url.rstrip("/")
+            candidate_urls = (
+                [f"{base}/api/ml/yolo_roi", f"{base}/gradio_api/api/ml/yolo_roi"]
+                if "/gradio_api" not in base else [f"{base}/api/ml/yolo_roi"]
+            )
+            for target_url in candidate_urls:
+                files = {"file": ("image.png", image_bytes, "image/png")}
+                res = None
+                try:
+                    import httpx
+                    res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                except ImportError:
+                    import requests
+                    res = requests.post(target_url, files=files, timeout=timeout_sec)
 
-            if res is not None:
-                if res.status_code == 200:
-                    return res.json()
-                logger.warning(
-                    f"Remote yolo_roi returned HTTP {res.status_code}: {res.text[:200]}"
-                )
+                if res is not None:
+                    if res.status_code == 200:
+                        return res.json()
+                    if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
+                        continue
+                    logger.warning(
+                        f"Remote yolo_roi returned HTTP {res.status_code}: {res.text[:200]}"
+                    )
         except Exception as exc:
             logger.warning(
                 f"Remote yolo_roi call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
@@ -394,22 +401,29 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
     if ml_url:
         try:
             timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
-            target_url = f"{ml_url.rstrip('/')}/api/ml/aadhaar_fields"
-            files = {"file": ("image.png", image_bytes, "image/png")}
-            res = None
-            try:
-                import httpx
-                res = httpx.post(target_url, files=files, timeout=timeout_sec)
-            except ImportError:
-                import requests
-                res = requests.post(target_url, files=files, timeout=timeout_sec)
+            base = ml_url.rstrip("/")
+            candidate_urls = (
+                [f"{base}/api/ml/aadhaar_fields", f"{base}/gradio_api/api/ml/aadhaar_fields"]
+                if "/gradio_api" not in base else [f"{base}/api/ml/aadhaar_fields"]
+            )
+            for target_url in candidate_urls:
+                files = {"file": ("image.png", image_bytes, "image/png")}
+                res = None
+                try:
+                    import httpx
+                    res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                except ImportError:
+                    import requests
+                    res = requests.post(target_url, files=files, timeout=timeout_sec)
 
-            if res is not None:
-                if res.status_code == 200:
-                    return res.json()
-                logger.warning(
-                    f"Remote aadhaar_fields returned HTTP {res.status_code}: {res.text[:200]}"
-                )
+                if res is not None:
+                    if res.status_code == 200:
+                        return res.json()
+                    if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
+                        continue
+                    logger.warning(
+                        f"Remote aadhaar_fields returned HTTP {res.status_code}: {res.text[:200]}"
+                    )
         except Exception as exc:
             logger.warning(
                 f"Remote aadhaar_fields call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."

@@ -170,21 +170,28 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
                 import base64
                 files["live_frame"] = ("live.png", base64.b64decode(selfie.strip()), "image/png")
                 
-            target_url = f"{ml_url.rstrip('/')}/api/ml/face_match"
-            res = None
-            try:
-                import httpx
-                res = httpx.post(target_url, data=payload, files=files, timeout=timeout_sec)
-            except ImportError:
-                import requests
-                res = requests.post(target_url, data=payload, files=files, timeout=timeout_sec)
+            base = ml_url.rstrip("/")
+            candidate_urls = (
+                [f"{base}/api/ml/face_match", f"{base}/gradio_api/api/ml/face_match"]
+                if "/gradio_api" not in base else [f"{base}/api/ml/face_match"]
+            )
+            for target_url in candidate_urls:
+                res = None
+                try:
+                    import httpx
+                    res = httpx.post(target_url, data=payload, files=files, timeout=timeout_sec)
+                except ImportError:
+                    import requests
+                    res = requests.post(target_url, data=payload, files=files, timeout=timeout_sec)
 
-            if res is not None:
-                if res.status_code == 200:
-                    return res.json()
-                logger.warning(
-                    f"Remote face_match returned HTTP {res.status_code}: {res.text[:200]}"
-                )
+                if res is not None:
+                    if res.status_code == 200:
+                        return res.json()
+                    if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
+                        continue
+                    logger.warning(
+                        f"Remote face_match returned HTTP {res.status_code}: {res.text[:200]}"
+                    )
         except Exception as exc:
             logger.warning(
                 f"Remote face_match call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."

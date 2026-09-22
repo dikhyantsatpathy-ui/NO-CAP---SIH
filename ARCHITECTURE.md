@@ -188,7 +188,7 @@ One `FastAPI` app in `app/main.py`. Infrastructure: `slowapi` rate limiter keyed
 - Self-contained HMAC token: `f"{email}::{exp}::{sig}"`, `sig = HMAC-SHA256(MASTER_VAULT_KEY, f"{email}::{exp}")`, 1-day expiry (matches cookie `max_age`).
 - Cookie `nischay_session`: `HttpOnly`, `SameSite=Lax`, `Secure` when `VERCEL=1`.
 - Dependencies `get_current_admin(request)` (strict) and `get_current_admin_or_evaluator` (`/api/screen` — unsigned sandbox users screen as `evaluator@ssb.gov.in` for SIH26188 demos while logged-in officers keep attribution).
-- `SUPER_ADMINS` env override, else hardcoded demo list (`asutoshn06@gmail.com`, `ayushlenka2020@gmail.com`, `dikhyantsatpathy@gmail.com`). Super-admins always bypass the login gate so the owner is never locked out.
+- `SUPER_ADMINS` env override, else hardcoded demo list (`asutoshn06@gmail.com`, `ayushlenka2020@gmail.com`, `dikhyantsatpathy@gmail.com`, `sushumnameghavaram@gmail.com`). Super-admins always bypass the login gate so the owner is never locked out.
 - Startup is **hard-fail** if `MASTER_VAULT_KEY` or `GOOGLE_CLIENT_ID` is missing (`sys.exit`), to avoid running with an insecure demo config.
 
 ### 4.3 Database & startup behaviour

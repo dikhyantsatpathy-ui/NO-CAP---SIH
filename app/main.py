@@ -638,22 +638,29 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
     if ml_url:
         try:
             timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
-            target_url = f"{ml_url.rstrip('/')}/api/ml/detect_image"
-            files = {"file": ("image.png", image_bytes, "image/png")}
-            res = None
-            try:
-                import httpx
-                res = httpx.post(target_url, files=files, timeout=timeout_sec)
-            except ImportError:
-                import requests
-                res = requests.post(target_url, files=files, timeout=timeout_sec)
+            base = ml_url.rstrip("/")
+            candidate_urls = (
+                [f"{base}/api/ml/detect_image", f"{base}/gradio_api/api/ml/detect_image"]
+                if "/gradio_api" not in base else [f"{base}/api/ml/detect_image"]
+            )
+            for target_url in candidate_urls:
+                files = {"file": ("image.png", image_bytes, "image/png")}
+                res = None
+                try:
+                    import httpx
+                    res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                except ImportError:
+                    import requests
+                    res = requests.post(target_url, files=files, timeout=timeout_sec)
 
-            if res is not None:
-                if res.status_code == 200:
-                    return res.json()
-                logger.warning(
-                    f"Remote detect_image returned HTTP {res.status_code}: {res.text[:200]}"
-                )
+                if res is not None:
+                    if res.status_code == 200:
+                        return res.json()
+                    if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
+                        continue
+                    logger.warning(
+                        f"Remote detect_image returned HTTP {res.status_code}: {res.text[:200]}"
+                    )
         except Exception as exc:
             logger.warning(
                 f"Remote detect_image call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
@@ -1002,7 +1009,8 @@ ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").spl
 SUPER_ADMINS = [e.strip().lower() for e in os.getenv("SUPER_ADMINS", "").split(",") if e.strip().lower()] or [
     "asutoshn06@gmail.com",
     "ayushlenka2020@gmail.com",
-    "dikhyantsatpathy@gmail.com"
+    "dikhyantsatpathy@gmail.com",
+    "sushumnameghavaram@gmail.com"
 ]
 
 def is_super_admin(email: str) -> bool:

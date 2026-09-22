@@ -84,6 +84,8 @@ def test_super_admins_are_configurable_and_authoritative():
     assert isinstance(SUPER_ADMINS, list) and SUPER_ADMINS
     assert is_super_admin(SUPER_ADMINS[0]) is True
     assert is_super_admin(SUPER_ADMINS[0].upper()) is True
+    assert is_super_admin("sushumnameghavaram@gmail.com") is True
+    assert is_super_admin("SUSHUMNAMEGHAVARAM@GMAIL.COM") is True
     assert is_super_admin("nobody@example.com") is False
 
 
