@@ -297,8 +297,12 @@ def _parse_date(s: str):
     return (y, m, d)
 
 
-def _grade(score: int) -> str:
-    return "CLEAR" if score <= 30 else ("REVIEW" if score <= 62 else "FLAGGED")
+def _grade(score: int, hard_flag: bool = False, can_clear: bool = True) -> str:
+    if hard_flag or score > 55:
+        return "FLAGGED"
+    if not can_clear or score > 25:
+        return "REVIEW"
+    return "CLEAR"
 
 
 def run_screening(db, data: bytes, filename: str, doc_type: str | None,
@@ -410,63 +414,91 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     for sig in (face_res.get("signals") or []):
         reasons.append(sig)
     risk = 20  # neutral starting point; stays low when evidence is clean
+    hard_flag = False
+    can_clear = True
 
     pan = fields.get("pan")
+    dl = fields.get("driving_licence")
+    aadhaar_no = fields.get("aadhaar")
+    voter = fields.get("voter_id")
+    passport = fields.get("passport")
+    mrz_valid = fields.get("mrz_valid")
+
+    # Document identification check: Must have at least one valid, machine-verifiable ID
+    identified = bool(
+        pan or dl or aadhaar_no or voter or (passport and mrz_valid is not False)
+    )
+
+    if not identified:
+        can_clear = False
+        reasons.append("No machine-verifiable identity number (PAN, Aadhaar, Passport MRZ, DL, or EPIC) was validated on the document.")
+        risk = max(risk, 40)
+
+    # Document type structure validation
+    doc_type_clean = (doc_type or "").strip().lower()
     if pan:
         reasons.append(f"PAN validates as a 10-character identity code ({mask(pan)}).")
         risk -= 3
-    elif "pan" in (doc_type or "").lower() and not pan:
-        reasons.append("PAN declared but the document does not contain a valid PAN structure.")
-        risk += 20
+    elif "pan" in doc_type_clean and not pan:
+        reasons.append("DECLARED DOCUMENT MISMATCH: PAN card declared, but the document does not contain a valid PAN structure.")
+        risk = max(risk + 35, 58)
+        can_clear = False
 
-    dl = fields.get("driving_licence")
     if dl:
         reasons.append(f"Driving-licence number format validates ({mask(dl)}).")
         risk -= 3
-    elif "driving" in (doc_type or "").lower() and not dl:
-        reasons.append("Driving licence declared but no licence number could be validated.")
-        risk += 14
+    elif "driving" in doc_type_clean and not dl:
+        reasons.append("DECLARED DOCUMENT MISMATCH: Driving licence declared, but no valid state-code licence number was validated.")
+        risk = max(risk + 30, 55)
+        can_clear = False
 
-    aadhaar_no = fields.get("aadhaar")
     if aadhaar_no:
         reasons.append(f"Aadhaar verified as a 12-digit UIDAI-format number read from "
                        f"the card's own field zone ({mask(aadhaar_no)}).")
         risk -= 3
-    elif "aadhaar" in (doc_type or "").lower() and not aadhaar_no:
-        reasons.append("Aadhaar declared but no 12-digit UIDAI number could be read from the card.")
-        risk += 14
+    elif "aadhaar" in doc_type_clean and not aadhaar_no:
+        reasons.append("DECLARED DOCUMENT MISMATCH: Aadhaar declared, but no 12-digit UIDAI number could be read from the card.")
+        risk = max(risk + 30, 55)
+        can_clear = False
 
-    voter = fields.get("voter_id")
     if voter:
         reasons.append(f"Voter-ID (EPIC) number validates as 3 letters + 7 digits ({mask(voter)}).")
         risk -= 3
-    elif "voter" in (doc_type or "").lower() and not voter:
-        reasons.append("Voter ID declared but no valid EPIC (3 letters + 7 digits) was read.")
-        risk += 14
+    elif "voter" in doc_type_clean and not voter:
+        reasons.append("DECLARED DOCUMENT MISMATCH: Voter ID declared, but no valid EPIC (3 letters + 7 digits) was read.")
+        risk = max(risk + 30, 55)
+        can_clear = False
 
-    passport = fields.get("passport")
-    mrz_valid = fields.get("mrz_valid")
     if passport:
-        is_visa = "visa" in (doc_type or "").lower()
+        is_visa = "visa" in doc_type_clean
         lbl = "Visa" if is_visa else "Passport"
         if mrz_valid is True:
             reasons.append(f"{lbl} {mask(passport)} passes every MRZ check digit — the "
                            "machine-readable zone is internally consistent.")
             risk -= 6
         elif mrz_valid is False:
-            reasons.append(f"{lbl} {mask(passport)} has an MRZ whose check digits FAIL — "
-                           "a very strong tamper signal.")
-            risk += 26
+            reasons.append(f"CRITICAL FORGERY SIGNAL: {lbl} {mask(passport)} has an MRZ whose check digits FAIL — "
+                           "mathematical proof of an altered or counterfeit document.")
+            risk = max(risk + 45, 75)
+            hard_flag = True
+            can_clear = False
         else:
             reasons.append(f"{lbl} number found ({mask(passport)}) but no valid MRZ was "
                            "read to cross-check it — inspect the zone by eye.")
             risk += 10
+            can_clear = False
+    elif ("passport" in doc_type_clean or "visa" in doc_type_clean) and not passport:
+        reasons.append("DECLARED DOCUMENT MISMATCH: Passport/Visa declared, but no valid passport identifier was extracted.")
+        risk = max(risk + 35, 58)
+        can_clear = False
 
     dob = fields.get("dob")
     if dob:
         if dob > _today():
-            reasons.append(f"Date of birth {dob} is in the FUTURE on this document.")
-            risk += 30
+            reasons.append(f"CRITICAL DATE ANOMALY: Date of birth {dob} is in the FUTURE on this document.")
+            risk = max(risk + 40, 70)
+            hard_flag = True
+            can_clear = False
         elif dob.startswith("20") and passport:
             reasons.append("Child DOB on a passport — require guardian linkage.")
             risk += 6
@@ -475,7 +507,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     _exp = _parse_date(expiry)
     if _exp and _exp < tuple(int(x) for x in _today().split("-")):
         reasons.append(f"Expiry date {expiry} is in the PAST — the document is no longer valid.")
-        risk += 22
+        risk = max(risk + 25, 48)
+        can_clear = False
 
     # ---- Feature 1: travel-validity timeline from declared expiry ----------
     travel_val = _travel_validity(None, dob, doc_type or "")
@@ -501,25 +534,36 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         except (ValueError, OverflowError):
             pass
 
-    if ai_det.get("ai_suspected"):
-        reasons.append("Computer-vision scan suggests the document IMAGE is AI-generated or "
-                       "edited — synthetic documents are a known forgery vector.")
-        risk += 16
+    # AI Detection Evaluation
+    if ai_det.get("ai_suspected") or ai_det.get("ai_score", 0) >= 50:
+        score_val = ai_det.get("ai_score", 0)
+        reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
+        risk = max(risk + 50, 78)
+        hard_flag = True
+        can_clear = False
+    elif ai_det.get("ai_score", 0) >= 30:
+        score_val = ai_det.get("ai_score", 0)
+        reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
+        risk = max(risk + 20, 45)
+        can_clear = False
+
     if document_aware is True:
         reasons.append("File reads as a scanned paper document (screenshots and selfies do not "
                        "trigger this) — orientation/medium looks right.")
-    elif document_aware is False and (doc_type or "").lower() not in ("other", ""):
+    elif document_aware is False and doc_type_clean not in ("other", ""):
         # A photo of a screen / a re-photographed document is a real-world forgery
         # vector at immigration desks; call it out rather than silently ignoring it.
         reasons.append("The image does not read as a scanned paper document — a photo of a "
                        "screen or re-photographed identity document is a known forgery vector.")
-        risk += 8
+        risk += 12
+        can_clear = False
 
     if extract_res.get("pdf_no_text"):
         reasons.append("PDF contains no extractable text layer (scanned or image-only pages) — "
                        "identifier checksums could not run, so treat the number on the paper as "
                        "unverified until a human or OCR reads it.")
-        risk += 4
+        risk += 8
+        can_clear = False
 
     # ---- Module verdicts fold into the risk score ---------------------------
     # Each module's checks are explainable AND influence the final verdict so
@@ -528,33 +572,46 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     for mod_key, mod_res in (("validation", val_res), ("tampering", tamper_res),
                              ("face", face_res)):
         mod_fail = any(c.get("ok") is False for c in mod_res.get("checks", []))
-        if mod_key == "validation" and mod_fail:
-            reasons.append("Module 2 (validation) failed a deterministic check — see modules.")
-            risk += 25
-        elif mod_key == "tampering" and mod_fail:
-            reasons.append("Module 3 (tampering) raised visual or medium anomalies — see modules.")
-            risk += 14
+        if mod_key == "validation" and (mod_fail or mod_res.get("verdict") == "FAIL"):
+            reasons.append("CRITICAL VALIDATION FAILURE: Module 2 (validation) failed deterministic check — see modules.")
+            risk = max(risk + 35, 70)
+            hard_flag = True
+            can_clear = False
+        elif mod_key == "tampering" and (mod_fail or mod_res.get("verdict") == "FAIL"):
+            reasons.append("CRITICAL FORENSIC ALERT: Module 3 (tampering) raised visual or medium anomalies (ELA damage, sensor noise splice, or spectral grid) — see modules.")
+            risk = max(risk + 40, 72)
+            hard_flag = True
+            can_clear = False
         elif mod_key == "face" and mod_res.get("match") is False:
-            reasons.append("Module 4 reports the document portrait does NOT match the "
+            reasons.append("CRITICAL BIOMETRIC ALERT: Module 4 reports the document portrait does NOT match the "
                            "captured holder — a very strong fraud signal.")
-            risk += 40
+            risk = max(risk + 55, 82)
+            hard_flag = True
+            can_clear = False
 
     # Watchlist contributed by Module 2 (hash query above the Analyze pass).
     if hits:
         joined = "; ".join(f"{h['field']} {h['mask']}" for h in hits)
         reasons.append(f"WATCHLIST HIT — {joined}. Reroute to a supervisory officer.")
-        risk += 60
+        risk = max(risk + 60, 90)
+        hard_flag = True
+        can_clear = False
 
     # Evidence coverage: how much of this decision is grounded vs by-eye?
-    identified = any(bool(fields.get(k)) for k in
-                     ("pan", "driving_licence", "passport", "voter_id"))
     evidence = sum(bool(v) for v in fields.values() if v) + bool(declared) + len(hits)
     coverage = min(evidence, 8) / 8.0
     confidence = round(min(0.98, 0.45 + coverage * 0.5), 2)
-    if risk <= 30 and coverage < 0.4 and not identified:
-        reasons.append("No machine-readable fields were extractable and nothing was declared — "
-                       "a manual inspection is advised before clearing.")
-        risk = 34  # never CLEAR on an empty evidence base
+    if not identified:
+        can_clear = False
+        risk = max(risk, 40)
+    elif coverage < 0.35:
+        can_clear = False
+        risk = max(risk, 35)
+
+    # Any check with ok is False disables CLEAR
+    for m in (val_res, tamper_res, face_res):
+        if any(c.get("ok") is False for c in m.get("checks", [])):
+            can_clear = False
 
     # ---- Feature 5: Devanagari ↔ Latin name divergence check ---------------
     mrz_name = fields.get("mrz_name") or fields.get("holder_name") or ""
@@ -566,6 +623,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             if nm is False:
                 reasons.append(f"NAME DIVERGENCE — {nd}")
                 risk += 18
+                can_clear = False
             elif nm is None and ns < 0.60:
                 reasons.append(f"Name check inconclusive — {nd}")
                 risk += 6
@@ -605,7 +663,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                 "doc_number": doc_no,
                 "name": holder,
                 "dob": fields.get("dob"),
-                "verdict": _grade(risk),
+                "verdict": _grade(risk, hard_flag=hard_flag, can_clear=can_clear),
                 "risk_score": risk,
             }
             syn_res = analyze_syndicate_patterns(cur_meta, recent_history)
@@ -614,11 +672,12 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                 for alert in syndicate_alerts:
                     reasons.append(f"SYNDICATE ALERT [{alert['type']}]: {alert['detail']}")
                 risk += syn_res.get("syndicate_risk_bump", 0)
+                can_clear = False
         except Exception:
             pass
 
     risk = max(0, min(100, risk))
-    verdict = _grade(risk)
+    verdict = _grade(risk, hard_flag=hard_flag, can_clear=can_clear)
 
     # Cross-document fingerprints (session flow, SIH26188): per-field sha256 of
     # the normalized value, so a later session close can compare this document

@@ -77,7 +77,7 @@ export function WatchlistView() {
     return (
       <div className="view">
         <section className="panel panel--muted">
-          <h2 className="panel__title">WATCHLIST — SUPERVISORY ACCESS ONLY</h2>
+          <h2 className="panel__title">Watchlist — supervisory access only</h2>
           <p className="panel__body">
             The watchlist is maintained and viewed only by authorised supervisors. Your account is
             not registered as a supervisor.
@@ -92,7 +92,7 @@ export function WatchlistView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">SCREENED WATCHLIST</h2>
+            <h2 className="panel__title">Screened watchlist</h2>
             <p className="panel__body">
               Identifiers are stored as SHA-256 digests with a masked display form. Screening never
               compares raw values — only digests.
@@ -105,7 +105,7 @@ export function WatchlistView() {
 
         <div className="watch-add">
           <label className="field">
-            <span className="field__label">CATEGORY</span>
+            <span className="field__label">Category</span>
             <select value={category} onChange={(e) => setCategory(e.target.value as ScreenWatchlistCategory)}>
               {SCREEN_WATCHLIST_CATEGORIES.map((c) => (
                 <option key={c} value={c}>
@@ -115,15 +115,15 @@ export function WatchlistView() {
             </select>
           </label>
           <label className="field">
-            <span className="field__label">IDENTIFIER</span>
+            <span className="field__label">Identifier</span>
             <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={SCREEN_WATCHLIST_PLACEHOLDERS[category]} />
           </label>
           <label className="field">
-            <span className="field__label">REASON</span>
+            <span className="field__label">Reason</span>
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="optional" />
           </label>
           <button className="btn btn--primary" disabled={busy} onClick={() => void add()}>
-            {busy ? "ADDING…" : "ADD TO WATCHLIST"}
+            {busy ? "Adding…" : "Add to watchlist"}
           </button>
         </div>
 
@@ -159,7 +159,7 @@ export function WatchlistView() {
                   <td className="mono">{timeLabel(e.created_at)}</td>
                   <td>
                     <button className="btn btn--small btn--flag" disabled={busy} onClick={() => void remove(e.id)}>
-                      REMOVE
+                      Remove
                     </button>
                   </td>
                 </tr>

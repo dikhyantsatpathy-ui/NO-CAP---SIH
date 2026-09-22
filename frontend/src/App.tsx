@@ -91,9 +91,9 @@ function TopBar() {
       <div className="topbar__brand">
         <BrandMark />
         <div>
-          <div className="topbar__title">SSB BORDER SCREENING CONSOLE</div>
+          <div className="topbar__title">SSB Border Screening Console</div>
           <div className="topbar__sub">
-            Ministry of Home Affairs · Sashastra Seema Bal (Police II Division) · SIH26188
+            Ministry of Home Affairs · Sashastra Seema Bal (Police II Division) · SIH 26188
           </div>
         </div>
       </div>
@@ -111,7 +111,7 @@ function TopBar() {
               </span>
             </span>
             <button className="btn btn--small" disabled={signingOut} onClick={() => void doSignOut()}>
-              SIGN OUT
+              Sign out
             </button>
           </div>
         )}
@@ -147,15 +147,15 @@ function StatusBand() {
   return (
     <div className="statusband">
       <span className="statusband__item">
-        <span className="dot dot--ok" /> OPERATIONAL
+        <span className="dot dot--ok" /> Operational
       </span>
-      <span className="statusband__item">SESSION FLOW — ONE TRAVELLER AT A TIME</span>
-      <span className="statusband__item">ZERO-STORAGE AUDIT — SHA-256 DIGESTS ONLY</span>
-      <span className="statusband__item">CHAINED SESSION LEDGER</span>
+      <span className="statusband__item">One traveller per session</span>
+      <span className="statusband__item">SHA-256 digests only — no raw identifiers stored</span>
+      <span className="statusband__item">Chained session ledger</span>
       <span className="statusband__item statusband__item--right">
         <span className="clock mono">UTC {utc}</span>
         <span className="divider" />
-        <span className="mono">SIH26188 // OFFICIAL USE</span>
+        <span className="mono">SIH 26188 · Official use</span>
       </span>
     </div>
   );
@@ -181,7 +181,7 @@ export function App() {
     return (
       <div className="boot">
         <BrandMark />
-        <span className="mono">ESTABLISHING SECURE CONSOLE…</span>
+        <span className="mono">Establishing secure console…</span>
       </div>
     );
   }
@@ -204,7 +204,7 @@ export function App() {
       </main>
       <footer className="foot">
         <span className="mono">
-          SIH26188 · AI-BASED FAKE IDENTITY &amp; DOCUMENT SCREENING · CONSERVED DATA POLICY ACTIVE
+          SIH 26188 · AI-based fake identity &amp; document screening · Zero-storage data policy active
         </span>
       </footer>
     </div>

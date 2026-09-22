@@ -113,6 +113,28 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
     for k, v in decl_fields.items():
         if v and not result["fields"].get(k):
             result["fields"][k] = v
+
+    # Free-text identity values (name / gender) back-fill exactly like
+    # identifiers: when there is no OCR engine (Vercel/offline workers) the
+    # scanner reads no holder fields, and officers legitimately type them at
+    # the desk. Without this the cross-document comparison could never see a
+    # name and every session would compare INCOMPLETE. Machine-read values
+    # still win (same gap-only rule); a sanitized Latin form keeps digests
+    # comparable across documents.
+    for decl_key, field_key in (("name", "name"), ("holder_name", "name"),
+                                ("gender", "gender")):
+        typed = (declared.get(decl_key) or "").strip()
+        if not typed or result["fields"].get(field_key):
+            continue
+        if field_key == "name":
+            cleaned = re.sub(r"\s+", " ",
+                             re.sub(r"[^A-Za-z .\-]", " ", typed)).strip()[:100]
+            if cleaned:
+                result["fields"]["name"] = cleaned
+        else:
+            g = re.search(r"\b(M|F|MALE|FEMALE)\b", typed.upper())
+            if g:
+                result["fields"]["gender"] = g.group(1)[0].upper()
     return result
 
 

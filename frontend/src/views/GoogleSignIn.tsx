@@ -94,12 +94,12 @@ export function SignInGate() {
   return (
     <div className="gate">
       <div className="gate__panel">
-        <div className="gate__badge-top">MINISTRY OF HOME AFFAIRS · GOVT OF INDIA</div>
+        <div className="gate__badge-top">Ministry of Home Affairs · Govt. of India</div>
         <h1 className="gate__title">SSB Border Screening Console</h1>
         <p className="gate__sub">
-          AI-Based Fake Identity &amp; Document Screening · SIH26188
+          AI-based fake identity &amp; document screening · SIH 26188
           <br />
-          Sashastra Seema Bal (Police II Division) · Secure Operations Desk
+          Sashastra Seema Bal (Police II Division) · Secure operations desk
         </p>
         <div className="gate__hr" />
 
@@ -109,16 +109,16 @@ export function SignInGate() {
             disabled={evaluating}
             onClick={() => void handleDemoLogin()}
           >
-            {evaluating ? "AUTHENTICATING OFFICER CONSOLE…" : "1-CLICK ACCESS (SIH EVALUATOR PASS)"}
+            {evaluating ? "Authenticating officer console…" : "One-click access (SIH evaluator pass)"}
           </button>
-          <div className="gate__or"><span>OR SIGN IN WITH AUTHORISED GOOGLE ACCOUNT</span></div>
+          <div className="gate__or"><span>or sign in with an authorised Google account</span></div>
           <div style={{ display: "flex", justifyContent: "center" }}>
             <GoogleSignInButton />
           </div>
         </div>
 
         <p className="gate__foot">
-          Protected Gov System · Single-session custody · Zero raw PII persisted
+          Protected gov system · Single-session custody · Zero raw PII persisted
         </p>
       </div>
     </div>

@@ -17,6 +17,8 @@ export interface SpecimenPreset {
   docType: ScreenDocType;
   checkpoint: string;
   docNumber: string;
+  declaredName: string;
+  declaredDob: string;
   description: string;
   filename: string;
 }
@@ -29,6 +31,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "passport",
     checkpoint: "Raxaul ICP (Bihar/Nepal Border)",
     docNumber: "L898902C",
+    declaredName: "ANNA MARIA ERIKSSON",
+    declaredDob: "1969-08-06",
     description: "Official ICAO 9303 specimen with matching checksums and valid MRZ lines.",
     filename: "passport_icao9303_clean.png",
   },
@@ -39,6 +43,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "passport",
     checkpoint: "Panitanki ICP (WB/Nepal Border)",
     docNumber: "L898902C",
+    declaredName: "ANNA MARIA ERIKSSON",
+    declaredDob: "1969-08-06",
     description: "Altered DOB and invalid MRZ check digit. Elevated tampering risk score.",
     filename: "passport_tampered_mrz.png",
   },
@@ -49,6 +55,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "passport",
     checkpoint: "Panitanki ICP (WB/Nepal Border)",
     docNumber: "P9876543",
+    declaredName: "AMIT KUMAR",
+    declaredDob: "1969-08-06",
     description: "Document presented under different name at a cross-border checkpoint.",
     filename: "passport_syndicate_clash.png",
   },
@@ -59,6 +67,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "driving_licence",
     checkpoint: "Jogbani ICP (Bihar/Nepal Border)",
     docNumber: "DL-0420110012345",
+    declaredName: "SASHIKANT PATEL",
+    declaredDob: "1988-04-12",
     description: "Indian Union Driving Licence with state RTO format and validity.",
     filename: "driving_licence_morth.png",
   },
@@ -69,6 +79,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "pan",
     checkpoint: "Jaigaon ICP (WB/Bhutan Border)",
     docNumber: "ABCDE1234F",
+    declaredName: "ANANYA CHATTERJEE",
+    declaredDob: "1995-09-24",
     description: "Income Tax Department Permanent Account Number format with 4th-char check.",
     filename: "pan_card_income_tax.png",
   },
@@ -79,6 +91,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "aadhaar",
     checkpoint: "Panitanki ICP (WB/Nepal Border)",
     docNumber: "6543 8901 2345",
+    declaredName: "DIKHYANT SATAPATHY",
+    declaredDob: "1992-08-15",
     description: "Standard 12-digit UIDAI card with photo, DOB, gender and secure QR zone.",
     filename: "aadhaar_card_uidai_clean.png",
   },
@@ -89,6 +103,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "aadhaar",
     checkpoint: "Raxaul ICP (Bihar/Nepal Border)",
     docNumber: "6543 8901 2345",
+    declaredName: "DIKHYANT SATAPATHY",
+    declaredDob: "1992-08-15",
     description: "Digitally manipulated card with spliced portrait and spliced DOB zone.",
     filename: "aadhaar_card_tampered.png",
   },
@@ -99,6 +115,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "nepali_citizenship",
     checkpoint: "Panitanki ICP (WB/Nepal Border)",
     docNumber: "12-01-75-03421",
+    declaredName: "RAM BAHADUR THAPA",
+    declaredDob: "1995-10-01",
     description: "Government of Nepal Citizenship Certificate (नेपाली नागरिकता प्रमाणपत्र) with Bikram Sambat date.",
     filename: "nepali_nagarikta_clean.png",
   },
@@ -109,6 +127,8 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     docType: "nepali_citizenship",
     checkpoint: "Raxaul ICP (Bihar/Nepal Border)",
     docNumber: "12-01-75-03421",
+    declaredName: "RAM BAHADUR THAPA",
+    declaredDob: "1995-10-01",
     description: "Forged citizenship document with tampered issuing officer seal and invalid Bikram Sambat calendar date.",
     filename: "nepali_nagarikta_tampered.png",
   },

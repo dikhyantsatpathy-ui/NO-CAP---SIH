@@ -122,7 +122,7 @@ function FlaggedCard({
           {isSuper && flag.status === "flagged" && (
             <div className="adjudicate">
               <div className="adjudicate__note">
-                <span className="k">REVIEW NOTE</span>
+                <span className="k">Review note</span>
                 <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="supervisory finding (optional)" />
               </div>
               <div className="adjudicate__actions">
@@ -133,7 +133,7 @@ function FlaggedCard({
                     disabled={busyId === flag.id}
                     onClick={() => onAdjudicate(flag.id, d, note)}
                   >
-                    {busyId === flag.id ? "SIGNING…" : DECISION_META[d].label}
+                    {busyId === flag.id ? "Signing…" : DECISION_META[d].label}
                   </button>
                 ))}
               </div>
@@ -182,7 +182,7 @@ export function ReviewQueueView() {
     return (
       <div className="view">
         <section className="panel panel--muted">
-          <h2 className="panel__title">REVIEW QUEUE — SUPERVISORY ACCESS ONLY</h2>
+          <h2 className="panel__title">Review queue — supervisory access only</h2>
           <p className="panel__body">
             Flagged sessions are routed here and adjudicated only by an authorised supervisor.
             Your account is not registered as a supervisor.
@@ -197,14 +197,14 @@ export function ReviewQueueView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">REVIEW QUEUE — FLAGGED SESSIONS</h2>
+            <h2 className="panel__title">Review queue — flagged sessions</h2>
             <p className="panel__body">
               Adjudicate each flagged session. The decision is verified here and signed into the
               session ledger with the verdict embedded.
             </p>
           </div>
           <button className="btn" onClick={() => void load()}>
-            REFRESH
+            Refresh
           </button>
         </div>
 
@@ -222,7 +222,7 @@ export function ReviewQueueView() {
       </section>
 
       <section className="panel">
-        <h2 className="panel__title">RECENTLY SIGNED SESSIONS</h2>
+        <h2 className="panel__title">Recently signed sessions</h2>
         {settled.length === 0 ? (
           <p className="hint">No sessions signed yet.</p>
         ) : (

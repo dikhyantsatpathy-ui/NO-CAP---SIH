@@ -64,14 +64,14 @@ export function LedgerView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">PROTECTED SESSION LEDGER</h2>
+            <h2 className="panel__title">Protected session ledger</h2>
             <p className="panel__body">
               One chained SHA-256 block per closed session. The ledger stores only canonical
               digests and masked identifiers — no raw traveller data.
             </p>
           </div>
           <button className="btn" onClick={() => void load()}>
-            RELOAD
+            Reload
           </button>
         </div>
 
@@ -91,7 +91,7 @@ export function LedgerView() {
             </span>
           </div>
           <button className="btn btn--primary" disabled={verifying} onClick={() => void runVerify()}>
-            {verifying ? "VERIFYING…" : "VERIFY CHAIN"}
+            {verifying ? "Verifying…" : "Verify chain"}
           </button>
         </div>
         {verify && !verify.valid && (
@@ -133,7 +133,7 @@ export function LedgerView() {
                       className="btn btn--small"
                       onClick={() => setExpanded((cur) => (cur === b.id ? null : b.id))}
                     >
-                      {expanded === b.id ? "COLLAPSE" : "HASHES"}
+                      {expanded === b.id ? "Collapse" : "Hashes"}
                     </button>
                   </header>
                   <div className="block__grid">

@@ -26,6 +26,7 @@ temp/
 tmp/
 *.log
 *.db
+*.zip
 _srv*.log
 
 # ---- Downloaded / trained model weights (never committed; 128MB Vercel cap) ----

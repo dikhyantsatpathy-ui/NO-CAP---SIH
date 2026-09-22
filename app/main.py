@@ -661,15 +661,8 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
     try:
         _load_engine()
     except Exception as exc:
-        return {
-            "ran": False, "ai_suspected": False, "ai_score": 0,
-            "model": "Self-hosted ViT (AI vs Real)", "provider": "self-hosted",
-            "explanation": (
-                "The self-hosted model could not be started "
-                f"(onnxruntime or the model file is missing: {exc.__class__.__name__}). "
-                "Install onnxruntime and allow the model download, or switch providers."),
-            "latency_ms": 0, "raw": None,
-        }
+        logger.info(f"Self-hosted ONNX engine not available locally ({exc.__class__.__name__}). Falling back to heuristic detector.")
+        return heuristic_detect(image_bytes, filename)
     start = time.perf_counter()
     try:
         x = _preprocess(image_bytes)
@@ -692,13 +685,8 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
             "raw": {"logits": [float(x) for x in np.asarray(output).reshape(-1)[:2]]},
         }
     except Exception as exc:
-        ms = int((time.perf_counter() - start) * 1000)
-        return {
-            "ran": False, "ai_suspected": False, "ai_score": 0,
-            "model": "Self-hosted ViT (AI vs Real)", "provider": "self-hosted",
-            "explanation": f"The self-hosted model failed on this image ({exc.__class__.__name__}).",
-            "latency_ms": ms, "raw": None,
-        }
+        logger.info(f"Self-hosted model inference failed ({exc.__class__.__name__}). Falling back to heuristic detector.")
+        return heuristic_detect(image_bytes, filename)
 
 # ----------------------------------------------------------------------------
 # section: app/detectors/__init__.py (inlined)
@@ -792,14 +780,19 @@ def detect_image(image_bytes: bytes, filename: str = "") -> dict:
         return _empty("No image data was provided, so it could not be analysed for AI generation.")
     start = time.perf_counter()
     try:
-        is_doc = looks_like_scanned_document(image_bytes)
-        ms_scan = int(round((time.perf_counter() - start) * 1000))
-        if is_doc:
-            out = document_verdict(filename)
-            out["latency_ms"] = ms_scan
-            return out
         _load()
         result = _detector_ai(image_bytes, filename)
+        # If AI is suspected or score is elevated, that signal takes priority over document layout
+        if result.get("ai_suspected") or result.get("ai_score", 0) >= 35:
+            result["latency_ms"] = int(round((time.perf_counter() - start) * 1000))
+            return result
+
+        is_doc = looks_like_scanned_document(image_bytes)
+        if is_doc:
+            out = document_verdict(filename)
+            out["latency_ms"] = int(round((time.perf_counter() - start) * 1000))
+            return out
+
         # Always report the real measured elapsed time (even for the fast
         # heuristic) so the analytics latency graph is honest across backends.
         result["latency_ms"] = int(round((time.perf_counter() - start) * 1000))
@@ -1425,6 +1418,14 @@ _AI_SIGS = {
     "Ideogram": "the AI generator Ideogram",
     "Nano Banana": "the AI image model Nano Banana",
     "FLUX": "the AI image model FLUX",
+    "FLUX.1": "the AI image model FLUX.1",
+    "Automatic1111": "the AI generator interface Automatic1111",
+    "ChatGPT": "OpenAI's ChatGPT (DALL-E image generation)",
+    "Copilot": "Microsoft Copilot (Designer AI image generation)",
+    "Civitai": "the AI model platform Civitai",
+    "Photoleap": "the AI photo generator Photoleap",
+    "Kling": "the AI model Kling",
+    "Hailuo": "the AI model MiniMax Hailuo",
     "Imagen": "Google's AI image generator Imagen",
     "Firefly": "Adobe's AI model Firefly",
     "Topaz": "the AI upscaler Topaz",

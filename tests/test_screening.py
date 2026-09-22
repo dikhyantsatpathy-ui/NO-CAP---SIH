@@ -193,6 +193,23 @@ def test_module1_extracts_from_declared_pdf():
     assert res["ocr"]["ran"] is False
 
 
+def test_module1_declared_name_and_gender_backfill_when_no_ocr():
+    from extraction import extract_document
+    # No OCR engine (Vercel/offline): typed name/gender must reach the field
+    # map so cross-document comparison can compare them instead of INCOMPLETE.
+    res = extract_document(b"\xff\xd8\xff\xe0not-an-image", "doc.jpg", "aadhaar",
+                           {"name": "Dikhyant Satapathy", "dob": "1992-08-15",
+                            "gender": "Male"})
+    assert res["fields"].get("name") == "Dikhyant Satapathy"
+    assert res["fields"].get("gender") == "M"
+    assert res["fields"].get("dob") == "1992-08-15"
+    # Devanagari/mixed junk in a typed name is sanitized to a Latin form so
+    # digest comparison stays comparable, never fabricating a raw match.
+    res2 = extract_document(b"\xff\xd8\xff\xe0not-an-image", "doc.jpg", "aadhaar",
+                            {"name": "दीक्षांत शतपथी / DIKHYANT SATAPATHY"})
+    assert res2["fields"].get("name") == "DIKHYANT SATAPATHY"
+
+
 # ============================================================================
 # Module 2 — Validation (app/validation.py)
 # ============================================================================
@@ -281,6 +298,92 @@ def test_module4_no_document_face_reviews():
     res = face_verification(document_bytes=b"\xff\xd8notreal", live_frame=b"\xff\xd8also")
     assert res["verdict"] == "REVIEW" or res["verdict"] == "UNVERIFIED"
     assert res["score"] == 0
+
+
+# ============================================================================
+# Anti-Fraud Hard-Veto & Verdict Rules (app/screening.py)
+# ============================================================================
+
+def test_grade_hard_veto_flagged():
+    from screening import _grade
+    assert _grade(15, hard_flag=True) == "FLAGGED"
+    assert _grade(15, hard_flag=False, can_clear=True) == "CLEAR"
+    assert _grade(15, hard_flag=False, can_clear=False) == "REVIEW"
+    assert _grade(58, hard_flag=False, can_clear=True) == "FLAGGED"
+
+
+def test_screening_empty_or_fake_document_never_clears():
+    from unittest.mock import MagicMock
+    from screening import run_screening
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    db.query.return_value.order_by.return_value.first.return_value = None
+    db.query.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+    res = run_screening(db, b"fake content without any id", "fake.pdf", "other", "CP-1", {})
+    assert res["verdict"] in ("REVIEW", "FLAGGED")
+    assert res["verdict"] != "CLEAR"
+    assert any("machine-verifiable" in r.lower() for r in res["reasons"])
+
+
+def test_screening_declared_pan_mismatch_flags_or_reviews():
+    from unittest.mock import MagicMock
+    from screening import run_screening
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    db.query.return_value.order_by.return_value.first.return_value = None
+    db.query.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+    res = run_screening(db, b"This is definitely not a PAN card", "fake_pan.pdf", "pan", "CP-1", {})
+    assert res["verdict"] in ("REVIEW", "FLAGGED")
+    assert res["verdict"] != "CLEAR"
+    assert any("pan" in r.lower() and "mismatch" in r.lower() for r in res["reasons"])
+
+
+def test_screening_ai_suspected_hard_flags():
+    from unittest.mock import MagicMock, patch
+    from screening import run_screening
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    db.query.return_value.order_by.return_value.first.return_value = None
+    db.query.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+    ai_mock = {
+        "ran": True,
+        "ai_suspected": True,
+        "ai_score": 85,
+        "model": "ViT",
+        "provider": "self-hosted",
+        "explanation": "High confidence synthetic image",
+        "latency_ms": 10,
+    }
+    with patch("main.detect_image", return_value=ai_mock):
+        res = run_screening(db, b"\xff\xd8\xff\xe0mock_ai_image", "ai_fake.jpg", "pan", "CP-1", {})
+        assert res["verdict"] == "FLAGGED"
+        assert res["risk_score"] >= 70
+        assert any("ai" in r.lower() for r in res["reasons"])
+
+
+def test_screening_mrz_checksum_failure_hard_flags():
+    from unittest.mock import MagicMock, patch
+    from screening import run_screening
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    db.query.return_value.order_by.return_value.first.return_value = None
+    db.query.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+    extract_mock = {
+        "medium": "pdf",
+        "fields": {"passport": "K1234567", "mrz_valid": False},
+        "mrz": None,
+        "ocr": {"ran": True},
+        "pdf_no_text": False,
+    }
+    with patch("extraction.extract_document", return_value=extract_mock):
+        res = run_screening(db, b"dummy passport", "passport.pdf", "passport", "CP-1", {})
+        assert res["verdict"] == "FLAGGED"
+        assert res["risk_score"] >= 70
+        assert any("mrz" in r.lower() and "fail" in r.lower() for r in res["reasons"])
 
 
 if __name__ == "__main__":

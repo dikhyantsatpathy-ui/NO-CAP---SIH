@@ -56,7 +56,7 @@ export function StaffView() {
     return (
       <div className="view">
         <section className="panel panel--muted">
-          <h2 className="panel__title">STAFF &amp; ROLES — SUPERVISORY ACCESS ONLY</h2>
+          <h2 className="panel__title">Staff &amp; roles — supervisory access only</h2>
           <p className="panel__body">
             Role assignment is performed only by an authorised supervisor. Your account is not
             registered as a supervisor.
@@ -69,34 +69,32 @@ export function StaffView() {
   return (
     <div className="view">
       <section className="panel">
-        <h2 className="panel__title">ASSIGN OFFICER ROLE</h2>
+        <h2 className="panel__title">Assign officer role</h2>
         <p className="panel__body">
           Authorises a registered signer to operate the desk (designation gates the screening and
           review endpoints).
         </p>
         <div className="watch-add">
           <label className="field field--grow">
-            <span className="field__label">OFFICER EMAIL</span>
+            <span className="field__label">Officer email</span>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="officer@ssb.gov.in" />
           </label>
           <label className="field">
-            <span className="field__label">DESIGNATION</span>
+            <span className="field__label">Designation</span>
             <input value={designation} onChange={(e) => setDesignation(e.target.value)} placeholder="Assistant Commandant" />
           </label>
           <label className="field">
-            <span className="field__label">INSTITUTION</span>
+            <span className="field__label">Institution</span>
             <input value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="Sashastra Seema Bal" />
           </label>
           <button className="btn btn--primary" disabled={busy} onClick={() => void assign()}>
-            {busy ? "ASSIGNING…" : "ASSIGN ROLE"}
+            {busy ? "Assigning…" : "Assign role"}
           </button>
         </div>
       </section>
 
       <section className="panel">
-        <h2 className="panel__title">
-          OFFICER ROSTER ({signers.length} · {pending.length} pending)
-        </h2>
+        <h2 className="panel__title">Officer roster ({signers.length} · {pending.length} pending)</h2>
 
         {loading ? (
           <p className="hint">Loading roster…</p>
@@ -104,7 +102,7 @@ export function StaffView() {
           <>
             {pending.length > 0 && (
               <>
-                <h3 className="board__title">PENDING APPROVAL</h3>
+                <h3 className="board__title">Pending approval</h3>
                 <table className="tbl">
                   <tbody>
                     {pending.map((s) => (
@@ -125,7 +123,7 @@ export function StaffView() {
             )}
             {active.length > 0 && (
               <>
-                <h3 className="board__title">ACTIVE OFFICERS</h3>
+                <h3 className="board__title">Active officers</h3>
                 <table className="tbl">
                   <thead>
                     <tr>

@@ -103,7 +103,7 @@ function DocCard({ doc, index }: { doc: ScreenReport; index: number }) {
 function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Record<string, ZkpGate> | null }) {
   return (
     <section className="board">
-      <h3 className="board__title">CROSS-DOCUMENT COMPARISON</h3>
+      <h3 className="board__title">Cross-document comparison</h3>
       <table className="tbl tbl--compact">
         <thead>
           <tr>
@@ -137,7 +137,7 @@ function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Rec
       {zkp && Object.keys(zkp).length > 0 && (
         <div className="zkp">
           <div className="zkp__head">
-            <span className="k">PRIVACY GATES — ZERO-KNOWLEDGE ASSERTIONS</span>
+            <span className="k">Privacy gates — zero-knowledge assertions</span>
             <span className="chip chip--seal">DIGEST-ONLY</span>
           </div>
           <div className="zkp__grid">
@@ -202,9 +202,9 @@ function WebcamCapture({ onCapture, onCancel }: { onCapture: (f: File) => void; 
     <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Capture document from webcam">
       <div className="modal">
         <header className="modal__head">
-          <span className="modal__title">WEBCAM CAPTURE</span>
+          <span className="modal__title">Webcam capture</span>
           <button className="btn btn--small" onClick={onCancel}>
-            CLOSE
+            Close
           </button>
         </header>
         <div className="modal__body">
@@ -213,10 +213,10 @@ function WebcamCapture({ onCapture, onCancel }: { onCapture: (f: File) => void; 
         </div>
         <footer className="modal__foot">
           <button className="btn btn--primary" onClick={capture}>
-            CAPTURE FRAME
+            Capture frame
           </button>
           <button className="btn" onClick={onCancel}>
-            CANCEL
+            Cancel
           </button>
         </footer>
       </div>
@@ -253,9 +253,9 @@ function HandoverModal({
     <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Shift handover token">
       <div className="modal">
         <header className="modal__head">
-          <span className="modal__title">AIR-GAPPED SHIFT HANDOVER TOKEN</span>
+          <span className="modal__title">Air-gapped shift handover token</span>
           <button className="btn btn--small" onClick={onClose}>
-            CLOSE
+            Close
           </button>
         </header>
         <div className="modal__body">
@@ -294,16 +294,16 @@ function HandoverModal({
             </tbody>
           </table>
           <label className="field">
-            <span className="field__label">PACKET STRING</span>
+            <span className="field__label">Packet string</span>
             <textarea className="mono pkt-box" readOnly value={packet.qr_packet_string} rows={5} />
           </label>
         </div>
         <footer className="modal__foot">
           <button className="btn" onClick={() => void copy()}>
-            COPY
+            Copy
           </button>
           <button className="btn" onClick={download}>
-            DOWNLOAD JSON
+            Download JSON
           </button>
         </footer>
       </div>
@@ -407,6 +407,8 @@ export function DeskView() {
     try {
       setDocType(preset.docType);
       setDocNumber(preset.docNumber);
+      setDeclaredName(preset.declaredName);
+      setDeclaredDob(preset.declaredDob);
       const f = await generateSpecimenFile(preset);
       setFile(f);
       setFileKey((k) => k + 1);
@@ -513,7 +515,11 @@ export function DeskView() {
   const open = active && active.status === "open";
   const closed = active && active.status !== "open";
   const hasDiscrepancy = open && active.comparison?.verdict === "DISCREPANCY";
-  const canClose = active && active.comparison?.checks.some((c) => c.status !== "none");
+  // Any screened document enables close: on machines without a local OCR
+  // engine (Vercel/offline) the scanner reads no machine fields, so gating
+  // the desk on extracted fields would dead-end every session. The desk still
+  // fails closed on a confirmed cross-document DISCREPANCY.
+  const canClose = open && active.documents.length > 0;
 
   return (
     <div className="view">
@@ -522,14 +528,14 @@ export function DeskView() {
         <section className="panel panel--muted">
           <div className="panel__row">
             <div>
-              <h2 className="panel__title">DESK — NO ACTIVE SESSION</h2>
+              <h2 className="panel__title">Desk — no active session</h2>
               <p className="panel__body">
                 One traveller at a time. Open a session for the person at the counter, screen
                 their documents one by one, cross-compare, then approve or flag.
               </p>
             </div>
             <button className="btn btn--primary" onClick={() => setShowNewForm((v) => !v)}>
-              {showNewForm ? "CANCEL" : "OPEN NEW SESSION"}
+              {showNewForm ? "Cancel" : "Open new session"}
             </button>
           </div>
           {showNewForm && (
@@ -548,13 +554,13 @@ export function DeskView() {
                 </datalist>
               </label>
               <button className="btn btn--primary" disabled={busy} onClick={() => void openNewSession()}>
-                {busy ? "OPENING…" : "OPEN SESSION"}
+                {busy ? "Opening…" : "Open session"}
               </button>
             </div>
           )}
           {openList.length > 0 && (
             <div className="resume">
-              <span className="k">RESUME OPEN SESSION</span>
+              <span className="k">Resume open session</span>
               <table className="tbl tbl--compact">
                 <tbody>
                   {openList.map((s) => (
@@ -568,7 +574,7 @@ export function DeskView() {
                           disabled={resumingId === s.id}
                           onClick={() => void resumeSession(s.id)}
                         >
-                          {resumingId === s.id ? "RESUMING…" : "RESUME"}
+                          {resumingId === s.id ? "Resuming…" : "Resume"}
                         </button>
                       </td>
                     </tr>
@@ -609,7 +615,7 @@ export function DeskView() {
             </div>
             {open && (
               <button className="btn" onClick={() => void refreshOpen()} disabled={busy}>
-                REFRESH
+                Refresh
               </button>
             )}
           </div>
@@ -618,10 +624,10 @@ export function DeskView() {
             <>
               {/* --- Document intake -------------------------------------- */}
               <div className="intake">
-                <h3 className="board__title">SCREEN DOCUMENT INTO SESSION</h3>
+                <h3 className="board__title">Screen document into session</h3>
                 <div className="intake__form">
                   <label className="field">
-                    <span className="field__label">DOCUMENT TYPE</span>
+                    <span className="field__label">Document type</span>
                     <select value={docType} onChange={(e) => setDocType(e.target.value as ScreenDocType)}>
                       {SCREEN_DOC_TYPES.map((t) => (
                         <option key={t} value={t}>
@@ -631,7 +637,7 @@ export function DeskView() {
                     </select>
                   </label>
                   <label className="field">
-                    <span className="field__label">DECLARED NUMBER</span>
+                    <span className="field__label">Declared number</span>
                     <input
                       value={docNumber}
                       onChange={(e) => setDocNumber(e.target.value)}
@@ -639,11 +645,11 @@ export function DeskView() {
                     />
                   </label>
                   <label className="field">
-                    <span className="field__label">DECLARED NAME</span>
+                    <span className="field__label">Declared name</span>
                     <input value={declaredName} onChange={(e) => setDeclaredName(e.target.value)} placeholder="optional" />
                   </label>
                   <label className="field">
-                    <span className="field__label">DECLARED DOB</span>
+                    <span className="field__label">Declared DOB</span>
                     <input value={declaredDob} onChange={(e) => setDeclaredDob(e.target.value)} placeholder="YYYY-MM-DD" />
                   </label>
                   <label className="dropzone">
@@ -653,18 +659,18 @@ export function DeskView() {
                       accept="image/*,.pdf"
                       onChange={(e) => setFile(e.target.files?.[0] || null)}
                     />
-                    <span className="dropzone__label">{file ? file.name : "ATTACH DOCUMENT"}</span>
+                    <span className="dropzone__label">{file ? file.name : "Attach document"}</span>
                     <span className="dropzone__hint">JPEG / PNG / WEBP / PDF</span>
                   </label>
                   <button className="btn" onClick={() => setShowWebcam(true)}>
-                    SCAN FROM WEBCAM
+                    Scan from webcam
                   </button>
                   <button className="btn btn--primary btn--block" disabled={busy} onClick={() => void screenIntoSession()}>
-                    {busy ? "SCREENING…" : "SCREEN INTO SESSION"}
+                    {busy ? "Screening…" : "Screen into session"}
                   </button>
                 </div>
                 <div className="specimen-row">
-                  <span className="k">DEMO SPECIMENS</span>
+                  <span className="k">Demo specimens</span>
                   {SPECIMEN_PRESETS.map((p) => (
                     <button
                       key={p.id}
@@ -686,7 +692,7 @@ export function DeskView() {
               {/* --- Documents in session --------------------------------- */}
               {active.documents.length > 0 ? (
                 <div className="docs">
-                  <h3 className="board__title">DOCUMENTS IN SESSION ({active.documents.length})</h3>
+                  <h3 className="board__title">Documents in session ({active.documents.length})</h3>
                   <div className="docs__grid">
                     {active.documents.map((d, i) => (
                       <DocCard key={d.id} doc={d} index={i} />
@@ -705,7 +711,7 @@ export function DeskView() {
               {active.documents.length > 0 && (
                 <section className="approval">
                   <div className="approval__note">
-                    <span className="k">OFFICER NOTE</span>
+                    <span className="k">Officer note</span>
                     <input
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
@@ -714,16 +720,16 @@ export function DeskView() {
                   </div>
                   <div className="approval__actions">
                     {canClose && hasDiscrepancy && (
-                      <span className="chip chip--bad">DISCREPANCY — APPROVE LOCKED, FLAG FOR REVIEW</span>
+                      <span className="chip chip--bad">Discrepancy — approval locked; flag for review</span>
                     )}
                     {canClose && !hasDiscrepancy && (
                       <button className="btn btn--approve" disabled={busy} onClick={() => void closeSessionNow("approve")}>
-                        {busy ? "SIGNING…" : "APPROVE · SIGN INTO LEDGER"}
+                        {busy ? "Signing…" : "Approve · sign into ledger"}
                       </button>
                     )}
                     {canClose && (
                       <button className="btn btn--flag" disabled={busy} onClick={() => void closeSessionNow("flag")}>
-                        FLAG FOR REVIEW
+                        Flag for review
                       </button>
                     )}
                   </div>
@@ -750,23 +756,23 @@ export function DeskView() {
                 <div className="signed__headtext">
                   <span className="signed__title">
                     {active.status === "approved"
-                      ? "SESSION APPROVED — SIGNED INTO LEDGER"
+                      ? "Session approved — signed into ledger"
                       : active.status === "rejected"
-                        ? "SESSION REJECTED — SIGNED AS EVIDENCE"
-                        : "SESSION FLAGGED — AWAITING SUPERVISORY REVIEW"}
+                        ? "Session rejected — signed as evidence"
+                        : "Session flagged — awaiting supervisory review"}
                   </span>
-                  <span className="signed__sub mono">IMMUTABLE CHAINED RECORD · ZERO RAW IDENTIFIERS STORED</span>
+                  <span className="signed__sub mono">Immutable chained record · zero raw identifiers stored</span>
                 </div>
                 <span className="chip chip--seal">SHA-256</span>
               </header>
 
               <div className="signed__hashgrid">
                 <div className="signed__hashcell">
-                  <span className="k">SIGNATURE · THIS BLOCK</span>
+                  <span className="k">Signature · this block</span>
                   <code className="hash hash--big mono">{active.block_hash}</code>
                 </div>
                 <div className="signed__hashcell">
-                  <span className="k">LINKED FROM · PREVIOUS BLOCK</span>
+                  <span className="k">Linked from · previous block</span>
                   <code className="hash mono">{active.prev_hash || "GENESIS"}</code>
                 </div>
               </div>
@@ -785,13 +791,13 @@ export function DeskView() {
                   className="btn btn--ghost"
                   onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
                 >
-                  BSA 2023 · S.65B COURT CERTIFICATE
+                  BSA 2023 · s.65B court certificate
                 </button>
                 <button className="btn btn--ghost" disabled={handoverBusy} onClick={() => void openHandover()}>
-                  {handoverBusy ? "SEALING…" : "AIR-GAPPED HANDOVER TOKEN"}
+                  {handoverBusy ? "Sealing…" : "Air-gapped handover token"}
                 </button>
                 <button className="btn btn--primary" onClick={() => void resetDesk()}>
-                  START NEXT TRAVELLER
+                  Start next traveller
                 </button>
               </footer>
             </div>
