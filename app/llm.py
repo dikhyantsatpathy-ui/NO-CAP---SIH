@@ -25,15 +25,22 @@ def get_client():
     if _OpenAI is None:
         return None  # openai SDK not installed
 
-    url = os.getenv("LITELLM_URL", "http://localhost:4000")
+    url = (os.getenv("LITELLM_URL") or "").strip()
+    if not url:
+        return None  # no proxy configured — never dial a hardcoded default
+
     key = os.getenv("LITELLM_API_KEY", "dummy-key")
 
-    if not url:
-        return None
-
+    # Tight, bounded transport: a dead or slow proxy must not stall the desk.
+    # max_retries=0 stops the SDK's internal retry loop (default 2 retries,
+    # each waiting out the full timeout) that turned an absent proxy into a
+    # multi-minute "Screening…". 25s is generous for a real local proxy while
+    # keeping the desk responsive when one is misconfigured.
     _client = _OpenAI(
         base_url=url,
         api_key=key,
+        timeout=25.0,
+        max_retries=0,
     )
     return _client
 

@@ -10,6 +10,138 @@
 
 import type { ScreenDocType } from "../api";
 
+// --------------------------------------------------------------------------- //
+// Rendering toolkit: deterministic PRNG, realistic paper texture, and the
+// artifact primitives used to make the *tampered* presets visibly, forensically
+// detectable (clone-stamp + texture-spliced photo) rather than merely painted
+// with warning colors. Clean presets render with untouched genuine-looking
+// grain so Module 3 (ELA / spectral / sensor-noise / copy-move) behaves the way
+// it does on real scans: passes, instead of flagging every flat synthetic.
+// --------------------------------------------------------------------------- //
+
+/** Mulberry32 — deterministic, so specimens render identically on every load
+ *  and automated QA (screenshot diffing / probe verdicts) is stable. */
+function prng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seedFor(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Build a low-resolution greyscale noise field ("paper grain") and composite
+ *  it with `soft-light`. The field is spatially correlated (pink-ish), so it
+ *  survives re-encoding (ELA stays LOW), decorrelates duplicated drawn shapes
+ *  (copy-move stops firing on clean cards), and smears the pixel-grid FFT
+ *  spikes — while still reading as a genuine capture to the document heuristic.
+ *
+ *  `rect` optionally restricts the grain to one zone; `alpha`/`spread` control
+ *  strength, used to give tampered photo regions a *different* texture so the
+ *  sensor-noise consistency check sees a splice. */
+function applyPaperTexture(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  seed: number,
+  rect: { x: number; y: number; w: number; h: number } | null,
+  alpha = 0.32,
+  spread = 90,
+): void {
+  const { x, y, w, h } = rect ?? { x: 0, y: 0, w: width, h: height };
+  const cellW = Math.max(8, Math.floor(w / 12));
+  const cellH = Math.max(8, Math.floor(h / 12));
+  const field = document.createElement("canvas");
+  field.width = cellW;
+  field.height = cellH;
+  const fctx = field.getContext("2d");
+  if (!fctx) return;
+  const img = fctx.createImageData(cellW, cellH);
+  const rnd = prng(seed);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 128 + Math.round((rnd() - 0.5) * 2 * spread);
+    img.data[i] = v;
+    img.data[i + 1] = v;
+    img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  fctx.putImageData(img, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.globalCompositeOperation = "soft-light";
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(field, x, y, w, h);
+  ctx.restore();
+}
+
+/** Sensor-style capture grain arranged as small 4px correlated tiles plus a
+ *  light per-pixel jitter. Real sensor/scan noise is spatially correlated, so
+ *  it survives the server's downscale-and-compare step: repeated *shapes* (MRZ
+ *  characters, QR finders, stamp borders) then differ from one another by the
+ *  grain, while a pixel-exact clone stamp stays exactly identical — which is
+ *  precisely the contrast the copy-move detector needs. `rect` restricts the
+ *  pass to one zone (used to texture-splice tampered photos), and `amp` is the
+ *  ± grey deviation per tile. */
+function applyPixelGrain(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  seed: number,
+  rect: { x: number; y: number; w: number; h: number } | null,
+  amp = 14,
+): void {
+  const { x, y, w, h } = rect ?? { x: 0, y: 0, w: width, h: height };
+  const img = ctx.getImageData(x, y, w, h);
+  const d = img.data;
+  const rnd = prng(seed);
+  const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
+  const TILE = 4;
+  const jitter = Math.max(1, Math.round(amp * 0.12));
+  for (let ty = y; ty < y + h; ty += TILE) {
+    for (let tx = x; tx < x + w; tx += TILE) {
+      const tileV = (rnd() - 0.5) * 2 * amp;
+      const th = Math.min(TILE, y + h - ty);
+      const tw = Math.min(TILE, x + w - tx);
+      for (let r = 0; r < th; r++) {
+        for (let c = 0; c < tw; c++) {
+          const idx = ((ty + r) * width + (tx + c)) * 4;
+          const n = Math.round(tileV + (rnd() - 0.5) * 2 * jitter);
+          d[idx] = clamp255(d[idx] + n);
+          d[idx + 1] = clamp255(d[idx + 1] + n);
+          d[idx + 2] = clamp255(d[idx + 2] + n);
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, x, y);
+}
+
+/** Clone-stamp: copy a rectangular region pixel-exactly to a destination.
+ *  Used by tampered presets to simulate a copy-move forgery — the duplicated
+ *  block is pixel-identical (including its grain), which the Module 3
+ *  copy-move detector flags as a clone. */
+function cloneRegion(
+  ctx: CanvasRenderingContext2D,
+  src: { x: number; y: number; w: number; h: number },
+  dx: number,
+  dy: number,
+): void {
+  const img = ctx.getImageData(src.x, src.y, src.w, src.h);
+  ctx.putImageData(img, dx, dy);
+}
+
 export interface SpecimenPreset {
   id: string;
   title: string;
@@ -78,7 +210,7 @@ export const SPECIMEN_PRESETS: SpecimenPreset[] = [
     badge: "ITD Verified",
     docType: "pan",
     checkpoint: "Jaigaon ICP (WB/Bhutan Border)",
-    docNumber: "ABCDE1234F",
+    docNumber: "ABCDE1234Y",
     declaredName: "ANANYA CHATTERJEE",
     declaredDob: "1995-09-24",
     description: "Income Tax Department Permanent Account Number format with 4th-char check.",
@@ -527,6 +659,36 @@ export async function generateSpecimenFile(preset: SpecimenPreset): Promise<File
   ctx.fillStyle = "rgba(100, 116, 139, 0.15)";
   ctx.font = "bold 32px sans-serif";
   ctx.fillText("SSB NISCHAY · TEST SPECIMEN", 200, 390);
+
+  // ---- Realistic capture texture (all specimens) --------------------------
+  // Genuine scans carry paper/sensor grain; without it every flat synthetic
+  // render trips the Module 3 forensic suite. Lay down a soft paper-fiber
+  // field plus independent per-pixel sensor grain so clean presets behave like
+  // real captures and the copy-move detector stops matching drawn shapes.
+  applyPaperTexture(ctx, canvas.width, canvas.height, seedFor(preset.id), null, 0.42, 150);
+  applyPixelGrain(ctx, canvas.width, canvas.height, seedFor(preset.id + ":px"), null, 14);
+
+  // ---- Tampered presets: forensically *visible* artifacts ----------------
+  const t = preset.id;
+  if (t === "passport_tampered" || t === "aadhaar_tampered" || t === "nepali_citizenship_tampered") {
+    // 1) Texture-spliced portrait: re-grain the photo zone with a *different*
+    //    noise seed AND a much stronger amplitude so the sensor-noise (PRNU)
+    //    consistency check sees an obviously foreign patch pasted on the card.
+    const photo =
+      t === "passport_tampered" ? { x: 50, y: 120, w: 180, h: 230 }
+      : t === "aadhaar_tampered" ? { x: 50, y: 125, w: 175, h: 220 }
+      : { x: 50, y: 115, w: 160, h: 200 };
+    applyPaperTexture(ctx, canvas.width, canvas.height, seedFor(t + ":splice"), photo, 0.85, 220);
+    applyPixelGrain(ctx, canvas.width, canvas.height, seedFor(t + ":splicepx"), photo, 28);
+
+    // 2) Copy-move clone stamp: pixel-exact duplicate of the portrait pasted in
+    //    the top-right corner (away from the sensor-noise measurement patches).
+    //    Offset is +656px (41x) so the duplicate lands exactly on the Module 3
+    //    scan grid and reads as a byte-identical twin region.
+    if (t === "passport_tampered") cloneRegion(ctx, photo, 706, 120);
+    else if (t === "aadhaar_tampered") cloneRegion(ctx, photo, 706, 125);
+    else cloneRegion(ctx, photo, 706, 115);
+  }
 
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {

@@ -150,7 +150,7 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
             payload = {}
             if isinstance(document_photo, bytes):
                 import base64

@@ -22,6 +22,7 @@ that interactive liveness (blink / device motion) belongs in the webcam flow.
 
 import base64
 import io
+import random
 import time
 import numpy as np
 from PIL import Image
@@ -123,8 +124,29 @@ def ela(data: bytes, quality: int = 92, preview: int = 128):
     grid = _block_grid(diff)
     mean_diff = float(diff.mean())
     local_baseline = float(grid.mean()) + 2.0 * float(grid.std())
-    damaged_blocks = float((grid > max(local_baseline, 1.0)).mean())
-    status = "HIGH" if damaged_blocks > 0.35 else ("MEDIUM" if damaged_blocks > 0.18 else "LOW")
+    dam_bool = grid > max(local_baseline, 1.0)
+    damaged_blocks = float(dam_bool.mean())
+
+    # Localized tamper detection: check 3x3 block neighborhoods so localized
+    # alterations (altered date/name/photo) don't get diluted by large empty document margins.
+    if grid.shape[0] >= 3 and grid.shape[1] >= 3:
+        dam_f = dam_bool.astype(np.float32)
+        local_cluster = (
+            dam_f[:-2, :-2] + dam_f[:-2, 1:-1] + dam_f[:-2, 2:] +
+            dam_f[1:-1, :-2] + dam_f[1:-1, 1:-1] + dam_f[1:-1, 2:] +
+            dam_f[2:, :-2] + dam_f[2:, 1:-1] + dam_f[2:, 2:]
+        ) / 9.0
+        peak_cluster_damage = float(local_cluster.max())
+    else:
+        peak_cluster_damage = damaged_blocks
+
+    localized_tamper = peak_cluster_damage > 0.55
+    if damaged_blocks > 0.30 or (damaged_blocks > 0.10 and localized_tamper):
+        status = "HIGH"
+    elif damaged_blocks > 0.15 or localized_tamper:
+        status = "MEDIUM"
+    else:
+        status = "LOW"
 
     # Hotness masks tie the picture to the verdict: a block only lights up when
     # its local error exceeds the image's own baseline, so a pristine JPEG is
@@ -264,7 +286,12 @@ def spectral_analysis(data: bytes | np.ndarray) -> dict:
     total_energy = float(mag.sum()) + 1e-9
     high_freq_ratio = high_energy / total_energy
 
-    # Peak-to-Average Power Ratio (PAPR) in high frequencies
+    # Peak-to-Average Power Ratio (PAPR) in high frequencies. A genuine capture
+    # spreads energy broadband (paper grain, halftone, text edges); generative
+    # upsampling grids and screen-recapture moiré concentrate energy into sharp
+    # discrete spikes, so PAPR — not the blanket high-frequency share — is the
+    # discriminator. Dense text pages legitimately carry >0.45 high-frequency
+    # energy, so the ratio clause is kept as a high bar, not a hard fail.
     high_vals = mag[high_mask]
     if len(high_vals) > 0:
         high_mean = float(high_vals.mean()) + 1e-9
@@ -273,8 +300,8 @@ def spectral_analysis(data: bytes | np.ndarray) -> dict:
     else:
         papr = 1.0
 
-    is_anomaly = bool(papr > 18.0 or high_freq_ratio > 0.45)
-    status = "ANOMALOUS_GRID" if papr > 22.0 else ("PERIODIC_SPIKES" if is_anomaly else "NORMAL")
+    is_anomaly = bool(papr > 24.0 or high_freq_ratio > 0.65)
+    status = "ANOMALOUS_GRID" if papr > 28.0 else ("PERIODIC_SPIKES" if is_anomaly else "NORMAL")
 
     return {
         "papr": round(float(papr), 2),
@@ -329,19 +356,38 @@ def noise_consistency(data: bytes | np.ndarray, rois: list[dict] | None = None) 
     # Substrate patch: bottom right quadrant away from photos/stamps
     substrate_patch = residual[int(h * 0.6) :, int(w * 0.5) :]
 
-    var_portrait = float(portrait_patch.var()) if portrait_patch.size > 100 else 1.0
-    var_substrate = float(substrate_patch.var()) if substrate_patch.size > 100 else 1.0
+    # Robust noise estimate: median of 16x16 sub-block variances. Whole-patch
+    # variance is dominated by localized content (a portrait silhouette vs a
+    # blank margin) and falsely explodes the ratio on honest cards; a spliced
+    # photo raises the noise *floor* across a wide area, which the median
+    # captures without being hijacked by a few busy blocks.
+    def _noise_var(patch: np.ndarray) -> float:
+        if patch.size < 256:
+            return 1.0
+        m = patch.shape[0] - patch.shape[0] % 16
+        n = patch.shape[1] - patch.shape[1] % 16
+        if m < 16 or n < 16:
+            return 1.0
+        blocks = patch[:m, :n].reshape(m // 16, 16, n // 16, 16)
+        vs = blocks.var(axis=(1, 3))
+        return float(np.median(vs))
 
+    var_portrait = _noise_var(portrait_patch)
+    var_substrate = _noise_var(substrate_patch)
     noise_ratio = var_portrait / (var_substrate + 1e-6)
 
-    # Guard against flat / digital synthetic cards where both patches have near-zero variance
-    if var_portrait < 1.0 and var_substrate < 1.0:
+    # A real noise floor must exist in BOTH zones before a ratio is meaningful:
+    # flat / digital cards carry no capture noise to compare, so they read
+    # INCONCLUSIVE rather than as a splice (a genuinely spliced photo has noise
+    # on both sides of the seam — the takeover zone and the rest of the scan).
+    if var_portrait < 1.5 or var_substrate < 1.5:
         is_disparity = False
+        status = "INCONCLUSIVE"
         noise_ratio = 1.0
     else:
         # Physical bounds for natural scanning: 0.25 <= noise_ratio <= 3.5
         is_disparity = bool(noise_ratio > 3.5 or noise_ratio < 0.25)
-    status = "SUSPECT_PHOTO_SPLICE" if is_disparity else "CONSISTENT"
+        status = "SUSPECT_PHOTO_SPLICE" if is_disparity else "CONSISTENT"
 
     return {
         "portrait_noise_var": round(var_portrait, 2),
@@ -352,6 +398,160 @@ def noise_consistency(data: bytes | np.ndarray, rois: list[dict] | None = None) 
         "detail": (
             f"Sensor noise ratio {noise_ratio:.2f} (portrait: {var_portrait:.1f}, substrate: {var_substrate:.1f}) — "
             + ("Splicing/photo-replacement artifact suspected." if is_disparity else "Uniform sensor noise verified.")
+        ),
+    }
+
+
+def copy_move_detection(data: bytes | np.ndarray, block_size: int = 16, max_dim: int = 1200) -> dict:
+    """Fast spatial block-feature copy-move / clone-stamp forgery detection.
+    Detects duplicated regions where parts of the document (text, signatures, or
+    background patterns) have been duplicated/cloned to cover alterations.
+    """
+    if isinstance(data, (bytes, bytearray)):
+        try:
+            rgb = _open_rgb(data)
+        except Exception:
+            return {"detected": False, "status": "UNREADABLE", "clones_found": 0}
+    elif isinstance(data, np.ndarray):
+        rgb = data
+    else:
+        return {"detected": False, "status": "INVALID", "clones_found": 0}
+
+    # Scan at native resolution whenever feasible. A duplicate region is only
+    # pixel-identical to its source at the exact full-res offset: bilinear
+    # downsampling shifts pixel phases and even an 8px block grid can skip the
+    # twin window. Pathological captures are shrunk with NEAREST integer
+    # halving, which preserves pixel identity and offset alignment.
+    h, w = rgb.shape[:2]
+    if h < 32 or w < 32:
+        return {"detected": False, "status": "LOW_RESOLUTION", "clones_found": 0}
+
+    if max(h, w) <= max_dim:
+        gray = _to_gray(rgb)
+    else:
+        cur_w, cur_h = w, h
+        while max(cur_w, cur_h) > max_dim:
+            cur_w, cur_h = max(16, cur_w // 2), max(16, cur_h // 2)
+        img_small = Image.fromarray(rgb).resize((cur_w, cur_h), Image.NEAREST)
+        gray = _to_gray(np.asarray(img_small))
+
+    gh, gw = gray.shape
+    step = 8
+    bs = block_size
+    if gh < bs or gw < bs:
+        return {"detected": False, "status": "LOW_RESOLUTION", "clones_found": 0}
+
+    # Extract non-uniform blocks and compute compact hash/features:
+    blocks = []
+    coords = []
+    for y in range(0, gh - bs + 1, step):
+        for x in range(0, gw - bs + 1, step):
+            patch = gray[y : y + bs, x : x + bs]
+            var = float(patch.var())
+            # Skip plain uniform / blank background areas (white paper / flat black)
+            if var < 18.0:
+                continue
+            mean = float(patch.mean())
+            dx = float(np.abs(patch[:, 1:] - patch[:, :-1]).mean())
+            dy = float(np.abs(patch[1:, :] - patch[:-1, :]).mean())
+            blocks.append((int(mean * 2), int(var), int(dx * 4), int(dy * 4)))
+            coords.append((y, x))
+
+    if len(blocks) < 8:
+        return {"detected": False, "status": "CLEAN", "clones_found": 0, "detail": "Document has uniform natural surface."}
+
+    # Cluster blocks by feature bucket
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for idx, feat in enumerate(blocks):
+        key = (feat[0] // 4, feat[1] // 16, feat[2] // 4, feat[3] // 4)
+        buckets[key].append(idx)
+
+    min_dist_sq = (bs * 2) ** 2  # Don't match immediately adjacent blocks
+    vector_counts = defaultdict(int)
+    matches = 0
+
+    # Adaptive fidelity gate: a "clone" means *statistically identical* pixels,
+    # not merely similar shapes. Genuine cards repeat styled elements (MRZ
+    # glyphs, stamp borders, QR finders); identical-looking but differently
+    # noised blocks sit near the image's own inter-block noise floor. Estimate
+    # that floor from random pairs of feature-DISTINCT blocks, then require a
+    # candidate duplicate to sit far below it. Pixel-exact clone stamps land at
+    # ~0; repeated-but-grainy content lands at the floor.
+    keys = list(buckets.keys())
+    floor_maes = []
+    rng = random.Random(11)
+    for _ in range(160):
+        if len(keys) < 2:
+            break
+        ka, kb = rng.sample(keys, 2)
+        ia = rng.choice(buckets[ka])
+        ib = rng.choice(buckets[kb])
+        y1, x1 = coords[ia]
+        y2, x2 = coords[ib]
+        if (y2 - y1) ** 2 + (x2 - x1) ** 2 < (bs * 3) ** 2:
+            continue  # too-close pairs are unreliable samples
+        p1 = gray[y1 : y1 + bs, x1 : x1 + bs]
+        p2 = gray[y2 : y2 + bs, x2 : x2 + bs]
+        floor_maes.append(float(np.abs(p1 - p2).mean()))
+    if floor_maes:
+        floor_maes.sort()
+        noise_floor = float(floor_maes[len(floor_maes) // 2])
+    else:
+        noise_floor = 1.0
+    # A clone stamp is *statistically identical*: PNG-lossless twins sit at
+    # MAE ~0. Genuinely distinct blocks — even the most similar repeated glyphs
+    # or stamp borders — always differ by at least the capture-grain amplitude
+    # (measured ~2+ grey here, which also dominates "feature" similarity).
+    # A tight fixed gate cleanly separates true duplicates from look-alike
+    # repeats; no document scanner produces two regions with pixel-identical
+    # but unrelated content.
+    fidelity = 2.0
+
+    for key, indices in buckets.items():
+        n_bucket = len(indices)
+        if n_bucket < 2:
+            continue
+        # A clone stamp duplicates whole regions, so the duplicate blocks all
+        # collapse into the SAME feature bucket (often a large one after sensor
+        # grain dominates dx/dy/var). Hard-capping bucket size would silently
+        # discard the very pairs we are hunting — instead sample a bounded
+        # number of pairs per bucket (uniform stride); pixel-identical pairs
+        # from a clone stamp all share ONE displacement vector, which the
+        # parallel-clone gate below catches even in a small sample.
+        pairs = [(indices[a], indices[b])
+                 for a in range(n_bucket) for b in range(a + 1, n_bucket)]
+        if len(pairs) > 40:
+            stride = len(pairs) / 40.0
+            pairs = [pairs[int(i * stride)] for i in range(40)]
+        for i, j in pairs:
+            y1, x1 = coords[i]
+            y2, x2 = coords[j]
+            dy, dx = y2 - y1, x2 - x1
+            dist_sq = dy * dy + dx * dx
+            if dist_sq >= min_dist_sq:
+                p1 = gray[y1 : y1 + bs, x1 : x1 + bs]
+                p2 = gray[y2 : y2 + bs, x2 : x2 + bs]
+                mae = float(np.abs(p1 - p2).mean())
+                if mae < fidelity:  # far below the doc's own noise floor
+                    v_key = (dy // 8 * 8, dx // 8 * 8)
+                    vector_counts[v_key] += 1
+                    matches += 1
+
+    max_parallel_clones = max(vector_counts.values()) if vector_counts else 0
+    clone_detected = max_parallel_clones >= 4 or matches >= 8
+    status = "CLONE_DETECTED" if clone_detected else "CLEAN"
+
+    return {
+        "detected": clone_detected,
+        "status": status,
+        "clones_found": matches,
+        "dominant_vector_count": max_parallel_clones,
+        "noise_floor": round(noise_floor, 2),
+        "fidelity": round(fidelity, 2),
+        "detail": (
+            f"Copy-move clone forgery detected: {matches} duplicate block patches identified across distinct zones."
+            if clone_detected else "No copy-move cloning or clone-stamp duplication detected."
         ),
     }
 
@@ -539,6 +739,7 @@ def forensics_report(data: bytes):
         "liveness": liveness_signals(data),
         "spectral": spectral_analysis(data),
         "noise_consistency": noise_consistency(data, rois),
+        "copy_move": copy_move_detection(data),
     }
 
 

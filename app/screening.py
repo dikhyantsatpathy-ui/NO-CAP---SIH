@@ -78,7 +78,12 @@ def mrz_checkdigit(field: str) -> int:
 
 _PAN_RE = re.compile(r"\b[A-Z]{5}\d{4}[A-Z](?![0-9])")
 _DL_RE = re.compile(r"\b[A-Z]{2}\d{2}[ ]?\d{4}[ ]?\d{7}(?![0-9])")
-_PASSPORT_LITE_RE = re.compile(r"\b[A-Z][0-9]{7}(?![0-9])")
+# Passport numbers on Indian/ICAO documents come in two shapes: the classic
+# 9-char "1 letter + 6 digits + 1 letter" (e.g. L898902C — the ICAO Doc 9303
+# specimen) and the shorter 8-char "1 letter + 7 digits" (e.g. P9876543).
+# Only the 8-char form matched before, silently failing to extract the
+# standard 9-char format from declared values and OCR text.
+_PASSPORT_LITE_RE = re.compile(r"\b[A-Z][0-9]{6,7}[A-Z]?\b")
 _EPIC_RE = re.compile(r"\b[A-Z]{3}\d{7}(?![0-9])")
 _PHONE_RE = re.compile(r"\b[6-9]\d{9}(?![0-9])")
 _DOB_RE = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b|\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
@@ -343,7 +348,9 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     ai_det, document_aware = {"ran": False, "ai_suspected": False, "ai_score": 0,
                               "model": None, "provider": None, "explanation": "No image.",
                               "latency_ms": 0, "document_aware": None}, None
-    if ext in ("jpg", "jpeg", "png", "webp", "bmp"):
+    is_image = ext in ("jpg", "jpeg", "png", "webp", "bmp") or data.startswith((b"\x89PNG", b"\xff\xd8", b"RIFF"))
+    is_pdf = ext == "pdf" or data.startswith(b"%PDF")
+    if is_image or is_pdf:
         # Lazy import to avoid circular dependency (screening <- main <- screening).
         try:
             from app.main import detect_image, looks_like_scanned_document
@@ -354,7 +361,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         except Exception:
             ai_det = {**ai_det, "explanation": "AI detector unavailable."}
         try:
-            document_aware = looks_like_scanned_document(data)
+            document_aware = looks_like_scanned_document(data) if is_image else None
         except Exception:
             document_aware = None
 
@@ -379,7 +386,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     )
 
     # ---- Module 3: Tampering (visual forensics on images) ------------------
-    if ext in ("jpg", "jpeg", "png", "webp", "bmp"):
+    if is_image:
         tamper_res = tamper_analysis(data, {**ai_det, "document_aware": document_aware},
                                      document_aware, doc_type or "")
     else:
@@ -391,7 +398,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     # face_verification computes internally. dob/issue_date feed the age-aware
     # threshold logic ('Age Drift Compensation Active').
     face_res = face_verification(
-        document_bytes=data if ext in ("jpg", "jpeg", "png", "webp", "bmp") else None,
+        document_bytes=data if is_image else None,
         live_frame=live_frame,
         doc_type=doc_type or "",
         document_photo_b64=extract_res.get("aadhaar_photo"),
@@ -457,8 +464,13 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                        f"the card's own field zone ({mask(aadhaar_no)}).")
         risk -= 3
     elif "aadhaar" in doc_type_clean and not aadhaar_no:
-        reasons.append("DECLARED DOCUMENT MISMATCH: Aadhaar declared, but no 12-digit UIDAI number could be read from the card.")
-        risk = max(risk + 30, 55)
+        # No OCR (Vercel/serverless ships none; local boxes may lack tesseract):
+        # "could not read the number zone" is a capacity gap, not proof of a
+        # forged card — the officer must verify the printed number by eye. Kept
+        # as an elevated-uncertainty signal, NOT a structural mismatch.
+        reasons.append("Aadhaar declared but the 12-digit number zone could not be "
+                       "machine-read (OCR unavailable) — verify the printed number by eye.")
+        risk = max(risk, 35)
         can_clear = False
 
     if voter:
@@ -535,16 +547,19 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             pass
 
     # AI Detection Evaluation
-    if ai_det.get("ai_suspected") or ai_det.get("ai_score", 0) >= 50:
+    if ai_det.get("ai_suspected") or ai_det.get("ai_score", 0) >= 50 or (ai_det.get("raw") or {}).get("kind") in ("ai", "edited"):
         score_val = ai_det.get("ai_score", 0)
         reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
-        risk = max(risk + 50, 78)
+        risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
     elif ai_det.get("ai_score", 0) >= 30:
         score_val = ai_det.get("ai_score", 0)
         reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
-        risk = max(risk + 20, 45)
+        # A 30-49% model reading is a review nudge, not a flag driver — cap it
+        # below the FLAGGED boundary so weak detections on otherwise-unverifiable
+        # documents (e.g. no-OCR boxes) escalate to REVIEW instead of hard-flag.
+        risk = max(risk + 12, 48)
         can_clear = False
 
     if document_aware is True:
@@ -578,8 +593,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             hard_flag = True
             can_clear = False
         elif mod_key == "tampering" and (mod_fail or mod_res.get("verdict") == "FAIL"):
-            reasons.append("CRITICAL FORENSIC ALERT: Module 3 (tampering) raised visual or medium anomalies (ELA damage, sensor noise splice, or spectral grid) — see modules.")
-            risk = max(risk + 40, 72)
+            reasons.append("CRITICAL FORENSIC ALERT: Module 3 (tampering) raised visual or medium anomalies (ELA damage, sensor noise splice, copy-move duplication, or spectral grid) — see modules.")
+            risk = max(risk + 55, 82)
             hard_flag = True
             can_clear = False
         elif mod_key == "face" and mod_res.get("match") is False:

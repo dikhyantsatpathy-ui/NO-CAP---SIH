@@ -81,7 +81,7 @@ _PAN_CATEGORY = set("ABCDFGHLJPT")            # 4th char — what the holder ent
 _DL_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?\d{4}[ ]?\d{7})\b")
 _RC_RE = re.compile(r"\b[A-Z]{2}\d{2}[ ]?[A-Z]{0,3}[ ]?\d{4}\b")
 _EPIC_RE = re.compile(r"\b[A-Z]{3}\d{7}\b")
-_PASSPORT_RE = re.compile(r"\b(?:[A-Z]\d{7}|\d{6}[A-Z])\b")  # new + pre-2014 series
+_PASSPORT_RE = re.compile(r"\b(?:[A-Z]\d{7}|[A-Z]\d{6}[A-Z])\b")  # new 8-char series + legacy 9-char (e.g. L898902C)
 _VISA_RE = re.compile(r"\b[A-Z0-9]{6,9}\b")
 
 

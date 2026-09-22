@@ -18,16 +18,21 @@ _MODELPATH = Path(__file__).resolve().parent.parent / "data" / "models" / "w600k
 
 @pytest.fixture(autouse=True)
 def _no_model_environ():
-    """The dHash assertions below are only valid with no ONNX model configured.
-    .env may set FACE_EMBED_MODEL on real machines, so clear it around each
-    test and drop any cached ONNX session."""
-    old = os.environ.pop("FACE_EMBED_MODEL", None)
+    """The dHash assertions below are only valid with no ONNX model configured
+    and no remote ML service. .env may set FACE_EMBED_MODEL / ML_SERVICE_URL on
+    real machines (and earlier test files' `import main` loads .env into the
+    process environment), so clear both around each test and drop any cached
+    ONNX session."""
+    old_model = os.environ.pop("FACE_EMBED_MODEL", None)
+    old_ml = os.environ.pop("ML_SERVICE_URL", None)
     fm._embed_model_path = None
     fm._embed_session = None
     fm._embed_failed = None
     yield
-    if old is not None:
-        os.environ["FACE_EMBED_MODEL"] = old
+    if old_model is not None:
+        os.environ["FACE_EMBED_MODEL"] = old_model
+    if old_ml is not None:
+        os.environ["ML_SERVICE_URL"] = old_ml
 
 
 def _img(kind: str) -> bytes:

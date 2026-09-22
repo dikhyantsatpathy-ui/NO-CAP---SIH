@@ -299,7 +299,7 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
             base = ml_url.rstrip("/")
             candidate_urls = (
                 [f"{base}/api/ml/yolo_roi", f"{base}/gradio_api/api/ml/yolo_roi"]
@@ -400,7 +400,7 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
             base = ml_url.rstrip("/")
             candidate_urls = (
                 [f"{base}/api/ml/aadhaar_fields", f"{base}/gradio_api/api/ml/aadhaar_fields"]

@@ -285,7 +285,7 @@ def test_module3_ai_suspected_flags_fail():
     res = tamper_analysis(img.getvalue(), ai_detection=ai,
                           document_aware=False, doc_type="pan")
     assert res["verdict"] == "FAIL"
-    assert any(c["label"] == "ai-generated" and c["ok"] is False
+    assert any(c["label"] == "ai-generated-or-edited" and c["ok"] is False
                for c in res["checks"])
 
 

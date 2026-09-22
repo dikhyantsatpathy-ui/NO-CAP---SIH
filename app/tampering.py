@@ -45,11 +45,15 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
 
     # ---- ELA: tampered region lights up ----------------------------------
     if ela.get("status"):
+        # MEDIUM deviations are normal on low-resolution scans and digitally
+        # rendered cards; only HIGH (localized re-compression damage from a
+        # paste/composite) is a hard tampering signal.
         checks.append({
             "label": "ela",
-            "ok": ela["status"] == "LOW",
+            "ok": ela["status"] in ("LOW", "MEDIUM"),
             "detail": (f"ELA {ela['status']} — {round((ela.get('damage_ratio') or 0) * 100)}% "
-                       "of 8x8 blocks deviate from expected re-compression"),
+                       "of 8x8 blocks deviate from expected re-compression"
+                       + ("" if ela["status"] == "LOW" else " (HIGH signals a real paste/composite)")),
         })
     else:
         checks.append({"label": "ela", "ok": None,
@@ -77,24 +81,43 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                        "detail": "Still frame cannot prove aliveness — pair with the "
                                  "webcam capture for a person check."})
 
-    # ---- AI-generation / screen-aware signal -----------------------------
-    if ai_detection.get("ai_suspected"):
-        checks.append({"label": "ai-generated", "ok": False,
-                       "detail": (ai_detection.get("explanation") or
-                                  "Vision scan flags the document image as synthetic.")})
+    # ---- AI-generation / Editing / Screen-aware signal ------------------
+    if ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 50 or (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited"):
+        checks.append({
+            "label": "ai-generated-or-edited",
+            "ok": False,
+            "detail": (ai_detection.get("explanation") or
+                       "Vision/metadata scan flags the document as AI-generated or digitally edited."),
+        })
+    elif ai_detection.get("ran") and not ai_detection.get("ai_suspected"):
+        checks.append({
+            "label": "ai-generated-or-edited",
+            "ok": True,
+            "detail": "No synthetic AI generation or editing tool signatures detected.",
+        })
+
     if document_aware is False and doc_type and doc_type != "other":
-        checks.append({"label": "medium", "ok": False,
-                       "detail": "Image does not read as a scanned paper document — a "
-                                 "photo of a screen / re-photographed document is a "
-                                 "known forgery vector."})
+        checks.append({
+            "label": "medium",
+            "ok": False,
+            "detail": "Image does not read as a scanned paper document — a "
+                      "photo of a screen / re-photographed document is a "
+                      "known forgery vector.",
+        })
 
     # ---- 2D-FFT Spectral Frequency Analysis ------------------------------
+    # Periodic high-frequency structure is expected on any QR/barcode-equipped
+    # document (module grids, tricolor bands) and even dense text — so this is a
+    # *warning* row (contributes to REVIEW), never a hard fail on its own.
+    # Generative upsampling grids and screen-recapture moiré surface here, but
+    # they are hard-flagged by the AI-generation check and the "photo of a
+    # screen" medium check above; spectral corroborates rather than decides.
     spectral = fr.get("spectral") or {}
     if spectral.get("spectral_anomaly"):
         checks.append({
             "label": "spectral-analysis",
-            "ok": False,
-            "detail": f"Anomalous high-frequency periodicity (PAPR {spectral.get('papr', 0)}x) — generative grid or screen recapture.",
+            "ok": None,
+            "detail": f"Anomalous high-frequency periodicity (PAPR {spectral.get('papr', 0)}x) — generative grid or screen recapture; corroborate with the AI-generation check.",
         })
     elif spectral.get("papr") is not None:
         checks.append({
@@ -111,11 +134,26 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
             "ok": False,
             "detail": noise.get("detail", "Sensor noise variance disparity indicates photo replacement or splicing."),
         })
-    elif noise.get("consistent") is True and noise.get("noise_ratio") is not None:
+    elif noise.get("status") == "CONSISTENT" and noise.get("noise_ratio") is not None:
         checks.append({
             "label": "sensor-noise",
             "ok": True,
             "detail": noise.get("detail", "Uniform sensor noise distribution verified across portrait and substrate."),
+        })
+
+    # ---- Copy-Move / Clone Stamp Duplication -----------------------------
+    copy_move = fr.get("copy_move") or {}
+    if copy_move.get("detected"):
+        checks.append({
+            "label": "copy-move-cloning",
+            "ok": False,
+            "detail": copy_move.get("detail", "Copy-move duplication detected: identical pixel patches identified across document zones."),
+        })
+    elif copy_move.get("status") == "CLEAN":
+        checks.append({
+            "label": "copy-move-cloning",
+            "ok": True,
+            "detail": "No copy-move cloning or duplicate-block stamp artifacts detected.",
         })
 
     decided = [c for c in checks if c.get("ok") is not None]
@@ -124,4 +162,5 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
     verdict = "PASS" if passed else ("FAIL" if failed else "REVIEW")
 
     return {"checks": checks, "ela": ela, "qa": qa, "roi": roi, "liveness": liveness,
+            "spectral": spectral, "noise_consistency": noise, "copy_move": copy_move,
             "ai_detection": ai_detection, "verdict": verdict}

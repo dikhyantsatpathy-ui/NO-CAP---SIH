@@ -308,9 +308,9 @@ def _pixel_scan(file_bytes: bytes, ext: str):
 def heuristic_score(report) -> int:
     """Map a heuristic report to a 0..100 confidence number."""
     if report.get("ai"):
-        return 80
+        return 90
     if report.get("edited"):
-        return 55
+        return 85
     return 0
 
 
@@ -329,6 +329,7 @@ def heuristic_detect(image_bytes: bytes, filename: str = "") -> dict:
         reasons.append(desc)
     elif kind == "edited":
         is_edited = True
+        is_ai = True  # Any photo-editing tool marker on an ID document flags it as synthetic/tampered
         leaning = "edited"
         reasons.append(desc)
 
@@ -345,20 +346,22 @@ def heuristic_detect(image_bytes: bytes, filename: str = "") -> dict:
             reasons.append("No editing apps or AI tools were found in this file's labels, "
                            "and the pixel pattern looked ordinary.")
 
-    score = heuristic_score({"ai": is_ai, "edited": is_edited})
+    score = heuristic_score({"ai": is_ai and not is_edited, "edited": is_edited})
     model = f"heuristic v2 ({'metadata+pixels' if ran else 'metadata only'})"
-    if is_ai:
+    if is_edited:
+        explanation = (
+            f"Digital photo-editing signature detected ({tool}). The document has been "
+            f"digitally manipulated/altered ({score}% confidence)."
+        )
+    elif is_ai:
         explanation = (f"The built-in {model} flagged this as AI-generated "
                        f"({score}% confident).") + (f" It detected {tool}." if tool else "")
-    elif is_edited:
-        explanation = (f"The built-in model saw a photo-editing tool ({tool}) "
-                       f"marker, not a plain untouched original.")
     else:
         explanation = ("The built-in model found no AI-generation or editing signature, "
                        "so there is no evidence it was made by a machine.")
 
     return {
-        "ran": len(reasons) > 0 and ran,
+        "ran": len(reasons) > 0 and (ran or bool(tool)),
         "ai_suspected": is_ai,
         "ai_score": score,
         "model": model,
@@ -545,6 +548,7 @@ Limitation note:
 """
 
 import urllib.request
+import shutil
 
 import numpy as np
 
@@ -583,13 +587,28 @@ def _ensure_model() -> str:
     path = _model_path()
     if os.path.exists(path):
         return path
+    # No local weights: attempt a bounded download, else degrade (caller falls
+    # back to the heuristic detector). Never block on a remote fetch — an
+    # offline desk must still screen, not hang trying to reach HuggingFace.
     os.makedirs(_model_dir(), exist_ok=True)
     url = os.getenv("AI_DETECTOR_MODEL_URL") or DEFAULT_URL
     print(f"[detector] downloading AI model -> {path}  ({url})")
     tmp = path + ".download"
-    urllib.request.urlretrieve(url, tmp)  # noqa: S310 (intentional model fetch)
-    os.replace(tmp, path)
-    return path
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ssb-console/2.0"})
+        with urllib.request.urlopen(req, timeout=15.0) as resp, open(tmp, "wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        os.replace(tmp, path)
+        return path
+    except Exception as exc:
+        print(f"[detector] model download failed ({exc.__class__.__name__}); "
+              f"falling back to heuristic detector")
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise FileNotFoundError("AI detector model unavailable") from exc
 
 
 def _load_engine():
@@ -638,7 +657,7 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
             base = ml_url.rstrip("/")
             candidate_urls = (
                 [f"{base}/api/ml/detect_image", f"{base}/gradio_api/api/ml/detect_image"]
@@ -680,17 +699,37 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
         ms = int((time.perf_counter() - start) * 1000)
         score = onnx_score(output)
         is_ai = score >= 50
+
+        # Defense-in-depth: combine neural network vision inference with embedded metadata verification
+        ext = (filename or "").lower().split(".")[-1] if "." in (filename or "") else ""
+        meta_text = _image_metadata_text(image_bytes, ext)
+        kind, tool, desc, conf = _match_tool(meta_text)
+        if kind in ("ai", "edited"):
+            score = max(score, 90 if kind == "ai" else 85)
+            is_ai = True
+            explanation = (
+                f"Document flagged as {'AI-GENERATED' if kind == 'ai' else 'DIGITALLY EDITED'} "
+                f"({score}% confidence). Signature detected: {tool}."
+            )
+        else:
+            explanation = (
+                f"The on-device Vision Transformer classified this image as "
+                f"{'AI-GENERATED' if is_ai else 'not clearly AI'} with {score}% confidence."
+            )
+
         return {
             "ran": True,
             "ai_suspected": is_ai,
             "ai_score": score,
             "model": "Self-hosted ViT-Base (CIFAKE fine-tune)",
             "provider": "self-hosted",
-            "explanation": (
-                f"The on-device Vision Transformer classified this image as "
-                f"{'AI-GENERATED' if is_ai else 'not clearly AI'} with {score}% confidence."),
+            "explanation": explanation,
             "latency_ms": ms,
-            "raw": {"logits": [float(x) for x in np.asarray(output).reshape(-1)[:2]]},
+            "raw": {
+                "logits": [float(x) for x in np.asarray(output).reshape(-1)[:2]],
+                "tool": tool,
+                "kind": kind,
+            },
         }
     except Exception as exc:
         logger.info(f"Self-hosted model inference failed ({exc.__class__.__name__}). Falling back to heuristic detector.")
@@ -1421,6 +1460,33 @@ _EDITING_SIGS = {
     "Capture One": "the RAW editor Capture One",
     "Polish": "the photo-editor Polish",
     "Fotor": "the photo-editor Fotor",
+    "Remini": "the face enhancement/upscaling tool Remini",
+    "Photoroom": "the background/ID manipulation tool Photoroom",
+    "Pixelcut": "the design/ID tool Pixelcut",
+    "FaceApp": "the face manipulation app FaceApp",
+    "Facetune": "the portrait editing tool Facetune",
+    "BeautyPlus": "the portrait modification app BeautyPlus",
+    "Meitu": "the portrait editor Meitu",
+    "AirBrush": "the photo retouching app AirBrush",
+    "Cut Paste Photos": "the cutout montage tool Cut Paste Photos",
+    "Bazaart": "the photo collage/manipulation tool Bazaart",
+    "InShot": "the photo/video editor InShot",
+    "CapCut": "the media editor CapCut",
+    "Adobe Photoshop Express": "the mobile editor Photoshop Express",
+    "Photoshop Express": "the mobile editor Photoshop Express",
+    "ILovePDF": "the PDF editing utility iLovePDF",
+    "Sejda": "the PDF editor Sejda",
+    "PDFescape": "the online PDF editor PDFescape",
+    "Smallpdf": "the PDF editing service Smallpdf",
+    "PDF24": "the PDF editing tool PDF24",
+    "Foxit": "the PDF editor Foxit",
+    "Nitro Pro": "the PDF editor Nitro Pro",
+    "PDFelement": "the PDF editor Wondershare PDFelement",
+    "Acrobat": "the document editor Adobe Acrobat",
+    "ReportLab": "the programmatic PDF generator ReportLab",
+    "wkhtmltopdf": "the HTML-to-PDF synthetic document generator wkhtmltopdf",
+    "puppeteer": "the automated browser generator Puppeteer",
+    "playwright": "the automated browser generator Playwright",
 }
 
 # AI-generator / AI-upscaler signatures that self-tag generated media. This now
@@ -1504,6 +1570,12 @@ _AI_SIGS = {
     "VQGAN": "the generative model VQGAN",
     "DALL-E 3": "OpenAI's AI image generator DALL-E 3",
     "Black Forest": "the AI studio Black Forest Labs (FLUX)",
+    "DeepFake": "the deepfake synthesis tool DeepFake",
+    "FaceFusion": "the face-swapping tool FaceFusion",
+    "Roop": "the face-swapping tool Roop",
+    "ReActor": "the deepfake face-swapper ReActor",
+    "SimSwap": "the facial replacement model SimSwap",
+    "LivePortrait": "the portrait animation model LivePortrait",
 }
 
 
@@ -1517,39 +1589,41 @@ def _match_tool(text: str) -> tuple:
     plus a human reason. Also returns a confidence score (0..1): direct, long,
     descriptor-rich AI self-tags are the most reliable; editing mentions are a
     little less certain. An AI-upscaled file often names BOTH an editor and an AI
-    tool (e.g. 'Canva' + 'Topaz Photo AI') â€” we want the AI signal to dominate so
+    tool (e.g. 'Canva' + 'Topaz Photo AI') — we want the AI signal to dominate so
     the user sees it was AI-processed, not just 'edited'."""
     t = (text or "").lower().replace("-", " ").replace("_", " ").replace(".", " ")
     found_ai = [k for k in _AI_LOOKUP if k in t]
     found_edit = [k for k in _EDITING_LOOKUP if k in t]
     if found_ai:
         tool = _AI_LOOKUP[max(found_ai, key=len)]
-        return ("ai", tool, f"Made by {_AI_SIGS[tool]}.", 0.9)
+        return ("ai", tool, f"Made by {_AI_SIGS[tool]}.", 0.95)
     if found_edit:
         tool = _EDITING_LOOKUP[max(found_edit, key=len)]
-        return ("edited", tool, f"Edited in {_EDITING_SIGS[tool]}.", 0.65)
+        return ("edited", tool, f"Edited in {_EDITING_SIGS[tool]}.", 0.85)
     return (None, None, None, None)
 
 
 def _image_metadata_text(file_bytes: bytes, ext: str) -> str:
-    """Extract embedded text labels (EXIF/XMP/PNG-text/RIFF) from image bytes using
+    """Extract embedded text labels (EXIF/XMP/PNG-text/RIFF/PDF) from file bytes using
     ONLY the standard library, so we can name editing/AI tools even on files whose
-    producer never printed into PDF/MP3/MP4 metadata. Works for JPEG (APP1 EXIF/XMP),
-    PNG (tEXt/iTXt/tEXt/zTXt chunks) and WebP (RIFF/V8 EXIF)."""
+    producer never printed into PDF/MP3/MP4 metadata. Works for JPEG (APP1 EXIF/XMP,
+    APP13 Photoshop IRB), PNG (tEXt/iTXt/zTXt chunks), WebP (RIFF/EXIF), and PDF."""
     out_parts = []
     try:
         data = file_bytes
+        if not data:
+            return ""
 
-        # --- PNG: walk chunks, decode text chunks ---
-        if ext == "png" and data[:8] == b"\x89PNG\r\n\x1a\n":
+        # --- PNG: walk chunks, decode text chunks (check extension OR magic bytes) ---
+        if (ext == "png" or data[:8] == b"\x89PNG\r\n\x1a\n") and len(data) > 8:
             pos = 8
             while pos + 8 <= len(data):
                 (ln,) = __import__("struct").unpack(">I", data[pos:pos + 4])
                 ctype = data[pos + 4:pos + 8]
                 body = data[pos + 8:pos + 8 + ln]
-                if ctype in (b"tEXt", b"iTXt", b"tEXt", b"zTXt") or ctype == b"tEXt" or ctype in (b"iTXt", b"zTXt", b"tEXt"):
+                if ctype in (b"tEXt", b"iTXt", b"zTXt"):
                     try:
-                        if ctype == b"tEXt" or ctype == b"tEXt":
+                        if ctype == b"tEXt":
                             k, _, v = bytes(body).partition(b"\x00")
                             out_parts.append(bytes(body).decode("latin-1", "ignore"))
                         elif ctype == b"iTXt":
@@ -1563,8 +1637,8 @@ def _image_metadata_text(file_bytes: bytes, ext: str) -> str:
                             except Exception: pass
                     except Exception: pass
                 pos += 12 + ln
-        # --- JPEG: walk segments, pull APP1 (EXIF '\x45\x58\x49\x46' and XMP) ---
-        elif ext in ("jpg", "jpeg") and data[:2] == b"\xff\xd8":
+        # --- JPEG: walk segments, pull APP1 (EXIF/XMP) and APP13 (Photoshop IRB) ---
+        elif (ext in ("jpg", "jpeg") or data[:2] == b"\xff\xd8") and len(data) > 4:
             pos = 2
             while pos + 4 <= len(data):
                 if data[pos] != 0xFF:
@@ -1574,17 +1648,24 @@ def _image_metadata_text(file_bytes: bytes, ext: str) -> str:
                 if seg_len < 2 or pos + 2 + seg_len > len(data):
                     break
                 seg = data[pos + 4:pos + 2 + seg_len]
-                # APP1 (0xE1): EXIF (Exif\0\0) or XMP (http://ns.adobe.com/xap/)
+                # APP1 (0xE1): EXIF or XMP
                 if marker == 0xE1:
                     if seg[:6] in (b"Exif\x00\x00", b"Exif\x00", b"Exif"):
-                        # TIFF block: find Software tag via IFD0 (tag 0x0131) rough scan
                         out_parts.append(_tiff_software_text(seg))
                     elif b"xmp" in seg[:40].lower() or seg.lstrip(b"\x00").startswith(b"http"):
                         out_parts.append(seg.decode("utf-8", "ignore"))
+                # APP13 (0xED): Photoshop 3.0 8BIM Image Resource Block
+                elif marker == 0xED and b"Photoshop" in seg[:20]:
+                    out_parts.append("Adobe Photoshop IPTC")
                 pos += 2 + seg_len
-        # --- WebP: RIFF / V8 file, look for EXIF/XMP/VP8X metadata chunks ---
-        elif ext in ("webp", "gif") and data[:4] == b"RIFF":
+        # --- WebP: RIFF file, look for EXIF/XMP/VP8X metadata chunks ---
+        elif (ext in ("webp", "gif") or data[:4] == b"RIFF") and len(data) > 12:
             out_parts.append(_riff_text(data))
+        # --- PDF: scan document dictionary for Producer/Creator tags ---
+        elif (ext == "pdf" or data[:4] == b"%PDF") and len(data) > 16:
+            head = data[:4096].decode("latin-1", "ignore")
+            tail = data[-4096:].decode("latin-1", "ignore") if len(data) > 4096 else ""
+            out_parts.append(head + " " + tail)
     except Exception as e:
         print(f"[image_metadata_text] ({ext}): {e}")
     return " ".join(out_parts)
