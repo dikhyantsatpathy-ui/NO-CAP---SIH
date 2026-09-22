@@ -22,10 +22,13 @@ overlay rendering in the frontend preview canvas.
 """
 
 import io
+import logging
 import os
 import numpy as np
 from PIL import Image
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("yolo_roi")
 
 _MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 
@@ -296,17 +299,27 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            import httpx
-            # timeout=10.0 so we don't hang vercel if the free tier is asleep
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/yolo_roi",
-                files={"file": ("image.png", image_bytes, "image/png")},
-                timeout=15.0
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            target_url = f"{ml_url.rstrip('/')}/api/ml/yolo_roi"
+            files = {"file": ("image.png", image_bytes, "image/png")}
+            res = None
+            try:
+                import httpx
+                res = httpx.post(target_url, files=files, timeout=timeout_sec)
+            except ImportError:
+                import requests
+                res = requests.post(target_url, files=files, timeout=timeout_sec)
+
+            if res is not None:
+                if res.status_code == 200:
+                    return res.json()
+                logger.warning(
+                    f"Remote yolo_roi returned HTTP {res.status_code}: {res.text[:200]}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Remote yolo_roi call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
     rgb = _open_rgb(image_bytes)
     if rgb is None:
         return []
@@ -380,16 +393,27 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            import httpx
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/aadhaar_fields",
-                files={"file": ("image.png", image_bytes, "image/png")},
-                timeout=15.0
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            target_url = f"{ml_url.rstrip('/')}/api/ml/aadhaar_fields"
+            files = {"file": ("image.png", image_bytes, "image/png")}
+            res = None
+            try:
+                import httpx
+                res = httpx.post(target_url, files=files, timeout=timeout_sec)
+            except ImportError:
+                import requests
+                res = requests.post(target_url, files=files, timeout=timeout_sec)
+
+            if res is not None:
+                if res.status_code == 200:
+                    return res.json()
+                logger.warning(
+                    f"Remote aadhaar_fields returned HTTP {res.status_code}: {res.text[:200]}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Remote aadhaar_fields call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
             
     rgb = _open_rgb(image_bytes)
     session = _get_aadhaar_session()

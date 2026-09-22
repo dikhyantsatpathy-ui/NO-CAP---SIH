@@ -21,9 +21,12 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import threading
 import time
 import uuid
+
+logger = logging.getLogger("app.main")
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
@@ -634,16 +637,27 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            import httpx
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/detect_image",
-                files={"file": ("image.png", image_bytes, "image/png")},
-                timeout=15.0
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
+            target_url = f"{ml_url.rstrip('/')}/api/ml/detect_image"
+            files = {"file": ("image.png", image_bytes, "image/png")}
+            res = None
+            try:
+                import httpx
+                res = httpx.post(target_url, files=files, timeout=timeout_sec)
+            except ImportError:
+                import requests
+                res = requests.post(target_url, files=files, timeout=timeout_sec)
+
+            if res is not None:
+                if res.status_code == 200:
+                    return res.json()
+                logger.warning(
+                    f"Remote detect_image returned HTTP {res.status_code}: {res.text[:200]}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Remote detect_image call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
     try:
         _load_engine()
     except Exception as exc:
@@ -728,7 +742,7 @@ def _select_backend():
     provider = (os.getenv("AI_DETECTOR_PROVIDER") or "").strip().lower()
     if provider == "sightengine":
         return "sightengine" if os.getenv("AI_DETECTOR_KEY") else "heuristic"
-    if provider == "self-hosted":
+    if provider == "self-hosted" or (not provider and os.getenv("ML_SERVICE_URL")):
         return "self-hosted"
     return "heuristic"
 
@@ -1149,11 +1163,16 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_sessions_created ON screening_sessions(created_at);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_status ON screening_sessions(status);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_screener ON screening_sessions(screener);",
-    # Stale pre-refactor column: signer_identities no longer carries a
-    # cryptographic pub_key (the blockchain ledger replaced it with the
-    # screening_reports/previous_hash chain). Existing Postgres DBs still have
-    # the NOT NULL column, which breaks first-time signer inserts, so drop it.
+    # Stale pre-refactor columns: signer_identities no longer carries the
+    # crypto keypair era's pub_key/enc_priv_key/is_revoked/revoked_at/revoke_pin
+    # (the hash-chain ledger replaced pub_key trust). Existing Postgres DBs still
+    # declare pub_key + enc_priv_key NOT NULL, which breaks first-time signer
+    # inserts, so drop the whole stale set to match the current model.
     "ALTER TABLE signer_identities DROP COLUMN IF EXISTS pub_key;",
+    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS enc_priv_key;",
+    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS is_revoked;",
+    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS revoked_at;",
+    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS revoke_pin;",
 ]
 
 def _ensure_db_initialized():
@@ -1761,6 +1780,10 @@ def health_check():
             "engine": db_type,
             "neon_endpoint": _NEON_ENDPOINT,
             "last_error": _PRIMARY_LAST_ERROR,
+        },
+        "ml_service": {
+            "configured": bool(os.getenv("ML_SERVICE_URL")),
+            "url": os.getenv("ML_SERVICE_URL"),
         },
         "version": "2.1.0",
         "timestamp": now_utc(),

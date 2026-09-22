@@ -1,13 +1,10 @@
 fastapi
 uvicorn
 python-multipart
-torch
-torchvision
-torchaudio
-ultralytics
 opencv-python-headless
-facenet-pytorch
 onnxruntime
 pillow
 numpy
 pydantic
+httpx
+requests

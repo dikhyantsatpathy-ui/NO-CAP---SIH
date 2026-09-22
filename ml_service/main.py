@@ -1,11 +1,16 @@
 import io
 import os
+import sys
 import time
 import urllib.request
 import numpy as np
 from PIL import Image
 from fastapi import FastAPI, UploadFile, File, Form
 from typing import Optional
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from yolo_roi import extract_roi_boxes
 from face_match import compare_faces
@@ -119,11 +124,53 @@ def onnx_detect(image_bytes: bytes) -> dict:
 
 # --- API Endpoints ---
 
+@app.get("/")
+@app.get("/health")
+def health_check():
+    models_dir = _model_dir()
+    face_model = (
+        os.path.exists(os.path.join(models_dir, "w600k_r50.onnx"))
+        or os.path.exists(os.path.abspath(os.path.join(models_dir, "..", "..", "data", "models", "w600k_r50.onnx")))
+        or bool(os.getenv("FACE_EMBED_MODEL"))
+    )
+    return {
+        "status": "online",
+        "service": "no-cap-ml-service",
+        "endpoints": [
+            "/health",
+            "/api/ml/yolo_roi",
+            "/api/ml/aadhaar_fields",
+            "/api/ml/face_match",
+            "/api/ml/detect_image",
+        ],
+        "models": {
+            "yolo_card": os.path.exists(os.path.join(models_dir, "card.onnx")),
+            "aadhaar_fields": os.path.exists(os.path.join(models_dir, "aadhaar_fields.onnx")),
+            "face_embed": face_model,
+            "ai_detector": os.path.exists(_model_path()),
+        },
+    }
+
+
+@app.on_event("startup")
+def startup_prewarm():
+    if os.getenv("PREWARM_MODELS", "true").lower() in ("1", "true", "yes"):
+        print("[ml_service] Pre-warming ONNX models on startup...")
+        try:
+            from yolo_roi import _get_onnx_session, _get_aadhaar_session
+            _get_onnx_session()
+            _get_aadhaar_session()
+            print("[ml_service] Pre-warm complete.")
+        except Exception as exc:
+            print(f"[ml_service] Pre-warm note: {exc}")
+
+
 @app.post("/api/ml/yolo_roi")
 async def api_yolo_roi(file: UploadFile = File(...)):
     data = await file.read()
     boxes = extract_roi_boxes(data)
     return boxes
+
 
 from yolo_roi import extract_aadhaar_fields
 @app.post("/api/ml/aadhaar_fields")
@@ -131,6 +178,7 @@ async def api_aadhaar_fields(file: UploadFile = File(...)):
     data = await file.read()
     boxes = extract_aadhaar_fields(data)
     return boxes
+
 
 @app.post("/api/ml/face_match")
 async def api_face_match(
@@ -142,6 +190,7 @@ async def api_face_match(
     live_bytes = await live_frame.read()
     result = compare_faces(doc_face_b64, live_bytes, doc_age_years, emb_same)
     return result
+
 
 @app.post("/api/ml/detect_image")
 async def api_detect_image(file: UploadFile = File(...)):

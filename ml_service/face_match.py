@@ -92,25 +92,65 @@ def _hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+DEFAULT_FACE_URL = "https://huggingface.co/maze/faceX/resolve/main/w600k_r50.onnx"
+
+
+def _resolve_face_model_path() -> str | None:
+    """Resolve ArcFace model path from env, local models/ dir, repo data/models/, or auto-download."""
+    env_path = (os.getenv("FACE_EMBED_MODEL", "") or "").strip()
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    local_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+    local_model = os.path.join(local_dir, "w600k_r50.onnx")
+    if os.path.exists(local_model):
+        return local_model
+
+    repo_model = os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "models", "w600k_r50.onnx")
+    )
+    if os.path.exists(repo_model):
+        return repo_model
+
+    if os.getenv("AUTO_DOWNLOAD_MODELS", "true").lower() in ("1", "true", "yes"):
+        try:
+            os.makedirs(local_dir, exist_ok=True)
+            print(f"[face_match] downloading ArcFace model -> {local_model} ({DEFAULT_FACE_URL})")
+            import shutil
+            import urllib.request
+
+            tmp = local_model + ".download"
+            req = urllib.request.Request(
+                DEFAULT_FACE_URL,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            )
+            with urllib.request.urlopen(req) as resp, open(tmp, "wb") as out:
+                shutil.copyfileobj(resp, out)
+            os.replace(tmp, local_model)
+            return local_model
+        except Exception as exc:
+            print(f"[face_match] failed to download ArcFace model: {exc}")
+            if os.path.exists(local_model + ".download"):
+                try:
+                    os.remove(local_model + ".download")
+                except Exception:
+                    pass
+    return None
+
+
 def _embed_image(image):
     """ONNX embedding path. Returns an L2-normalized vector or None (model
     missing/unloadable -> caller falls back to dHash, never crashes).
-
-    Only an explicitly configured FACE_EMBED_MODEL path is used. The function
-    never downloads a model: production servers must stay deterministic and
-    must not fetch artifacts from the network during a screening pass.
     """
     global _embed_session, _embed_failed, _embed_model_path
-    model_path = (os.getenv("FACE_EMBED_MODEL", "") or "").strip()
+    model_path = _resolve_face_model_path()
     if not model_path or not os.path.exists(model_path):
         return None
-    # Reset cached state when the configured model changes — success and
-    # failure are both tracked per path.
+    # Reset cached state when the configured model changes
     if _embed_model_path != model_path:
         _embed_session = None
         _embed_failed = None
         _embed_model_path = model_path
-    # Only skip if the same path failed before — retry when path changes.
     if _embed_failed == model_path:
         return None
     try:
@@ -130,8 +170,9 @@ def _embed_image(image):
         vec = np.asarray(sess.run(None, {inp.name: arr})[0]).reshape(-1)
         n = float((vec ** 2).sum() ** 0.5)
         return vec / n if n > 0 else None
-    except Exception:
-        _embed_failed = model_path  # remember path, not a boolean
+    except Exception as exc:
+        print(f"[face_match] ONNX embedding failed: {exc}")
+        _embed_failed = model_path
         _embed_session = None
         return None
 

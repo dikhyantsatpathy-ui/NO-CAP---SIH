@@ -31,7 +31,8 @@ _srv*.log
 # ---- Downloaded / trained model weights (never committed; 128MB Vercel cap) ----
 data/models/
 data/datasets/
-models/
+/models/
+!ml_service/models/
 
 # ---- YOLO training corpora & artifacts (local GPU runs, never committed) ----
 data/AADHAR/
@@ -42,6 +43,8 @@ runs/
 weights/
 *.pt
 *.onnx
+!ml_service/models/card.onnx
+!ml_service/models/aadhaar_fields.onnx
 
 # ---- Study scripts & local helper tools (kept local, not on GitHub) ----
 scripts/*

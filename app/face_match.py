@@ -26,7 +26,10 @@ graph for production use.
 
 import base64
 import io
+import logging
 import os
+
+logger = logging.getLogger("face_match")
 
 _DHASH_SAME = 8
 _DHASH_DIFF = 20
@@ -144,13 +147,10 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
     adapts the threshold to account for natural physiological aging across long-validity
     documents (e.g., 10-year passports).
     """
-    import os
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            import httpx
-            
-            # Prepare payload
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "25.0"))
             payload = {}
             if isinstance(document_photo, bytes):
                 import base64
@@ -167,20 +167,28 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
             if isinstance(selfie, bytes):
                 files["live_frame"] = ("live.png", selfie, "image/png")
             else:
-                # If selfie is b64, we need to decode it for the file upload
                 import base64
                 files["live_frame"] = ("live.png", base64.b64decode(selfie.strip()), "image/png")
                 
-            res = httpx.post(
-                f"{ml_url.rstrip('/')}/api/ml/face_match",
-                data=payload,
-                files=files,
-                timeout=20.0
+            target_url = f"{ml_url.rstrip('/')}/api/ml/face_match"
+            res = None
+            try:
+                import httpx
+                res = httpx.post(target_url, data=payload, files=files, timeout=timeout_sec)
+            except ImportError:
+                import requests
+                res = requests.post(target_url, data=payload, files=files, timeout=timeout_sec)
+
+            if res is not None:
+                if res.status_code == 200:
+                    return res.json()
+                logger.warning(
+                    f"Remote face_match returned HTTP {res.status_code}: {res.text[:200]}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Remote face_match call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            pass # fallback to local if remote fails
     qr_bytes = _coerce_image_bytes(document_photo)
     sl_bytes = _coerce_image_bytes(selfie)
     if qr_bytes is None or sl_bytes is None:
@@ -255,9 +263,21 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
 def face_match_capabilities() -> dict:
     """Backend status for /api/identity/meta."""
     Image = _pil()
+    ml_url = bool(os.getenv("ML_SERVICE_URL"))
     onnx = bool(os.getenv("FACE_EMBED_MODEL", "")) and os.path.exists(
         os.getenv("FACE_EMBED_MODEL", ""))
-    return {"available": Image is not None,
-            "method": "onnx-embedding" if (Image is not None and onnx) else (
-                "phash-dhash" if Image is not None else "none"),
-            "onnx_configured": onnx}
+    
+    if ml_url:
+        method = "onnx-embedding (remote)"
+    elif Image is not None and onnx:
+        method = "onnx-embedding"
+    elif Image is not None:
+        method = "phash-dhash"
+    else:
+        method = "none"
+
+    return {
+        "available": Image is not None or ml_url,
+        "method": method,
+        "onnx_configured": onnx or ml_url,
+    }
