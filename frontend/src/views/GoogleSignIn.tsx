@@ -118,7 +118,7 @@ export function SignInGate() {
         </div>
 
         <p className="gate__foot">
-          Protected gov system · Single-session custody · Zero raw PII persisted
+          Protected gov system · One traveller per session · No readable details stored
         </p>
       </div>
     </div>

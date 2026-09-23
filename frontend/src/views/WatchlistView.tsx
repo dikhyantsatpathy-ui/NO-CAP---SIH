@@ -97,10 +97,10 @@ export function WatchlistView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">Screened watchlist</h2>
+            <h2 className="panel__title">Known-fraud list (watchlist)</h2>
             <p className="panel__body">
-              Identifiers are stored as SHA-256 digests with a masked display form. Screening never
-              compares raw values — only digests.
+              Names and numbers are kept only as fingerprints (SHA-256) with a masked view for the
+              officer. Screening matches by fingerprint — the real value is never stored.
             </p>
           </div>
           <button type="button" className="btn" onClick={() => void load()}>
@@ -149,11 +149,11 @@ export function WatchlistView() {
             <thead>
               <tr>
                 <th>Category</th>
-                <th>Masked Display</th>
+                <th>Masked view</th>
                 <th>Reason</th>
                 <th>Added by</th>
-                <th>Timestamp (IST)</th>
-                <th>Audit</th>
+                <th>Added (IST)</th>
+                <th>Details</th>
                 <th />
               </tr>
             </thead>
@@ -177,7 +177,7 @@ export function WatchlistView() {
                         style={{ padding: "2px 6px", fontSize: 11 }}
                         onClick={() => setExpandedId((cur) => (cur === e.id ? null : e.id))}
                       >
-                        {expandedId === e.id ? "▼" : "▶"} Audit
+                        {expandedId === e.id ? "▼" : "▶"} Details
                       </button>
                     </td>
                     <td>
@@ -198,7 +198,7 @@ export function WatchlistView() {
                       <td colSpan={7} style={{ padding: 0, background: "var(--panel-2)" }}>
                         <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--line)" }}>
                           <span className="k" style={{ fontSize: 11, marginBottom: 6, display: "block" }}>
-                            CRYPTOGRAPHIC HASH VERIFICATION &amp; ATTRIBUTION
+                            HOW THIS ENTRY IS STORED (AUDIT)
                           </span>
                           <table className="tbl tbl--compact" style={{ background: "var(--panel)" }}>
                             <tbody>
@@ -221,11 +221,12 @@ export function WatchlistView() {
                                 </td>
                               </tr>
                               <tr>
-                                <td className="k">STORAGE POLICIES</td>
+                                <td className="k">STORAGE POLICY</td>
                                 <td>
-                                  <span className="chip chip--ok">ZERO-STORAGE VERIFIED</span>
+                                  <span className="chip chip--ok">NOT STORED</span>
                                   <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>
-                                    Raw identifier is never retained; matched solely via deterministic SHA-256 digest lookup.
+                                    Only a fingerprint (SHA-256) of this identifier is kept and
+                                    matched. The number itself is never saved.
                                   </span>
                                 </td>
                               </tr>

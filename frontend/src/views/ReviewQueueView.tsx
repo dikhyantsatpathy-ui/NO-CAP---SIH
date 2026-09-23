@@ -21,22 +21,23 @@ import {
 } from "../api";
 import { useAuth, useToast } from "../app/state";
 import { copyText, shortHash, timeLabelIst } from "../app/util";
+import { plainCompare, plainStatus, plainVerdict, riskWord } from "../app/english";
 
 type Decision = "CLEARED" | "CONFIRMED_FRAUD" | "INCONCLUSIVE";
 
 const DECISION_META: Record<Decision, { label: string; tone: string; desc: string }> = {
   CLEARED: {
-    label: "CLEARED",
+    label: "Approve — looks genuine",
     tone: "ok",
     desc: "No genuine discrepancy — session approved and signed into the ledger.",
   },
   CONFIRMED_FRAUD: {
-    label: "CONFIRMED_FRAUD",
+    label: "Fraud confirmed",
     tone: "bad",
     desc: "Fraud confirmed — session signed into the ledger as rejected evidence.",
   },
   INCONCLUSIVE: {
-    label: "INCONCLUSIVE",
+    label: "Can't be settled",
     tone: "warn",
     desc: "Cannot settle — session signed as rejected with the review note.",
   },
@@ -79,12 +80,15 @@ function FlaggedCard({
         onClick={() => void toggle()}
         onKeyDown={(e) => e.key === "Enter" && void toggle()}
       >
-        <span className="chip chip--warn">FLAGGED</span>
-        <span className="mono queue-card__id">{flag.id}</span>
+        <span className="chip chip--warn">Possible fraud</span>
+        <span className="queue-card__id">
+          {flag.label || `Session · ${flag.id.slice(0, 6)}`}
+          <span className="mono muted" style={{ fontSize: 10.5, marginLeft: 8 }}>{flag.id}</span>
+        </span>
         <span className="chip chip--mute">{flag.checkpoint}</span>
-        {flag.nationality && <span className="chip chip--info">NAT: {flag.nationality}</span>}
+        {flag.nationality && <span className="chip chip--info">Nationality: {flag.nationality}</span>}
         <span className="queue-card__meta">
-          {flag.document_count} doc(s) · risk {flag.risk_score ?? "—"} ·{" "}
+          {flag.document_count} document(s) · {riskWord(flag.risk_score)} ·{" "}
           {timeLabelIst(flag.created_at_ist || flag.closed_at || flag.updated_at)}
         </span>
         <span className="queue-card__toggle">{expanded ? "▼" : "▶"}</span>
@@ -102,13 +106,13 @@ function FlaggedCard({
           {/* Sub-table: Comparison discrepancies */}
           {checks.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <span className="k" style={{ fontSize: 11 }}>CROSS-DOCUMENT COMPARISON SUB-TABLE</span>
+              <span className="k" style={{ fontSize: 11 }}>DO THE DOCUMENTS AGREE?</span>
               <table className="tbl tbl--compact" style={{ marginTop: 4 }}>
                 <thead>
                   <tr>
-                    <th>Field</th>
-                    <th>Status</th>
-                    <th>Assessment &amp; Reasons</th>
+                    <th>Detail</th>
+                    <th>Result</th>
+                    <th>What it means / reasons</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -130,7 +134,7 @@ function FlaggedCard({
                                   : "mute"
                           }`}
                         >
-                          {c.status.toUpperCase()}
+                          {plainCompare(c.status)}
                         </span>
                       </td>
                       <td className="cell-detail">{c.detail}</td>
@@ -143,16 +147,16 @@ function FlaggedCard({
 
           {/* Sub-table: Screened documents list */}
           <div style={{ marginBottom: 12 }}>
-            <span className="k" style={{ fontSize: 11 }}>SCREENED DOCUMENTS AUDIT SUB-TABLE ({docs.length})</span>
+            <span className="k" style={{ fontSize: 11 }}>DOCUMENTS SCREENED ({docs.length})</span>
             <table className="tbl tbl--compact" style={{ marginTop: 4 }}>
               <thead>
                 <tr>
                   <th>Doc</th>
                   <th>Type</th>
-                  <th>Verdict</th>
+                  <th>Result</th>
                   <th>Risk</th>
-                  <th>Masked Identifier</th>
-                  <th>File SHA-256</th>
+                  <th>Masked identifier</th>
+                  <th>File fingerprint</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,10 +181,10 @@ function FlaggedCard({
                                 : "warn"
                           }`}
                         >
-                          {d.verdict}
+                          {plainVerdict(d.verdict)}
                         </span>
                       </td>
-                      <td className="mono">{d.risk_score}</td>
+                      <td className="muted">{riskWord(d.risk_score)}</td>
                       <td className="mono muted">{displayId}</td>
                       <td className="mono" title={d.file_hash || ""}>
                         {shortHash(d.file_hash, 16)}
@@ -196,11 +200,11 @@ function FlaggedCard({
           {isSuper && flag.status === "flagged" && (
             <div className="adjudicate">
               <div className="adjudicate__note">
-                <span className="k">Supervisory review note</span>
+                <span className="k">Supervisor's finding</span>
                 <input
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="supervisory finding / court-admissible reason"
+                  placeholder="what did you find? — this is kept in the record"
                 />
               </div>
               <div className="adjudicate__actions">
@@ -217,7 +221,7 @@ function FlaggedCard({
                 ))}
               </div>
               <p className="hint">
-                Adjudication settles the session and writes an immutable decision block into the ledger.
+                This decision is permanent — the session is sealed into the log the moment you sign.
               </p>
             </div>
           )}
@@ -253,14 +257,14 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
   return (
     <>
       <tr>
-        <td className="mono">
+        <td>
           <button
             type="button"
             className="subtable-toggle"
             style={{ padding: "2px 6px", fontSize: 11 }}
             onClick={() => void toggle()}
           >
-            {expanded ? "▼" : "▶"} {session.id}
+            {expanded ? "▼" : "▶"} {session.label || `Session · ${session.id.slice(0, 6)}`}
           </button>
         </td>
         <td>
@@ -273,11 +277,11 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
                   : "warn"
             }`}
           >
-            {session.status.toUpperCase()}
+            {plainStatus(session.status)}
           </span>
         </td>
-        <td>{session.verdict || "—"}</td>
-        <td className="mono">{session.risk_score}</td>
+        <td>{plainVerdict(session.verdict)}</td>
+        <td className="muted">{riskWord(session.risk_score)}</td>
         <td>{session.checkpoint}</td>
         <td className="mono">{session.document_count}</td>
         <td>{session.screener || "—"}</td>
@@ -294,7 +298,7 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
             <div style={{ padding: "12px 18px", borderBottom: "1px solid var(--line)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <span className="k" style={{ fontSize: 11 }}>
-                  SESSION AUDIT MANIFEST · {session.id} ({docs.length} documents)
+                  {session.label || `Session ${session.id.slice(0, 6)}`} — what was screened ({docs.length} documents)
                 </span>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
@@ -302,7 +306,7 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
                     className="btn btn--small btn--ghost"
                     onClick={() => window.open(getBsaCertificateUrl(session.id), "_blank")}
                   >
-                    BSA 2023 · s.65B Certificate
+                    BSA 2023 · court copy
                   </button>
                   {session.block_hash && (
                     <button
@@ -310,7 +314,7 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
                       className="btn btn--small"
                       onClick={() => void copyText(session.block_hash || "")}
                     >
-                      Copy Block Hash
+                      Copy record seal
                     </button>
                   )}
                 </div>
@@ -326,11 +330,11 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
                     <tr>
                       <th>Doc</th>
                       <th>Type</th>
-                      <th>Verdict</th>
+                      <th>Result</th>
                       <th>Risk</th>
-                      <th>Extracted Mask</th>
-                      <th>File SHA-256</th>
-                      <th>IST Timestamp</th>
+                      <th>Extracted mask</th>
+                      <th>File fingerprint</th>
+                      <th>Scanned (IST)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -355,10 +359,10 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
                                     : "warn"
                               }`}
                             >
-                              {d.verdict}
+                              {plainVerdict(d.verdict)}
                             </span>
                           </td>
-                          <td className="mono">{d.risk_score}</td>
+                          <td className="muted">{riskWord(d.risk_score)}</td>
                           <td className="mono muted">{maskStr}</td>
                           <td className="mono" title={d.file_hash || ""}>
                             {shortHash(d.file_hash, 16)}
@@ -433,10 +437,10 @@ export function ReviewQueueView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">Review queue — flagged border sessions</h2>
+            <h2 className="panel__title">Sessions sent for review</h2>
             <p className="panel__body">
-              Adjudicate each flagged session with human-in-the-loop oversight. Expand each session
-              to examine cross-document discrepancies, extracted fields, and forensic signals.
+              Sessions the desk could not clear are waiting for a supervisor. Expand one to see what
+              didn't match and the documents behind it.
             </p>
           </div>
           <button type="button" className="btn" onClick={() => void load()}>
@@ -464,9 +468,10 @@ export function ReviewQueueView() {
       </section>
 
       <section className="panel">
-        <h2 className="panel__title">Recently signed sessions audit trail</h2>
+        <h2 className="panel__title">Signed sessions — the record</h2>
         <p className="panel__body" style={{ marginBottom: 12 }}>
-          Expand any session with <span className="mono">[▶]</span> to view its screened documents manifest and generate a court-admissible BSA 2023 certificate.
+          Expand a session with <span className="mono">[▶]</span> to see the documents behind it, or
+          download a court-admissible copy (BSA 2023).
         </p>
 
         {settled.length === 0 ? (
@@ -477,13 +482,13 @@ export function ReviewQueueView() {
               <tr>
                 <th>Session</th>
                 <th>Status</th>
-                <th>Verdict</th>
+                <th>Result</th>
                 <th>Risk</th>
                 <th>Checkpoint</th>
-                <th>Docs</th>
+                <th>Documents</th>
                 <th>Screened by</th>
                 <th>Closed (IST)</th>
-                <th>Block Hash</th>
+                <th>Record seal</th>
               </tr>
             </thead>
             <tbody>

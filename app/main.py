@@ -56,7 +56,7 @@ from session import build_comparison, session_payload, chain_hash
 # Central configuration: IST display timezone, checkpoint clusters (every
 # Indian border post SSB screens at), document catalog, guided-flow protocol.
 # IST display timezone + UTC<->IST helpers + stats aggregation.
-from config import to_ist, MAX_UPLOAD_BYTES, DOCUMENT_CATALOG
+from config import to_ist, IST, MAX_UPLOAD_BYTES, DOCUMENT_CATALOG
 from guide import (flow_for, checkpoint_catalog, document_catalog,
                    nationality_catalog)
 from stats import report_stats, session_stats, throughput
@@ -1167,6 +1167,7 @@ class ScreeningSession(Base):
     nationality = Column(String, nullable=True)               # traveller nationality (international guide flow)
     purpose = Column(String, nullable=True)                   # purpose of travel
     mode = Column(String, nullable=True)                      # land | air | sea | rail (checkpoint cluster)
+    label = Column(String, nullable=True)                     # "Session N" per IST day (resets daily)
 
 
 class NoticeBroadcast(Base):
@@ -1241,6 +1242,8 @@ _MIGRATIONS = [
     "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS note TEXT;",
     "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS adjudicator VARCHAR;",
     "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS adjudicated_at VARCHAR;",
+    # Human-friendly per-day session label ("Session 1..N" per IST date).
+    "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS label VARCHAR;",
     "CREATE INDEX IF NOT EXISTS ix_sessions_created ON screening_sessions(created_at);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_status ON screening_sessions(status);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_screener ON screening_sessions(screener);",
@@ -1307,12 +1310,64 @@ def _ensure_db_initialized():
                         ("note", "TEXT"),
                         ("adjudicator", "VARCHAR"),
                         ("adjudicated_at", "VARCHAR"),
+                        ("label", "VARCHAR"),
                     ):
                         if _scol not in scols:
                             conn.execute(text(f"ALTER TABLE screening_sessions ADD COLUMN {_scol} {_sddl}"))
                             conn.commit()
             except Exception:
                 pass
+        try:
+            _backfill_session_labels(engine)
+        except Exception as e:
+            print(f"[startup] session label backfill skipped ({e})")
+
+
+def _session_day(utc_str: str | None) -> str:
+    """"YYYY-MM-DD" IST date for a stored UTC timestamp (label day boundary)."""
+    ist = to_ist(utc_str) or ""
+    return ist[:10] if ist else ""
+
+
+def _backfill_session_labels(db_engine) -> None:
+    """Give every pre-existing session its per-day label ("Session 1..N").
+
+    Runs once after migrations: sessions lacking a label get one based on
+    their IST creation date, oldest first — the same rule new sessions get at
+    creation. Purely presentational; never included in the chain hash, so the
+    existing hash-chain integrity is untouched."""
+    try:
+        with SessionLocal(bind=db_engine) as db:
+            rows = (db.query(ScreeningSession)
+                    .filter(ScreeningSession.label.is_(None))
+                    .order_by(ScreeningSession.created_at.asc(), ScreeningSession.id.asc())
+                    .all())
+            if not rows:
+                return
+            day_count: dict = {}
+            for s in rows:
+                day = _session_day(s.created_at) or "unknown"
+                day_count[day] = day_count.get(day, 0) + 1
+                s.label = f"Session {day_count[day]}"
+            db.commit()
+    except Exception as e:
+        print(f"[startup] session label backfill skipped ({e})")
+
+
+def _next_session_label(db, created_at_utc: str) -> str:
+    """Label for a brand-new session: next running number on today's IST date."""
+    day = _session_day(created_at_utc)
+    if not day:
+        return "Session 1"
+    # IST day starts at 00:00 IST = 18:30 UTC the day before; count only rows
+    # created from that instant so we never scan the whole table.
+    y, m, d = (int(p) for p in day.split("-"))
+    ist_midnight = datetime(y, m, d, 0, 0, 0, tzinfo=IST)
+    cutoff = ist_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    n = sum(1 for (c,) in db.query(ScreeningSession.created_at)
+            .filter(ScreeningSession.created_at >= cutoff).all()
+            if _session_day(c) == day)
+    return f"Session {n + 1}"
 
 
 # --- Neon (serverless Postgres) pauses after ~5 min of idle; the FIRST request
@@ -2249,6 +2304,7 @@ def _session_pub(s, doc_count=None):
         "nationality": getattr(s, "nationality", None),
         "purpose": getattr(s, "purpose", None),
         "mode": getattr(s, "mode", None),
+        "label": getattr(s, "label", None) or "",
         "comparison": _safe_json(s.comparison),
         "note": s.note or "",
         "adjudicator": s.adjudicator,
@@ -2372,6 +2428,7 @@ def create_session(request: Request, checkpoint: str = Form(""),
             nationality=nat,
             purpose=(purpose or "").strip()[:120] or None,
             mode=(mode or "").strip().lower() or None,
+            label=_next_session_label(db, now),
         )
         db.add(s)
         db.commit()

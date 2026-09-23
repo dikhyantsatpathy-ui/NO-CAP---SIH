@@ -21,6 +21,7 @@ import {
 } from "../api";
 import { useToast } from "../app/state";
 import { copyText, shortHash, timeLabelIst } from "../app/util";
+import { plainCompare, plainStatus, plainVerdict, riskWord } from "../app/english";
 
 function verdictChip(verdict: string | null): string {
   if (verdict === "CLEAR") return "chip--ok";
@@ -63,8 +64,8 @@ export function LedgerView() {
       setVerify(res.data);
       toast(
         res.data.valid
-          ? `Chain intact — ${res.data.verified_blocks} blocks verified.`
-          : `CHAIN BROKEN at ${res.data.broken_at || "?"}`,
+          ? `Records verified — nothing has been changed.`
+          : `A record was changed — chain broken at ${res.data.broken_at || "?"}`,
         res.data.valid ? "success" : "error",
       );
     } else {
@@ -84,9 +85,10 @@ export function LedgerView() {
       <section className="stats-ribbon">
         <div className="stats-ribbon__head">
           <div>
-            <h2 className="panel__title" style={{ margin: 0 }}>Border Screening Health &amp; Operational Analytics</h2>
+            <h2 className="panel__title" style={{ margin: 0 }}>Border operations at a glance</h2>
             <p className="panel__body" style={{ margin: 0 }}>
-              Real-time privacy-preserving telemetry aggregated in Indian Standard Time (IST).
+              Live numbers for the last 24 hours, shown in Indian time (IST). Nothing readable is
+              ever stored — only counts and grouped results.
             </p>
           </div>
           <button
@@ -94,28 +96,28 @@ export function LedgerView() {
             className="subtable-toggle"
             onClick={() => setShowStats((v) => !v)}
           >
-            {showStats ? "▼ Hide Analytics" : "▶ View Border Analytics (IST)"}
+            {showStats ? "▼ Hide activity" : "▶ See today's activity"}
           </button>
         </div>
 
         {stats && (
           <div className="stats-ribbon__kpis">
             <div className="stats-kpi-card">
-              <span className="stats-kpi-card__lbl">TOTAL SCREENINGS</span>
+              <span className="stats-kpi-card__lbl">DOCUMENTS SCREENED</span>
               <span className="stats-kpi-card__val">{stats.reports.total_screens}</span>
             </div>
             <div className="stats-kpi-card">
-              <span className="stats-kpi-card__lbl">CLOSED SESSIONS</span>
+              <span className="stats-kpi-card__lbl">SESSIONS CLOSED</span>
               <span className="stats-kpi-card__val">{stats.sessions.total_sessions}</span>
             </div>
             <div className="stats-kpi-card">
-              <span className="stats-kpi-card__lbl">FLAGGED INCIDENTS</span>
+              <span className="stats-kpi-card__lbl">SENT FOR REVIEW</span>
               <span className="stats-kpi-card__val" style={{ color: "var(--bad)" }}>
                 {stats.reports.flagged_count}
               </span>
             </div>
             <div className="stats-kpi-card">
-              <span className="stats-kpi-card__lbl">MEDIAN LATENCY</span>
+              <span className="stats-kpi-card__lbl">MEDIAN CHECK TIME</span>
               <span className="stats-kpi-card__val">
                 {stats.reports.latency_ms.p50 != null ? `${stats.reports.latency_ms.p50}ms` : "—"}
               </span>
@@ -133,9 +135,9 @@ export function LedgerView() {
           <div className="subtable-container">
             <div className="subtable-pane">
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                <span className="k" style={{ fontSize: 11 }}>24-HOUR TRAFFIC PROFILE (HOURLY IN IST)</span>
+                <span className="k" style={{ fontSize: 11 }}>ACTIVITY BY HOUR (IST)</span>
                 <span className="muted mono" style={{ fontSize: 11 }}>
-                  Peak: {maxHourly} scans/hr · Timezone: Asia/Kolkata (IST)
+                  Peak: {maxHourly} scans/hr · Indian time (IST)
                 </span>
               </div>
               <div className="stats-bars">
@@ -153,17 +155,17 @@ export function LedgerView() {
 
               <div className="subtable-grid" style={{ marginTop: 14 }}>
                 <div className="subtable-grid__cell">
-                  <span className="subtable-grid__label">Verdict Distribution</span>
+                  <span className="subtable-grid__label">Check results</span>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
                     {Object.entries(stats.reports.verdicts).map(([v, count]) => (
                       <span key={v} className="chip chip--mute">
-                        {v}: {count}
+                        {plainVerdict(v)}: {count}
                       </span>
                     ))}
                   </div>
                 </div>
                 <div className="subtable-grid__cell">
-                  <span className="subtable-grid__label">Risk Buckets</span>
+                  <span className="subtable-grid__label">Risk level</span>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
                     {Object.entries(stats.reports.risk_buckets).map(([b, count]) => (
                       <span key={b} className="chip chip--mute">
@@ -182,10 +184,10 @@ export function LedgerView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">Protected session ledger</h2>
+            <h2 className="panel__title">The signed record</h2>
             <p className="panel__body">
-              One chained SHA-256 block per closed session. The ledger stores only canonical
-              digests and masked identifiers — no raw traveller data.
+              One tamper-proof entry per closed session, chained to the entry before it. Only masked
+              fingerprints and results are stored — no readable details.
             </p>
           </div>
           <button type="button" className="btn" onClick={() => void load()}>
@@ -195,17 +197,17 @@ export function LedgerView() {
 
         <div className="ledger-head">
           <div className="stat">
-            <span className="stat__label">SIGNED BLOCKS</span>
+            <span className="stat__label">SIGNED RECORDS</span>
             <span className="stat__value mono">{payload?.total_blocks ?? "—"}</span>
           </div>
           <div className="stat">
-            <span className="stat__label">CHAIN HEAD</span>
+            <span className="stat__label">NEWEST ENTRY</span>
             <span className="stat__value mono stat__value--sm">{shortHash(payload?.head_hash, 26)}</span>
           </div>
           <div className="stat">
-            <span className="stat__label">INTEGRITY</span>
+            <span className="stat__label">RECORDS CHECKED</span>
             <span className={`stat__value ${verify ? (verify.valid ? "t-ok" : "t-bad") : "t-mute"}`}>
-              {verifying ? "CHECKING…" : verify ? (verify.valid ? "VERIFIED" : "BROKEN") : "UNKNOWN"}
+              {verifying ? "CHECKING…" : verify ? (verify.valid ? "PASSED" : "BROKEN") : "NOT YET"}
             </span>
           </div>
           <button
@@ -214,19 +216,19 @@ export function LedgerView() {
             disabled={verifying}
             onClick={() => void runVerify()}
           >
-            {verifying ? "Verifying…" : "Verify chain"}
+            {verifying ? "Checking…" : "Check the records"}
           </button>
         </div>
 
         {verify && !verify.valid && (
           <p className="banner banner--bad">
-            TAMPER DETECTED — chain broken at {verify.broken_at || "unknown block"}. {verify.reason || ""}
+            A record was changed — the chain is broken at {verify.broken_at || "an unknown entry"}. {verify.reason || ""}
           </p>
         )}
         {verify && verify.valid && verify.total_blocks > 0 && (
           <p className="hint">
-            Re-hashed {verify.verified_blocks} blocks oldest → newest; every previous_hash matches the
-            preceding block's hash.
+            Re-checked every entry from oldest to newest — each one still points to the entry before
+            it, so nothing has been changed.
           </p>
         )}
 
@@ -247,33 +249,35 @@ export function LedgerView() {
                 <article className="block">
                   <header className="block__head">
                     <span className={`block__node node--${b.status === "approved" ? "ok" : b.status === "rejected" ? "bad" : "warn"}`} />
-                    <span className="block__no">BLOCK {String(i + 1).padStart(3, "0")}</span>
-                    {i === 0 && <span className="chip chip--seal">GENESIS</span>}
-                    <span className={`chip ${verdictChip(b.verdict)}`}>{b.verdict || b.status.toUpperCase()}</span>
-                    <span className="block__meta mono">
-                      {b.checkpoint} · {b.document_count} doc(s) · risk {b.risk_score ?? "—"}
+                    <span className="block__no">
+                      {b.label || `Record ${String(i + 1).padStart(3, "0")}`}
+                    </span>
+                    {i === 0 && <span className="chip chip--seal">FIRST ENTRY</span>}
+                    <span className={`chip ${verdictChip(b.verdict)}`}>{plainVerdict(b.verdict) || plainStatus(b.status)}</span>
+                    <span className="block__meta">
+                      {b.checkpoint} · {b.document_count} document(s) · {riskWord(b.risk_score)}
                     </span>
                     <button
                       type="button"
                       className="subtable-toggle"
                       onClick={() => setExpanded((cur) => (cur === b.id ? null : b.id))}
                     >
-                      {expanded === b.id ? "▼ Collapse" : "▶ Block Sub-Table"}
+                      {expanded === b.id ? "▼ Hide" : "▶ See details"}
                     </button>
                   </header>
                   <div className="block__grid">
                     <div className="block__cell">
-                      <span className="k">PREVIOUS BLOCK</span>
-                      <code className="hash mono">{b.prev_hash || "GENESIS"}</code>
+                      <span className="k">ENTRY BEFORE</span>
+                      <code className="hash mono">{b.prev_hash || "NONE — FIRST"}</code>
                     </div>
                     <div className="block__cell">
-                      <span className="k">THIS BLOCK HASH</span>
+                      <span className="k">THIS ENTRY'S FINGERPRINT</span>
                       <code className="hash mono">{b.block_hash}</code>
                     </div>
                   </div>
                   <div className="block__meta mono">
                     signed {timeLabelIst(b.created_at_ist || b.closed_at || b.updated_at)} · {b.screener || "officer"}
-                    {b.adjudicator ? ` · adjudicated ${b.adjudicator}` : ""}
+                    {b.adjudicator ? ` · settled by ${b.adjudicator}` : ""}
                   </div>
 
                   {/* Nested Sub-Table for Block Payload */}
@@ -281,16 +285,16 @@ export function LedgerView() {
                     <div className="subtable-container" style={{ margin: "10px 0 0" }}>
                       <div className="subtable-pane">
                         <span className="k" style={{ fontSize: 11, marginBottom: 8, display: "block" }}>
-                          CRYPTOGRAPHIC BLOCK PAYLOAD &amp; INTEGRITY RECEIPT
+                          RECORD DETAILS (FOR AUDIT)
                         </span>
                         <table className="tbl tbl--compact">
                           <tbody>
                             <tr>
-                              <td className="k">SESSION ID</td>
+                              <td className="k">SESSION</td>
                               <td className="mono">{b.id}</td>
                             </tr>
                             <tr>
-                              <td className="k">FULL SHA-256 HASH</td>
+                              <td className="k">FULL FINGERPRINT</td>
                               <td className="mono" style={{ wordBreak: "break-all" }}>
                                 {b.block_hash}{" "}
                                 <button
@@ -305,23 +309,23 @@ export function LedgerView() {
                             </tr>
                             <tr>
                               <td className="k">OFFICER NOTE</td>
-                              <td>{b.note || "No officer remarks"}</td>
+                              <td>{b.note || "No remarks"}</td>
                             </tr>
                             {b.comparison && (
                               <tr>
-                                <td className="k">COMPARISON VERDICT</td>
+                                <td className="k">DO THE DOCUMENTS AGREE?</td>
                                 <td>
                                   <span className={`chip chip--${b.comparison.verdict === "CONSISTENT" ? "ok" : "bad"}`}>
-                                    {b.comparison.verdict}
+                                    {plainCompare(b.comparison.verdict)}
                                   </span>{" "}
-                                  · risk bump +{b.comparison.risk_bump} ·{" "}
-                                  {b.comparison.checks.filter((c) => c.status === "disagree").length} discrepancy flags
+                                  · risk +{b.comparison.risk_bump} ·{" "}
+                                  {b.comparison.checks.filter((c) => c.status === "disagree").length} clashing detail(s)
                                 </td>
                               </tr>
                             )}
                             {b.comparison?.zkp_gates && (
                               <tr>
-                                <td className="k">ZKP PRIVACY GATES</td>
+                                <td className="k">PRIVACY CHECKS</td>
                                 <td>
                                   {Object.values(b.comparison.zkp_gates).map((g, gi) => (
                                     <span key={gi} className="chip chip--seal" style={{ marginRight: 6 }}>

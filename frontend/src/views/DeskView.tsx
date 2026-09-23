@@ -46,8 +46,18 @@ import {
   type ZkpGate,
 } from "../api";
 import { generateSpecimenFile, SPECIMEN_PRESETS } from "../app/specimens";
-import { useAuth, useToast } from "../app/state";
+import { useToast } from "../app/state";
 import { copyText, downloadBlob, shortHash, timeLabelIst } from "../app/util";
+import {
+  DESK_STEPS,
+  MODULE_PLAIN,
+  MODULE_ORDER,
+  deskStep,
+  plainCompare,
+  plainStatus,
+  plainVerdict,
+  riskWord,
+} from "../app/english";
 
 const DEFAULT_CHECKPOINTS = [
   "Raxaul",
@@ -73,6 +83,44 @@ function statusTone(s: string): string {
 }
 
 // ----------------------------------------------------------------------------
+// Silent step-guide — a thin rail showing where the officer is in the flow.
+// No instructions needed: the current step is simply lit up.
+// ----------------------------------------------------------------------------
+
+function GuideStepper({
+  active,
+  docCount,
+  closed,
+}: {
+  active: boolean;
+  docCount: number;
+  closed: boolean;
+}) {
+  const current = deskStep(active, docCount, closed);
+  return (
+    <ol className="stepper" aria-label="Screening steps">
+      {DESK_STEPS.map((step, i) => {
+        const state =
+          i < current.index
+            ? "done"
+            : i === current.index
+              ? "now"
+              : "next";
+        return (
+          <li key={step.id} className={`stepper__item stepper__item--${state}`}>
+            <span className="stepper__dot" aria-hidden="true">
+              {state === "done" ? "✓" : i + 1}
+            </span>
+            <span className="stepper__label">{step.label}</span>
+            <span className="stepper__note">{step.note}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ----------------------------------------------------------------------------
 // Guided Protocol & Traveller Briefing Bar
 // ----------------------------------------------------------------------------
 
@@ -95,14 +143,14 @@ function GuidedProtocolBar({
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>
-          <span>Border Protocol &amp; Traveller Guidance · {guide?.cluster_label || checkpoint}</span>
+          <span>What to do at {guide?.cluster_label || checkpoint}</span>
         </div>
         <button
           type="button"
           className="subtable-toggle"
           onClick={() => setOpen((v) => !v)}
         >
-          {open ? "▼ Collapse protocol" : "▶ View step-by-step guidance"}
+          {open ? "▼ Hide the steps" : "▶ Show the steps"}
         </button>
       </div>
 
@@ -118,7 +166,7 @@ function GuidedProtocolBar({
         )}
         {guide?.expected_documents && guide.expected_documents.length > 0 && (
           <span className="muted" style={{ fontSize: "11.5px" }}>
-            Expected Docs: {guide.expected_documents.map((d) => SCREEN_DOC_LABELS[d as ScreenDocType] || d).join(" / ")}
+            Expected documents: {guide.expected_documents.map((d) => SCREEN_DOC_LABELS[d as ScreenDocType] || d).join(" / ")}
           </span>
         )}
       </div>
@@ -126,7 +174,7 @@ function GuidedProtocolBar({
       {open && guide && (
         <div className="protocol-hud__grid">
           <div className="protocol-col">
-            <span className="protocol-col__heading">Officer Action Protocol</span>
+            <span className="protocol-col__heading">Officer — what to check</span>
             {guide.officer_steps?.map((st) => (
               <div key={st.order} className="protocol-step-item">
                 <span className="protocol-step-num">{st.order}</span>
@@ -138,7 +186,7 @@ function GuidedProtocolBar({
             ))}
           </div>
           <div className="protocol-col">
-            <span className="protocol-col__heading">Traveller Plain Instructions</span>
+            <span className="protocol-col__heading">Traveller — what to say</span>
             <div className="protocol-brief-box">
               {guide.traveller_steps?.map((ts) => (
                 <div key={ts.order} style={{ marginBottom: "6px" }}>
@@ -148,7 +196,7 @@ function GuidedProtocolBar({
             </div>
             {guide.capture_hint && (
               <div className="muted" style={{ fontSize: "11px", marginTop: "4px" }}>
-                <strong>Capture Note:</strong> {guide.capture_hint}
+                <strong>Capture tip:</strong> {guide.capture_hint}
               </div>
             )}
           </div>
@@ -182,15 +230,15 @@ function DocCard({
     <article className="doc-card">
       <header className="doc-card__head">
         <div className="doc-card__head-left">
-          <span className="doc-card__no">DOCUMENT #{index + 1}</span>
+          <span className="doc-card__no">Document {index + 1}</span>
           <span className="doc-card__type-title">
             {SCREEN_DOC_LABELS[doc.doc_type as ScreenDocType] || doc.doc_type}
           </span>
           <span className={`chip chip--${verdictTone(doc.verdict)}`}>
-            {doc.verdict}
+            {plainVerdict(doc.verdict)}
           </span>
-          <span className="chip chip--mute mono">
-            RISK {doc.risk_score}/100
+          <span className={`chip chip--${doc.risk_score != null && doc.risk_score > 55 ? "warn" : "mute"}`}>
+            {riskWord(doc.risk_score)}
           </span>
         </div>
 
@@ -200,7 +248,7 @@ function DocCard({
             className={`subtable-toggle ${activeSubTab ? "subtable-toggle--active" : ""}`}
             onClick={() => setActiveSubTab((prev) => (prev ? null : "forensics"))}
           >
-            {activeSubTab ? "▼ Collapse" : "▶ Forensic Checks & Custody"}
+            {activeSubTab ? "▼ Hide details" : "▶ See the check details"}
           </button>
           {isOpen && onRemove && (
             <button
@@ -208,7 +256,7 @@ function DocCard({
               className="btn btn--small btn--ghost"
               style={{ color: "var(--bad)", borderColor: "var(--bad-line)" }}
               onClick={() => onRemove(doc.id)}
-              title="Soft-remove document from active session while preserving ledger auditability"
+              title="Remove this document from the session (the audit record is kept)"
             >
               Remove
             </button>
@@ -219,7 +267,7 @@ function DocCard({
       {/* Main summary attribute matrix */}
       <div className="doc-card__matrix">
         {entries.length === 0 ? (
-          <span className="muted" style={{ padding: "8px 0" }}>No fields extracted.</span>
+          <span className="muted" style={{ padding: "8px 0" }}>No readable details found.</span>
         ) : (
           entries.slice(0, 6).map(([k, v]) => (
             <div key={k} className="doc-card__matrix-item">
@@ -239,81 +287,77 @@ function DocCard({
               className={`subtable-nav__btn ${activeSubTab === "forensics" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("forensics")}
             >
-              🔬 1. Forensic Modules (M1-M4)
+              🔬 1. Checks done on this document
             </button>
             <button
               type="button"
               className={`subtable-nav__btn ${activeSubTab === "fields" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("fields")}
             >
-              📋 2. Extracted Attributes &amp; Masking
+              📋 2. What was read
             </button>
             <button
               type="button"
               className={`subtable-nav__btn ${activeSubTab === "custody" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("custody")}
             >
-              🔗 3. Blockchain Custody &amp; Hash
+              🔗 3. Record &amp; seal (audit)
             </button>
           </div>
 
           {activeSubTab === "forensics" && (
             <div className="subtable-pane">
               <div className="forensics-cards-grid">
-                <div className="forensic-card">
-                  <div className="forensic-card__head">
-                    <span className="forensic-card__title">M1 · OCR &amp; MRZ</span>
-                    <span className="chip chip--ok">VERIFIED</span>
-                  </div>
-                  <div className="forensic-card__val">
-                    {modules?.extraction?.medium ? `Source: ${modules.extraction.medium}` : "Heuristic scan"}
-                    {modules?.extraction?.mrz?.valid ? " · MRZ Checksum OK" : ""}
-                    {modules?.extraction?.ocr?.ran ? " · OCR Active" : ""}
-                  </div>
-                </div>
-
-                <div className="forensic-card">
-                  <div className="forensic-card__head">
-                    <span className="forensic-card__title">M2 · VALIDATION</span>
-                    <span className={`chip chip--${modules?.validation?.verdict === "PASS" ? "ok" : "warn"}`}>
-                      {modules?.validation?.verdict || "PASS"}
-                    </span>
-                  </div>
-                  <div className="forensic-card__val">
-                    {doc.watchlist_hits && doc.watchlist_hits.length > 0 ? "⚠️ Watchlist match detected" : "Watchlist clear · Formats valid"}
-                  </div>
-                </div>
-
-                <div className="forensic-card">
-                  <div className="forensic-card__head">
-                    <span className="forensic-card__title">M3 · TAMPER FORENSICS</span>
-                    <span className={`chip chip--${modules?.tampering?.verdict === "PASS" ? "ok" : "warn"}`}>
-                      {modules?.tampering?.verdict || "PASS"}
-                    </span>
-                  </div>
-                  <div className="forensic-card__val">
-                    ELA: {modules?.tampering?.ela?.status || "LOW"} · Sensor Noise Uniform
-                  </div>
-                </div>
-
-                <div className="forensic-card">
-                  <div className="forensic-card__head">
-                    <span className="forensic-card__title">M4 · FACE BIOMETRICS</span>
-                    <span className={`chip chip--${modules?.face?.verdict === "PASS" ? "ok" : "mute"}`}>
-                      {modules?.face?.verdict || "UNVERIFIED"}
-                    </span>
-                  </div>
-                  <div className="forensic-card__val">
-                    {modules?.face?.score != null
-                      ? `Cosine match: ${Math.round(modules.face.score * 100)}% (${modules.face.method || "ArcFace"})`
-                      : "No live webcam frame provided"}
-                  </div>
-                </div>
+                {MODULE_ORDER.map((mk) => {
+                  const leaf = (modules?.[mk] ?? {}) as {
+                    verdict?: string;
+                    medium?: string;
+                    mrz?: { valid?: boolean };
+                    ocr?: { ran?: boolean };
+                    ela?: { status?: string };
+                    score?: number;
+                    method?: string;
+                  };
+                  const meta = MODULE_PLAIN[mk];
+                  const v = leaf?.verdict;
+                  const tone =
+                    v === "PASS" ? "ok"
+                      : v === "WARN" ? "warn"
+                        : mk === "face" ? "mute"
+                          : v === "REVIEW" ? "warn" : "mute";
+                  const extra =
+                    mk === "extraction"
+                      ? `${leaf?.medium ? `Read as a ${leaf.medium}` : "Read by text scan"}${leaf?.mrz?.valid ? " · machine line OK" : leaf?.ocr?.ran === false ? " · could not auto-read" : ""}`
+                      : mk === "validation"
+                        ? doc.watchlist_hits && doc.watchlist_hits.length > 0
+                          ? "⚠️ Name/number found on the known-fraud list"
+                          : "Format checks passed · not on the known-fraud list"
+                        : mk === "tampering"
+                          ? `Edit scan: ${leaf?.ela?.status || "low"} risk detected`
+                          : leaf?.score != null
+                            ? `Face match: ${Math.round(leaf.score * 100)}% (${leaf.method || "ArcFace"})`
+                            : "No live photo was provided to compare";
+                  return (
+                    <div key={mk} className="forensic-card">
+                      <div className="forensic-card__head">
+                        <span className="forensic-card__title">
+                          {meta.short}
+                          <span className="forensic-card__code mono">· {mk.toUpperCase()}</span>
+                        </span>
+                        <span className={`chip chip--${tone}`}>{plainVerdict(v) || "—"}</span>
+                      </div>
+                      <div className="forensic-card__val">
+                        {extra}
+                        <span className="forensic-card__what muted">{meta.what}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {doc.reasons && doc.reasons.length > 0 && (
                 <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--panel)", borderRadius: "8px", border: "1px solid var(--line)" }}>
-                  <span className="subtable-grid__label">EXPLAINABLE FORENSIC SIGNALS</span>
+                  <span className="subtable-grid__label">WHAT THE CHECKS FOUND</span>
                   <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: "12px", lineHeight: "1.5" }}>
                     {doc.reasons.map((r, ri) => (
                       <li key={ri} className="muted">{r}</li>
@@ -329,9 +373,9 @@ function DocCard({
               <table className="tbl tbl--compact">
                 <thead>
                   <tr>
-                    <th>Identity Attribute</th>
-                    <th>Extracted Value (DPDP 2023 Masked)</th>
-                    <th>Audit Status</th>
+                    <th>Field</th>
+                    <th>Read value (masked to protect privacy)</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -340,7 +384,7 @@ function DocCard({
                       <td className="k" style={{ textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</td>
                       <td className="mono">{String(v)}</td>
                       <td>
-                        <span className="chip chip--ok">VERIFIED</span>
+                        <span className="chip chip--ok">Read</span>
                       </td>
                     </tr>
                   ))}
@@ -354,7 +398,7 @@ function DocCard({
               <table className="tbl tbl--compact">
                 <tbody>
                   <tr>
-                    <td className="k" style={{ width: 180 }}>SHA-256 File Digest</td>
+                    <td className="k" style={{ width: 180 }}>File fingerprint (SHA-256)</td>
                     <td className="mono" style={{ wordBreak: "break-all" }}>
                       {doc.file_hash || "—"}{" "}
                       {doc.file_hash && (
@@ -370,17 +414,17 @@ function DocCard({
                     </td>
                   </tr>
                   <tr>
-                    <td className="k">Blockchain Block Hash</td>
-                    <td className="mono">{doc.block_hash || "Chained at session close"}</td>
+                    <td className="k">Record seal (block)</td>
+                    <td className="mono">{doc.block_hash || "Sealed when the session is signed"}</td>
                   </tr>
                   <tr>
-                    <td className="k">Screening Timestamp</td>
+                    <td className="k">Scanned at</td>
                     <td className="mono">
                       {doc.created_at_ist || timeLabelIst(doc.created_at)} ({doc.created_at})
                     </td>
                   </tr>
                   <tr>
-                    <td className="k">Screener Attribution</td>
+                    <td className="k">Screened by</td>
                     <td className="mono">{doc.screener || "system-evaluator"}</td>
                   </tr>
                 </tbody>
@@ -392,8 +436,8 @@ function DocCard({
 
       <footer className="doc-card__foot mono">
         <span>Recorded: {doc.created_at_ist || timeLabelIst(doc.created_at)}</span>
-        <span title={doc.file_hash || ""}>digest: {shortHash(doc.file_hash, 16)}</span>
-        <span title={doc.block_hash || ""}>block: {doc.block_hash ? shortHash(doc.block_hash, 16) : "pending"}</span>
+        <span title={doc.file_hash || ""}>fingerprint: {shortHash(doc.file_hash, 16)}</span>
+        <span title={doc.block_hash || ""}>seal: {doc.block_hash ? shortHash(doc.block_hash, 16) : "pending"}</span>
       </footer>
     </article>
   );
@@ -406,14 +450,14 @@ function DocCard({
 function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Record<string, ZkpGate> | null }) {
   return (
     <section className="board">
-      <h3 className="board__title">Cross-document comparison</h3>
+      <h3 className="board__title">Do the documents agree?</h3>
       <table className="tbl tbl--compact">
         <thead>
           <tr>
-            <th>Field</th>
-            <th>Status</th>
-            <th>Assessment</th>
-            <th>On documents</th>
+            <th>Detail</th>
+            <th>Result</th>
+            <th>What it means</th>
+            <th>Compared on</th>
           </tr>
         </thead>
         <tbody>
@@ -424,7 +468,7 @@ function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Rec
                 <span className="cell-sub mono">{c.field}</span>
               </td>
               <td>
-                <span className={`chip chip--${statusTone(c.status)}`}>{c.status.toUpperCase()}</span>
+                <span className={`chip chip--${statusTone(c.status)}`}>{plainCompare(c.status)}</span>
               </td>
               <td className="cell-detail">{c.detail}</td>
               <td className="mono">{c.docs.join(" + ") || "—"}</td>
@@ -433,14 +477,14 @@ function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Rec
         </tbody>
       </table>
       <p className="board__note">
-        Comparison persists only digests and flags. Raw values exist in memory during one
-        screening pass and are discarded.
+        Nothing readable is kept — only masked fingerprints and the results of the checks. Full
+        details live in memory for this pass and are discarded afterwards.
       </p>
 
       {zkp && Object.keys(zkp).length > 0 && (
         <div className="zkp">
           <div className="zkp__head">
-            <span className="k">Privacy gates — zero-knowledge assertions</span>
+            <span className="k">Privacy checks (automatic)</span>
             <span className="chip chip--seal">DIGEST-ONLY</span>
           </div>
           <div className="zkp__grid">
@@ -561,7 +605,7 @@ function WebcamCapture({
     <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Capture document from webcam">
       <div className="modal" style={{ maxWidth: 640 }}>
         <header className="modal__head">
-          <span className="modal__title">Webcam scanner &amp; live machine-reading</span>
+          <span className="modal__title">Webcam capture</span>
           <button type="button" className="btn btn--small" onClick={onCancel}>
             Close
           </button>
@@ -571,7 +615,7 @@ function WebcamCapture({
           {/* Camera switcher */}
           {devices.length > 1 && (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span className="k" style={{ whiteSpace: "nowrap" }}>SELECT CAMERA:</span>
+              <span className="k" style={{ whiteSpace: "nowrap" }}>CAMERA:</span>
               <select
                 value={selectedDeviceId}
                 onChange={(e) => setSelectedDeviceId(e.target.value)}
@@ -595,7 +639,7 @@ function WebcamCapture({
               <video ref={videoRef} autoPlay playsInline muted className="webcam" />
               <canvas ref={canvasRef} style={{ display: "none" }} />
               <p className="hint" style={{ marginTop: 6 }}>
-                Hold identity document flat against the camera. Ensure text and portrait are in focus.
+                Hold the document flat and steady, with the text and photo facing the camera.
               </p>
             </div>
           ) : (
@@ -609,24 +653,24 @@ function WebcamCapture({
               {liveExtract && (
                 <div className="extract-preview" style={{ marginTop: 10 }}>
                   <div className="extract-preview__head">
-                    <span className="k">Live Machine-Reading Preview</span>
-                    <span className="extract-preview__badge">Zero-Storage In-Memory</span>
+                    <span className="k">What the machine reads</span>
+                    <span className="extract-preview__badge">Nothing stored</span>
                   </div>
                   <div className="subtable-grid">
                     <div className="subtable-grid__cell">
-                      <span className="subtable-grid__label">Doc Type</span>
+                      <span className="subtable-grid__label">Document type</span>
                       <span className="subtable-grid__val">{liveExtract.doc_type}</span>
                     </div>
                     {Object.entries(liveExtract.masked_fields || {}).map(([k, v]) => (
                       <div key={k} className="subtable-grid__cell">
-                        <span className="subtable-grid__label">{k}</span>
+                        <span className="subtable-grid__label">{k.replace(/_/g, " ")}</span>
                         <span className="subtable-grid__val mono">{String(v)}</span>
                       </div>
                     ))}
                   </div>
                   {liveExtract.mrz && (
                     <div style={{ marginTop: 4, fontSize: 11 }} className="mono muted">
-                      MRZ: {liveExtract.mrz.valid ? "✓ Valid Checksum" : "No MRZ lines"}
+                      Machine line: {liveExtract.mrz.valid ? "✓ checks out" : "no machine line found"}
                     </div>
                   )}
                 </div>
@@ -639,7 +683,7 @@ function WebcamCapture({
           {!previewBlob ? (
             <>
               <button type="button" className="btn btn--primary" onClick={snapFrame}>
-                Capture frame
+                Capture
               </button>
               <button type="button" className="btn" onClick={onCancel}>
                 Cancel
@@ -654,11 +698,11 @@ function WebcamCapture({
                   disabled={extracting}
                   onClick={() => void runPreviewExtraction()}
                 >
-                  {extracting ? "Extracting…" : "Preview Machine-Reading"}
+                  {extracting ? "Reading…" : "Preview what it reads"}
                 </button>
               )}
               <button type="button" className="btn btn--primary" onClick={acceptCapture}>
-                Use for screening
+                Use this photo
               </button>
               <button type="button" className="btn" onClick={retake}>
                 Retake
@@ -707,8 +751,8 @@ function HandoverModal({
         </header>
         <div className="modal__body">
           <p className="modal__desc">
-            HMAC-SHA256 sealed session packet for offline shift continuity — USB export or 2D QR
-            transfer. No raw identifiers; only digests, masks and flags.
+            Sealed copy of the session for offline shift handover — USB export or 2D QR transfer.
+            No readable details, only fingerprints, masks and flags.
           </p>
           <table className="tbl tbl--compact">
             <tbody>
@@ -764,7 +808,6 @@ function HandoverModal({
 
 export function DeskView() {
   const { toast } = useToast();
-  const { me } = useAuth();
   const [active, setActive] = useState<ScreeningSessionDetail | null>(null);
   const [openList, setOpenList] = useState<ScreeningSession[]>([]);
   const [catalog, setCatalog] = useState<CheckpointCatalog | null>(null);
@@ -1026,11 +1069,10 @@ export function DeskView() {
         <section className="panel panel--muted">
           <div className="panel__row">
             <div>
-              <h2 className="panel__title">Desk — no active session</h2>
+              <h2 className="panel__title">Ready for the next traveller</h2>
               <p className="panel__body">
-                One traveller at a time. Open a session for the person at the counter, select their
-                checkpoint &amp; nationality, screen their documents one by one, cross-compare, then
-                approve or flag.
+                One traveller at a time. Open a session, scan their documents one by one, compare,
+                then decide — approve or send for a closer look.
               </p>
             </div>
             <button
@@ -1093,17 +1135,21 @@ export function DeskView() {
                   {busy ? "Opening…" : "Open session"}
                 </button>
               </div>
+              <p className="muted" style={{ gridColumn: "1 / -1", fontSize: "11.5px", marginTop: 2 }}>
+                <strong>Traveller goes into Session 1, 2, 3…</strong> — numbering restarts at 1 every
+                day, so today's sessions are easy to call out.
+              </p>
             </div>
           )}
 
           {openList.length > 0 && (
             <div className="resume">
-              <span className="k">Resume open session</span>
+              <span className="k">Resume today's open session</span>
               <table className="tbl tbl--compact">
                 <tbody>
                   {openList.map((s) => (
                     <tr key={s.id}>
-                      <td className="mono">{s.id}</td>
+                      <td>{s.label || `Session · ${s.id.slice(0, 6)}`}</td>
                       <td>{s.checkpoint}</td>
                       <td className="mono muted">{s.document_count} doc(s)</td>
                       <td>
@@ -1130,8 +1176,10 @@ export function DeskView() {
         <section className="panel">
           <div className="panel__row">
             <div>
-              <div className="k">BORDER SCREENING SESSION</div>
-              <div className="session-id mono">{active.id}</div>
+              <div className="k">CURRENT TRAVELLER</div>
+              <div className="session-label">
+                {active.label || `Session · ${active.id.slice(0, 6)}`}
+              </div>
               <div className="session-meta">
                 <span className="chip chip--mute">{active.checkpoint}</span>
                 <span
@@ -1145,17 +1193,21 @@ export function DeskView() {
                           : "mute"
                   }`}
                 >
-                  {active.status.toUpperCase()}
+                  {plainStatus(active.status)}
                 </span>
                 {active.nationality && (
-                  <span className="chip chip--info">NAT: {active.nationality}</span>
+                  <span className="chip chip--info">
+                    Nationality: {nationalities.find((n) => n.code === active.nationality)?.label || active.nationality}
+                  </span>
                 )}
                 {active.purpose && (
                   <span className="chip chip--mute">{active.purpose}</span>
                 )}
-                <span className="muted">opened {timeLabelIst(active.created_at_ist || active.created_at)}</span>
-                <span className="muted">by {active.screener || me?.name || "officer"}</span>
-                <span className="muted">{active.document_count} doc(s)</span>
+                <span className="muted">
+                  opened {timeLabelIst(active.created_at_ist || active.created_at)}
+                  {active.screener ? ` by ${active.screener}` : ""}
+                  {" · "}{active.document_count} document(s)
+                </span>
               </div>
             </div>
             {open && (
@@ -1164,6 +1216,13 @@ export function DeskView() {
               </button>
             )}
           </div>
+
+          {/* Silent step-guide: which of the 4 steps is the officer on? */}
+          <GuideStepper
+            active={!!active}
+            docCount={active.documents.filter((d) => !d.removed_at).length}
+            closed={!!closed}
+          />
 
           {/* Border Post Guided Protocol Banner */}
           <GuidedProtocolBar
@@ -1179,9 +1238,10 @@ export function DeskView() {
               <div className="intake-card">
                 <div className="intake-card__header">
                   <div>
-                    <h3 className="intake-card__title">Document Intake &amp; Forensics</h3>
+                    <h3 className="intake-card__title">Scan a document</h3>
                     <p className="intake-card__subtitle">
-                      Attach traveller identity document or scan via webcam. Declared fields assist OCR back-fill.
+                      Add the traveller's document — upload a photo or use the webcam. The system
+                      reads it, checks it, scans for edits and compares the face, all at once.
                     </p>
                   </div>
                   {file && (
@@ -1205,8 +1265,12 @@ export function DeskView() {
                   {/* Left Column: Metadata & Declared Values */}
                   <div className="intake-section">
                     <div className="intake-section__title">
-                      <span>1. Identity Attributes</span>
+                      <span>1. What the document says</span>
                     </div>
+                    <p className="intake-section__hint">
+                      Fill these only if you can read them — they help the system read the document.
+                      This is matched, never stored.
+                    </p>
 
                     <label className="field">
                       <span className="field__label">DOCUMENT TYPE</span>
@@ -1224,7 +1288,7 @@ export function DeskView() {
 
                     <div className="intake-fields-grid">
                       <label className="field">
-                        <span className="field__label">DECLARED NUMBER</span>
+                        <span className="field__label">DOCUMENT NUMBER</span>
                         <input
                           value={docNumber}
                           onChange={(e) => setDocNumber(e.target.value)}
@@ -1233,7 +1297,7 @@ export function DeskView() {
                       </label>
 
                       <label className="field">
-                        <span className="field__label">DECLARED DOB</span>
+                        <span className="field__label">DATE OF BIRTH (optional)</span>
                         <input
                           value={declaredDob}
                           onChange={(e) => setDeclaredDob(e.target.value)}
@@ -1243,7 +1307,7 @@ export function DeskView() {
                     </div>
 
                     <label className="field">
-                      <span className="field__label">DECLARED FULL NAME</span>
+                      <span className="field__label">FULL NAME (optional)</span>
                       <input
                         value={declaredName}
                         onChange={(e) => setDeclaredName(e.target.value)}
@@ -1255,8 +1319,12 @@ export function DeskView() {
                   {/* Right Column: Capture Source */}
                   <div className="intake-section">
                     <div className="intake-section__title">
-                      <span>2. Capture Source (Zero-Storage)</span>
+                      <span>2. Add the document</span>
                     </div>
+                    <p className="intake-section__hint">
+                      A clear photo or scan works best. We never keep the photo — only a masked
+                      fingerprint and the check results.
+                    </p>
 
                     <div className="intake-capture-zone">
                       <label className={`dropzone ${file ? "dropzone--has-file" : ""}`}>
@@ -1274,9 +1342,9 @@ export function DeskView() {
                           </svg>
                         </div>
                         <span className="dropzone__label">
-                          {file ? file.name : "Click to select or drag document image"}
+                          {file ? file.name : "Click to select a photo or scan"}
                         </span>
-                        <span className="dropzone__hint">Supports JPEG, PNG, WEBP, or PDF scans (Max 10 MB)</span>
+                        <span className="dropzone__hint">JPEG, PNG, WEBP or PDF up to 10 MB</span>
                       </label>
 
                       <button
@@ -1289,7 +1357,7 @@ export function DeskView() {
                           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                           <circle cx="12" cy="13" r="4" />
                         </svg>
-                        Scan from Webcam Scanner
+                        Use the webcam instead
                       </button>
                     </div>
                   </div>
@@ -1298,7 +1366,7 @@ export function DeskView() {
                 {/* Bottom Actions Bar */}
                 <div className="intake-actions-bar">
                   <div className="specimen-row">
-                    <span className="k" style={{ fontSize: "11px" }}>QUICK DEMO:</span>
+                    <span className="k" style={{ fontSize: "11px" }}>TRY WITH A SAMPLE:</span>
                     {SPECIMEN_PRESETS.map((p) => (
                       <button
                         key={p.id}
@@ -1318,7 +1386,7 @@ export function DeskView() {
                     disabled={busy || !file}
                     onClick={() => void screenIntoSession()}
                   >
-                    {busy ? "Running 4-Module Pipeline…" : "⚡ Screen Document into Session"}
+                    {busy ? "Checking…" : "Check this document"}
                   </button>
                 </div>
 
@@ -1349,21 +1417,21 @@ export function DeskView() {
                 <p className="hint">No active documents yet. Screen the traveller's first document.</p>
               )}
 
-              {/* --- Soft-Removed Documents Drawer ------------------------ */}
+              {/* --- Mistaken-scan drawer (removed docs stay in the audit) - */}
               {active.documents.filter((d) => Boolean(d.removed_at)).length > 0 && (
                 <div className="removed-drawer">
                   <div className="removed-drawer__title">
-                    Soft-Removed Documents ({active.documents.filter((d) => Boolean(d.removed_at)).length}) — Preserved in Audit Trail
+                    Taken out of the session ({active.documents.filter((d) => Boolean(d.removed_at)).length}) — still kept in the audit trail
                   </div>
                   <table className="tbl tbl--compact" style={{ background: "var(--panel)" }}>
                     <thead>
                       <tr>
-                        <th>Doc</th>
+                        <th>Document</th>
                         <th>Type</th>
-                        <th>Verdict</th>
+                        <th>Result</th>
                         <th>Risk</th>
                         <th>Removed (IST)</th>
-                        <th>Removed By</th>
+                        <th>Removed by</th>
                         <th>Action</th>
                       </tr>
                     </thead>
@@ -1375,9 +1443,9 @@ export function DeskView() {
                             <td className="mono">DOC-{rd.id.slice(0, 6)}</td>
                             <td>{SCREEN_DOC_LABELS[rd.doc_type as ScreenDocType] || rd.doc_type}</td>
                             <td>
-                              <span className={`chip chip--${verdictTone(rd.verdict)}`}>{rd.verdict}</span>
+                              <span className={`chip chip--${verdictTone(rd.verdict)}`}>{plainVerdict(rd.verdict)}</span>
                             </td>
-                            <td className="mono">{rd.risk_score}</td>
+                            <td className="muted">{riskWord(rd.risk_score)}</td>
                             <td className="mono">{rd.removed_at_ist || timeLabelIst(rd.removed_at)}</td>
                             <td>{rd.removed_by || "screener"}</td>
                             <td>
@@ -1417,7 +1485,7 @@ export function DeskView() {
                   </div>
                   <div className="approval__actions">
                     {canClose && hasDiscrepancy && (
-                      <span className="chip chip--bad">Discrepancy — approval locked; flag for review</span>
+                      <span className="chip chip--bad">Details clash — send to a supervisor for review</span>
                     )}
                     {canClose && !hasDiscrepancy && (
                       <button
@@ -1426,7 +1494,7 @@ export function DeskView() {
                         disabled={busy}
                         onClick={() => void closeSessionNow("approve")}
                       >
-                        {busy ? "Signing…" : "Approve · sign into ledger"}
+                        {busy ? "Signing…" : "Approve — looks genuine"}
                       </button>
                     )}
                     {canClose && (
@@ -1436,7 +1504,7 @@ export function DeskView() {
                         disabled={busy}
                         onClick={() => void closeSessionNow("flag")}
                       >
-                        Flag for review
+                        Send for review
                       </button>
                     )}
                   </div>
@@ -1470,33 +1538,33 @@ export function DeskView() {
                 <div className="signed__headtext">
                   <span className="signed__title">
                     {active.status === "approved"
-                      ? "Session approved — signed into ledger"
+                      ? "Approved — recorded in the log"
                       : active.status === "rejected"
-                        ? "Session rejected — signed as evidence"
-                        : "Session flagged — awaiting supervisory review"}
+                        ? "Rejected — kept as evidence"
+                        : "Sent for review — waiting for a supervisor"}
                   </span>
-                  <span className="signed__sub mono">Immutable chained record · zero raw identifiers stored</span>
+                  <span className="signed__sub mono">Tamper-proof log · nothing readable stored</span>
                 </div>
                 <span className="chip chip--seal">SHA-256</span>
               </header>
 
               <div className="signed__hashgrid">
                 <div className="signed__hashcell">
-                  <span className="k">Signature · this block</span>
+                  <span className="k">Signature · this record</span>
                   <code className="hash hash--big mono">{active.block_hash}</code>
                 </div>
                 <div className="signed__hashcell">
-                  <span className="k">Linked from · previous block</span>
+                  <span className="k">Linked from · previous record</span>
                   <code className="hash mono">{active.prev_hash || "GENESIS"}</code>
                 </div>
               </div>
 
               <div className="signed__meta mono">
-                <span>verdict {active.verdict || "—"}</span>
-                <span>risk {active.risk_score}</span>
+                <span>result {plainVerdict(active.verdict)}</span>
+                <span>{riskWord(active.risk_score)}</span>
                 <span>closed {timeLabelIst(active.closed_at || "")}</span>
                 {active.adjudicator && <span>settled by {active.adjudicator}</span>}
-                <span>docs {active.document_count}</span>
+                <span>{active.document_count} doc(s)</span>
               </div>
               {active.note && <p className="signed__note">officer note: {active.note}</p>}
 

@@ -136,7 +136,7 @@ export function StaffView() {
                           <span className="cell-sub">{s.email}</span>
                         </td>
                         <td>
-                          <span className="chip chip--warn">PENDING APPROVAL</span>
+                          <span className="chip chip--warn">WAITING FOR APPROVAL</span>
                         </td>
                         <td className="mono muted">{timeLabelIst(s.registered_at)}</td>
                         <td style={{ textAlign: "right" }}>
@@ -196,7 +196,7 @@ export function StaffView() {
                             <td colSpan={5} style={{ padding: 0, background: "var(--panel-2)" }}>
                               <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--line)" }}>
                                 <span className="k" style={{ fontSize: 11, marginBottom: 6, display: "block" }}>
-                                  CRYPTOGRAPHIC OFFICER ATTRIBUTION PROFILE
+                                  OFFICER SIGNING PROFILE (AUDIT)
                                 </span>
                                 <table className="tbl tbl--compact" style={{ background: "var(--panel)" }}>
                                   <tbody>

@@ -1018,6 +1018,15 @@ textarea::placeholder {
   font-weight: 600;
   color: var(--ink);
 }
+/* Human session label — "Session 3" big and friendly. */
+.session-label {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.2;
+}
 .session-meta {
   display: flex;
   align-items: center;
@@ -1026,6 +1035,83 @@ textarea::placeholder {
   flex-wrap: wrap;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* Silent step-guide: 4 steps, only the current one is lit. */
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.stepper__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  opacity: 0.62;
+  transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  min-width: 0;
+}
+.stepper__item--now {
+  opacity: 1;
+  border-color: var(--seal);
+  background: color-mix(in srgb, var(--seal) 6%, transparent);
+}
+.stepper__item--done {
+  opacity: 0.85;
+}
+.stepper__dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+}
+.stepper__item--now .stepper__dot {
+  color: #fff;
+  background: var(--seal);
+  border-color: var(--seal);
+}
+.stepper__item--done .stepper__dot {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.stepper__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.stepper__note {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 860px) {
+  .stepper__note {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .stepper {
+    grid-template-columns: 1fr;
+  }
 }
 
 .new-session {
@@ -1122,6 +1208,13 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.intake-section__hint {
+  margin: -6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 
 .intake-fields-grid {

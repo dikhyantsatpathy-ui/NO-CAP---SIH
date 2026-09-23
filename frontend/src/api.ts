@@ -753,6 +753,8 @@ export interface ScreeningSession {
   risk_score: number | null;
   checkpoint: string;
   screener: string | null;
+  /** Human label "Session N" per IST day (resets to 1 each day). */
+  label?: string | null;
   comparison: SessionComparison | null;
   note: string;
   adjudicator: string | null;

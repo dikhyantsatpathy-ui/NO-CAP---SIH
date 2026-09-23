@@ -1,9 +1,9 @@
 // ============================================================================
 // App shell — SSB Border Screening Console (SIH26188).
-// Clean tabbed console: Desk / Review Queue / Crypto Ledger / Watchlist / Staff.
-// One traveller per session on the Desk; flagged sessions settle in the Review
-// Queue; approved-and-settled sessions chain into the Crypto Ledger as SHA-256
-// blocks. Zero raw identifiers are persisted anywhere.
+// Clean tabbed console: Desk / Review / Record Log / Watchlist / Staff.
+// One traveller per session on the Desk; sessions sent for review settle under
+// a supervisor; approved-and-settled sessions chain into the Record Log as
+// tamper-proof SHA-256 entries. Zero raw identifiers are persisted anywhere.
 // ============================================================================
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -57,8 +57,8 @@ const ICONS: Record<ViewKey, ReactNode> = {
 
 const NAV: { key: ViewKey; label: string }[] = [
   { key: "desk", label: "Desk" },
-  { key: "review", label: "Review Queue" },
-  { key: "ledger", label: "Crypto Ledger" },
+  { key: "review", label: "Review" },
+  { key: "ledger", label: "Record Log" },
   { key: "watchlist", label: "Watchlist" },
   { key: "staff", label: "Staff" },
 ];
@@ -152,8 +152,8 @@ function StatusBand() {
         <span className="dot dot--ok" /> Operational
       </span>
       <span className="statusband__item">One traveller per session</span>
-      <span className="statusband__item">SHA-256 digests only — no raw identifiers stored</span>
-      <span className="statusband__item">Chained session ledger</span>
+      <span className="statusband__item">Nothing readable is stored — only fingerprints and results</span>
+      <span className="statusband__item">Every decision is recorded in a sealed log</span>
       <span className="statusband__item statusband__item--right">
         <span className="clock mono">IST {ist}</span>
         <span className="divider" />
