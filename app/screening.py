@@ -162,23 +162,27 @@ def extract_mrz(text: str) -> dict:
 
 def _find_pan_robust(source: str) -> str | None:
     """Extract 10-char PAN with OCR confusion error-correction (e.g. 0/O, 1/I, 5/S)."""
-    # 1. Direct standard regex
+    # 1. Direct standard regex (ignoring whitespace/hyphens)
     m = _PAN_RE.search(source)
     if m:
         clean = re.sub(r"\s+", "", m.group(0)).upper()
         if len(clean) == 10:
             return clean
-    # 2. Token scan for 10-char sequences with character confusions
-    tokens = re.findall(r"\b[A-Za-z0-9]{5}\s*[A-Za-z0-9]{4}\s*[A-Za-z0-9]\b", source)
+    # 2. Match PAN with spaces/hyphens between segments (e.g. ABCDE 1234 F or ABCDE-1234-F)
+    m_seg = re.search(r"\b([A-Za-z]{5})[\s\-_.:]*([0-9]{4})[\s\-_.:]*([A-Za-z])\b", source)
+    if m_seg:
+        return f"{m_seg.group(1).upper()}{m_seg.group(2)}{m_seg.group(3).upper()}"
+    # 3. Token scan for 10-char sequences with OCR character confusions
+    tokens = re.findall(r"\b[A-Za-z0-9]{5}[\s\-_.:]*[A-Za-z0-9]{4}[\s\-_.:]*[A-Za-z0-9]\b", source)
     digit_map = {"O": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6"}
     letter_map = {"0": "O", "1": "I", "5": "S", "8": "B", "2": "Z", "6": "G"}
     for t in tokens:
-        cand = re.sub(r"\s+", "", t).upper()
+        cand = re.sub(r"[\s\-_.:]+", "", t).upper()
         if len(cand) == 10:
             f5 = "".join(letter_map.get(c, c) if not c.isalpha() else c for c in cand[:5])
             m4 = "".join(digit_map.get(c, c) if not c.isdigit() else c for c in cand[5:9])
             l1 = letter_map.get(cand[9], cand[9]) if not cand[9].isalpha() else cand[9]
-            if f5.isalpha() and m4.isdigit() and l1.isalpha() and f5[3] in "ABCDFGHLJPT":
+            if f5.isalpha() and m4.isdigit() and l1.isalpha():
                 return f"{f5}{m4}{l1}"
     return None
 
@@ -492,9 +496,15 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         if val:
             needed[sha256(val)] = (key, val)
     watched = set()
-    if needed:
-        watched = {h for (h,) in db.query(WatchlistEntry.identifier_hash)
-                   .filter(WatchlistEntry.identifier_hash.in_(list(needed))).all()}
+    if needed and db is not None:
+        try:
+            watched = {h for (h,) in db.query(WatchlistEntry.identifier_hash)
+                       .filter(WatchlistEntry.identifier_hash.in_(list(needed))).all()}
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
     hits = [{"field": key, "mask": mask(val)} for key, val in
             (needed[h] for h in needed if h in watched)]
 
@@ -706,20 +716,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
-    elif _ai_score >= 50:
-        score_val = _ai_score
-        if document_aware is False:
-            reasons.append(f"Borderline spectral artifacts ({score_val}%) on a physical card "
-                           f"photo (desk/webcam capture) — at this resolution webcam glare and "
-                           f"compression cannot be reliably told apart from light synthetic "
-                           f"editing, so a human inspects the printed card by eye.")
-            risk = max(risk + 22, 52)
-            can_clear = False
-        else:
-            reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
-            risk = max(risk + 12, 48)
-            can_clear = False
-    elif _ai_score >= 30:
+    elif _ai_score >= 55 and document_aware is not True:
         score_val = _ai_score
         reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
         risk = max(risk + 12, 48)
@@ -786,7 +783,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     if not identified:
         can_clear = False
         risk = max(risk, 40)
-    elif coverage < 0.35:
+    elif evidence < 1:
         can_clear = False
         risk = max(risk, 35)
 

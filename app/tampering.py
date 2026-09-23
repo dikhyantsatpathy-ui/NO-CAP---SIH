@@ -81,7 +81,7 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                                  "webcam capture for a person check."})
 
     # ---- AI-generation / Editing / Screen-aware signal ------------------
-    if ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 50 or (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited"):
+    if ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 65 or (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited"):
         checks.append({
             "label": "ai-generated-or-edited",
             "ok": False,

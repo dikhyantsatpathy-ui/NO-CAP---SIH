@@ -22,6 +22,7 @@ import hmac
 import io
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -280,8 +281,9 @@ def _pixel_scan(file_bytes: bytes, ext: str):
         gross_std = float(np.asarray(a, dtype=np.float32).std())
         fine_noise = noise_std
         ratio = fine_noise / (gross_std + 1e-6)
-        content = gross_std > 15.0
-        suspicious_noise = ratio < 200.0 and fine_noise < 60.0
+        content = gross_std > 25.0
+        # Synthetic AI renders without sensor noise have near-zero fine noise
+        suspicious_noise = content and (ratio < 0.04 and fine_noise < 1.5)
 
         uniform_reencode = False
         if ext in ("jpg", "jpeg") and file_bytes[:2] == b"\xff\xd8":
@@ -838,7 +840,7 @@ def detect_image(image_bytes: bytes, filename: str = "") -> dict:
         _load()
         result = _detector_ai(image_bytes, filename)
         # If AI is suspected or score is elevated, that signal takes priority over document layout
-        if result.get("ai_suspected") or result.get("ai_score", 0) >= 35:
+        if result.get("ai_suspected") or result.get("ai_score", 0) >= 65:
             result["latency_ms"] = int(round((time.perf_counter() - start) * 1000))
             return result
 

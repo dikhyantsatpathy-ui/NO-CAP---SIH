@@ -130,7 +130,7 @@ def analyze_syndicate_patterns(
     if current_doc.get("verdict") in ("FLAGGED", "REVIEW"):
         recent_suspicious += 1
 
-    if recent_suspicious >= 3:
+    if recent_suspicious >= 3 and current_doc.get("verdict") in ("FLAGGED", "REVIEW"):
         alerts.append({
             "level": "WARNING",
             "type": "SECTOR_BURST_ALERT",
