@@ -253,3 +253,15 @@ def test_extract_autoclassifies_doctype(client):
     assert "detected_doc_type" in body
     assert "detected_confidence" in body
     assert "detected_scores" in body
+
+
+def test_doctype_cls_direct():
+    from doctype_cls import classify_document, model_available
+    if not model_available():
+        pytest.skip("doctype.onnx not present")
+    img = _synth_image()
+    res = classify_document(img)
+    assert res is not None
+    assert "doc_type" in res
+    assert "confidence" in res
+    assert "scores" in res
