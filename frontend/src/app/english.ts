@@ -3,8 +3,8 @@
 //
 // The desk is operated under time pressure; every label here exists so an
 // officer (or any reader) understands what a thing IS before they have to
-// know what it is CALLED. Technical wording is kept as a small secondary
-// note where it matters for audit — never as the primary label.
+// know what it is CALLED. Technical jargon is replaced with self-explanatory,
+// crystal-clear layman terms.
 // ---------------------------------------------------------------------------
 
 export type ModuleKey = "extraction" | "validation" | "tampering" | "face";
@@ -20,24 +20,24 @@ export interface ModulePlain {
 
 export const MODULE_PLAIN: Record<ModuleKey, ModulePlain> = {
   extraction: {
-    short: "Document read",
-    name: "Read the document",
-    what: "The system reads the printed details: text, document number and the machine-readable line.",
+    short: "1. Text & Codes",
+    name: "Read Document Text & Codes",
+    what: "Reads printed details, document number, and machine-readable lines (MRZ).",
   },
   validation: {
-    short: "Genuine check",
-    name: "Check the document is genuine",
-    what: "Checks the format, checksums and the known-fraud list (watchlist).",
+    short: "2. Validity & Watchlist",
+    name: "Check Rules & Watchlist",
+    what: "Verifies official mathematical checksums, valid expiration dates, and checks fraud lists.",
   },
   tampering: {
-    short: "Tamper scan",
-    name: "Scan for edits or copies",
-    what: "Looks for signs the image was edited, cropped or copied from another source.",
+    short: "3. Photo Tamper Scan",
+    name: "Scan for Edits & Forgery",
+    what: "Checks if the photo was replaced, digitally edited, or re-printed from a photocopy.",
   },
   face: {
-    short: "Face check",
-    name: "Compare the face",
-    what: "Compares the photo on the document with the person's live camera frame.",
+    short: "4. Live Face Match",
+    name: "Compare Face with Camera",
+    what: "Matches the photo on the identity card against the traveller standing in front of the camera.",
   },
 };
 
@@ -83,13 +83,13 @@ export function riskWord(score?: number | null): string {
 
 /** Plain labels for cross-document comparison statuses. */
 export const COMPARE_PLAIN: Record<string, string> = {
-  agree: "Matches",
+  agree: "Matches perfectly",
   disagree: "Does not match",
-  "phonetic-match": "Sounds the same",
-  "cross-script": "Reads the same in another script",
+  "phonetic-match": "Same name (spelling variation)",
+  "cross-script": "Same name in another script",
   unverified: "Couldn't compare",
-  CONSISTENT: "Yes — consistent",
-  DISCREPANCY: "No — details clash",
+  CONSISTENT: "Consistent — All details match",
+  DISCREPANCY: "Discrepancy — Details clash",
 };
 
 export function plainCompare(status?: string | null): string {
@@ -99,18 +99,18 @@ export function plainCompare(status?: string | null): string {
 
 export function compareTone(status?: string | null): string {
   const s = (status || "").toLowerCase();
-  if (s === "agree" || s === "bs-ad-harmonized") return "ok";
-  if (s === "disagree") return "bad";
+  if (s === "agree" || s === "bs-ad-harmonized" || s === "consistent") return "ok";
+  if (s === "disagree" || s === "discrepancy") return "bad";
   if (s === "phonetic-match" || s === "cross-script") return "info";
   return "mute";
 }
 
-/** The desk's silent step-guide. Shown as a thin progress rail. */
+/** The desk's silent step-guide. Shown as a clean progress rail. */
 export const DESK_STEPS = [
-  { id: "open", label: "Open a session", note: "one traveller at a time" },
-  { id: "scan", label: "Scan documents", note: "one document at a time" },
-  { id: "compare", label: "Compare", note: "do all details agree?" },
-  { id: "decide", label: "Decide", note: "approve or send for review" },
+  { id: "open", label: "1. Open Session", note: "Traveller arrival" },
+  { id: "scan", label: "2. Scan Document", note: "Passport, ID or Visa" },
+  { id: "compare", label: "3. Auto-Checks", note: "Tamper & face scan" },
+  { id: "decide", label: "4. Decision", note: "Approve or flag" },
 ] as const;
 
 export type DeskStepId = (typeof DESK_STEPS)[number]["id"];
@@ -130,14 +130,62 @@ export function deskStep(
 
 /** Short plain name for session statuses. */
 export const SESSION_STATUS_PLAIN: Record<string, string> = {
-  open: "Open",
-  approved: "Approved",
-  flagged: "Sent for review",
-  rejected: "Rejected",
-  settled: "Settled",
+  open: "In Progress",
+  approved: "Approved & Signed",
+  flagged: "Sent to Review Queue",
+  rejected: "Rejected (Evidence)",
+  settled: "Settled by Supervisor",
 };
 
 export function plainStatus(s?: string | null): string {
   if (!s) return "—";
   return SESSION_STATUS_PLAIN[s.toLowerCase()] || s;
+}
+
+/** Contextual guidance cue for the officer at the current step. */
+export function stepGuidance(
+  active: boolean,
+  docCount: number,
+  status?: string,
+): { title: string; hint: string } {
+  if (!active) {
+    return {
+      title: "Ready for traveller",
+      hint: "Click 'Open new session' to begin screening the next traveller.",
+    };
+  }
+  if (status === "approved") {
+    return {
+      title: "Session Approved & Signed",
+      hint: "All identity checks passed. Signed into the tamper-proof ledger. Click 'Start Next Traveller' below.",
+    };
+  }
+  if (status === "flagged") {
+    return {
+      title: "Session Sent to Review Queue",
+      hint: "Discrepancy recorded and forwarded to supervisor queue for adjudication. Click 'Start Next Traveller' below.",
+    };
+  }
+  if (status === "rejected") {
+    return {
+      title: "Session Rejected",
+      hint: "Fraud confirmed and permanently recorded as evidence. Click 'Start Next Traveller' below.",
+    };
+  }
+  if (docCount === 0) {
+    return {
+      title: "Step 1: Scan the traveller's primary document",
+      hint: "Upload a document image or capture with webcam. The system will automatically read details, check for tampering, and verify validity.",
+    };
+  }
+  if (docCount === 1) {
+    return {
+      title: "Step 2: Document 1 checked",
+      hint: "You can scan an additional document (e.g. Visa, Citizenship, or Aadhaar) to cross-check details, or proceed to approve.",
+    };
+  }
+  return {
+    title: "Step 3: Review cross-document check",
+    hint: "Verify that names, dates of birth, and identity numbers match across all presented documents before signing.",
+  };
 }

@@ -1355,19 +1355,38 @@ def _backfill_session_labels(db_engine) -> None:
 
 
 def _next_session_label(db, created_at_utc: str) -> str:
-    """Label for a brand-new session: next running number on today's IST date."""
+    """Label for a brand-new session: next running number on today's IST date (Session 1, 2, 3...).
+    Strictly resets back to Session 1 every midnight IST."""
     day = _session_day(created_at_utc)
     if not day:
         return "Session 1"
-    # IST day starts at 00:00 IST = 18:30 UTC the day before; count only rows
-    # created from that instant so we never scan the whole table.
-    y, m, d = (int(p) for p in day.split("-"))
-    ist_midnight = datetime(y, m, d, 0, 0, 0, tzinfo=IST)
-    cutoff = ist_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    n = sum(1 for (c,) in db.query(ScreeningSession.created_at)
-            .filter(ScreeningSession.created_at >= cutoff).all()
-            if _session_day(c) == day)
-    return f"Session {n + 1}"
+    try:
+        y, m, d = (int(p) for p in day.split("-"))
+        ist_midnight = datetime(y, m, d, 0, 0, 0, tzinfo=IST)
+        cutoff = ist_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        rows = (
+            db.query(ScreeningSession.label, ScreeningSession.created_at)
+            .filter(ScreeningSession.created_at >= cutoff)
+            .all()
+        )
+        count = 0
+        max_num = 0
+        for lbl, c in rows:
+            if _session_day(c) == day:
+                count += 1
+                if lbl and lbl.startswith("Session "):
+                    try:
+                        num = int(lbl.split("Session ")[1].strip())
+                        if num > max_num:
+                            max_num = num
+                    except (ValueError, IndexError):
+                        pass
+        next_num = max(count, max_num) + 1
+        return f"Session {next_num}"
+    except Exception as e:
+        print(f"[_next_session_label] fallback ({e})")
+        return "Session 1"
+
 
 
 # --- Neon (serverless Postgres) pauses after ~5 min of idle; the FIRST request
@@ -2304,7 +2323,7 @@ def _session_pub(s, doc_count=None):
         "nationality": getattr(s, "nationality", None),
         "purpose": getattr(s, "purpose", None),
         "mode": getattr(s, "mode", None),
-        "label": getattr(s, "label", None) or "",
+        "label": getattr(s, "label", None) or f"Session #{s.id[:6]}",
         "comparison": _safe_json(s.comparison),
         "note": s.note or "",
         "adjudicator": s.adjudicator,

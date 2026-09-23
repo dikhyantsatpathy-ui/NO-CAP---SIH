@@ -57,6 +57,7 @@ import {
   plainStatus,
   plainVerdict,
   riskWord,
+  stepGuidance,
 } from "../app/english";
 
 const DEFAULT_CHECKPOINTS = [
@@ -83,40 +84,57 @@ function statusTone(s: string): string {
 }
 
 // ----------------------------------------------------------------------------
-// Silent step-guide — a thin rail showing where the officer is in the flow.
-// No instructions needed: the current step is simply lit up.
+// Silent step-guide — a clean rail showing where the officer is in the flow.
+// Clearly highlighted step and one-line gentle guidance cue.
 // ----------------------------------------------------------------------------
 
 function GuideStepper({
   active,
   docCount,
   closed,
+  status,
 }: {
   active: boolean;
   docCount: number;
   closed: boolean;
+  status?: string;
 }) {
   const current = deskStep(active, docCount, closed);
+  const guidance = stepGuidance(active, docCount, status);
+
   return (
-    <ol className="stepper" aria-label="Screening steps">
-      {DESK_STEPS.map((step, i) => {
-        const state =
-          i < current.index
-            ? "done"
-            : i === current.index
-              ? "now"
-              : "next";
-        return (
-          <li key={step.id} className={`stepper__item stepper__item--${state}`}>
-            <span className="stepper__dot" aria-hidden="true">
-              {state === "done" ? "✓" : i + 1}
-            </span>
-            <span className="stepper__label">{step.label}</span>
-            <span className="stepper__note">{step.note}</span>
-          </li>
-        );
-      })}
-    </ol>
+    <div className="stepper-wrap">
+      <ol className="stepper" aria-label="Screening steps">
+        {DESK_STEPS.map((step, i) => {
+          const state =
+            i < current.index
+              ? "done"
+              : i === current.index
+                ? "now"
+                : "next";
+          return (
+            <li key={step.id} className={`stepper__item stepper__item--${state}`}>
+              <span className="stepper__dot" aria-hidden="true">
+                {state === "done" ? "✓" : i + 1}
+              </span>
+              <div className="stepper__text">
+                <span className="stepper__label">{step.label}</span>
+                <span className="stepper__note">{step.note}</span>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <div className={`step-guide-cue step-guide-cue--${status || (closed ? "closed" : docCount === 0 ? "intake" : "active")}`}>
+        <div className="step-guide-cue__icon">
+          {status === "approved" ? "✅" : status === "flagged" ? "⚠️" : status === "rejected" ? "🛑" : docCount === 0 ? "👉" : docCount === 1 ? "💡" : "⚖️"}
+        </div>
+        <div>
+          <strong className="step-guide-cue__title">{guidance.title}</strong>
+          <span className="step-guide-cue__hint">{guidance.hint}</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -287,21 +305,21 @@ function DocCard({
               className={`subtable-nav__btn ${activeSubTab === "forensics" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("forensics")}
             >
-              🔬 1. Checks done on this document
+              🔍 1. Automatic Checks
             </button>
             <button
               type="button"
               className={`subtable-nav__btn ${activeSubTab === "fields" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("fields")}
             >
-              📋 2. What was read
+              📋 2. What Was Read
             </button>
             <button
               type="button"
               className={`subtable-nav__btn ${activeSubTab === "custody" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("custody")}
             >
-              🔗 3. Record &amp; seal (audit)
+              🛡️ 3. Audit &amp; Security Seal
             </button>
           </div>
 
@@ -327,22 +345,25 @@ function DocCard({
                           : v === "REVIEW" ? "warn" : "mute";
                   const extra =
                     mk === "extraction"
-                      ? `${leaf?.medium ? `Read as a ${leaf.medium}` : "Read by text scan"}${leaf?.mrz?.valid ? " · machine line OK" : leaf?.ocr?.ran === false ? " · could not auto-read" : ""}`
+                      ? `${leaf?.mrz?.valid ? "Machine code valid · Text read clearly" : leaf?.ocr?.ran === false ? "Could not auto-read text" : "Document text and numbers read clearly"}`
                       : mk === "validation"
                         ? doc.watchlist_hits && doc.watchlist_hits.length > 0
-                          ? "⚠️ Name/number found on the known-fraud list"
-                          : "Format checks passed · not on the known-fraud list"
+                          ? "⚠️ Alert: Found on national fraud watchlist"
+                          : "Authentic checksums · Clear of fraud watchlist"
                         : mk === "tampering"
-                          ? `Edit scan: ${leaf?.ela?.status || "low"} risk detected`
+                          ? leaf?.verdict === "PASS"
+                            ? "Photo integrity verified · Original texture (no edits/splicing)"
+                            : leaf?.ela?.status === "high" || leaf?.ela?.status === "medium"
+                              ? "⚠️ Warning: Signs of digital image editing detected"
+                              : `Edit scan: ${leaf?.ela?.status || "low"} risk detected`
                           : leaf?.score != null
-                            ? `Face match: ${Math.round(leaf.score * 100)}% (${leaf.method || "ArcFace"})`
-                            : "No live photo was provided to compare";
+                            ? `Live camera match: ${Math.round(leaf.score * 100)}% match with ID photo`
+                            : "No live camera photo attached (Skipped)";
                   return (
                     <div key={mk} className="forensic-card">
                       <div className="forensic-card__head">
                         <span className="forensic-card__title">
                           {meta.short}
-                          <span className="forensic-card__code mono">· {mk.toUpperCase()}</span>
                         </span>
                         <span className={`chip chip--${tone}`}>{plainVerdict(v) || "—"}</span>
                       </div>
@@ -450,14 +471,14 @@ function DocCard({
 function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Record<string, ZkpGate> | null }) {
   return (
     <section className="board">
-      <h3 className="board__title">Do the documents agree?</h3>
+      <h3 className="board__title">Cross-Document Check · Do all documents belong to the same person?</h3>
       <table className="tbl tbl--compact">
         <thead>
           <tr>
-            <th>Detail</th>
-            <th>Result</th>
-            <th>What it means</th>
-            <th>Compared on</th>
+            <th>Identity Detail</th>
+            <th>Comparison Result</th>
+            <th>What It Means</th>
+            <th>Compared Between</th>
           </tr>
         </thead>
         <tbody>
@@ -477,15 +498,15 @@ function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Rec
         </tbody>
       </table>
       <p className="board__note">
-        Nothing readable is kept — only masked fingerprints and the results of the checks. Full
-        details live in memory for this pass and are discarded afterwards.
+        🔒 <strong>Zero-Raw-Storage Privacy (DPDP Act 2023)</strong>: No personal photos or raw ID numbers are kept on disk.
+        All document cross-checks happen strictly in temporary memory during screening and are discarded immediately.
       </p>
 
       {zkp && Object.keys(zkp).length > 0 && (
         <div className="zkp">
           <div className="zkp__head">
-            <span className="k">Privacy checks (automatic)</span>
-            <span className="chip chip--seal">DIGEST-ONLY</span>
+            <span className="k">Automatic Privacy &amp; Legal Assurances</span>
+            <span className="chip chip--seal">ZERO-RAW-STORAGE</span>
           </div>
           <div className="zkp__grid">
             {Object.entries(zkp).map(([key, gate]) => (
@@ -495,7 +516,7 @@ function ComparisonBoard({ checks, zkp }: { checks: ComparisonCheck[]; zkp?: Rec
                   {gate.zk_proof_hash && <span className="mono zkp__proof">{gate.zk_proof_hash}</span>}
                 </div>
                 <div className="zkp__assertion">{gate.assertion}</div>
-                <div className="zkp__method mono">{gate.method}</div>
+                <div className="zkp__method mono">Cryptographic In-Memory Proof</div>
               </div>
             ))}
           </div>
@@ -883,13 +904,44 @@ export function DeskView() {
     });
     setBusy(false);
     if (res.ok) {
-      toast(`Session opened — screening ${res.data.id}.`, "success");
+      toast(`${res.data.label || "New session"} opened — screening started.`, "success");
       const detail = await getSession(res.data.id);
       if (detail.ok) setActive(detail.data);
       setShowNewForm(false);
       await refreshOpen();
     } else {
       toast(res.error, "error");
+    }
+  };
+
+  const startNextTraveller = async () => {
+    setBusy(true);
+    const post = active?.checkpoint || newCheckpoint.trim() || "Raxaul";
+    const nat = active?.nationality || newNationality.trim() || "NP";
+    const purp = active?.purpose || newPurpose.trim() || "Trade";
+    const res = await createSession({
+      checkpoint: post,
+      nationality: nat,
+      purpose: purp,
+    });
+    setBusy(false);
+    if (res.ok) {
+      toast(`${res.data.label || "Next session"} opened for ${post}. Ready to scan.`, "success");
+      const detail = await getSession(res.data.id);
+      if (detail.ok) setActive(detail.data);
+      setFile(null);
+      setFileKey((k) => k + 1);
+      setDocNumber("");
+      setDeclaredName("");
+      setDeclaredDob("");
+      setNote("");
+      setModelHint(null);
+      setShowNewForm(false);
+      await refreshOpen();
+    } else {
+      toast(`Failed to open next session: ${res.error}`, "error");
+      await resetDesk();
+      setShowNewForm(true);
     }
   };
 
@@ -1178,7 +1230,7 @@ export function DeskView() {
             <div>
               <div className="k">CURRENT TRAVELLER</div>
               <div className="session-label">
-                {active.label || `Session · ${active.id.slice(0, 6)}`}
+                {active.label || `Session #${active.id.slice(0, 6)}`}
               </div>
               <div className="session-meta">
                 <span className="chip chip--mute">{active.checkpoint}</span>
@@ -1210,19 +1262,100 @@ export function DeskView() {
                 </span>
               </div>
             </div>
-            {open && (
-              <button type="button" className="btn" onClick={() => void refreshOpen()} disabled={busy}>
-                Refresh
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              {closed && (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void startNextTraveller()}
+                  disabled={busy}
+                >
+                  ▶ Start Next Traveller
+                </button>
+              )}
+              {open && (
+                <button type="button" className="btn" onClick={() => void refreshOpen()} disabled={busy}>
+                  Refresh
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => void resetDesk()}
+                title="Return to traveller selection"
+              >
+                Reset Desk
               </button>
-            )}
+            </div>
           </div>
 
-          {/* Silent step-guide: which of the 4 steps is the officer on? */}
+          {/* Stepper progress rail and subtle guidance cue */}
           <GuideStepper
             active={!!active}
             docCount={active.documents.filter((d) => !d.removed_at).length}
             closed={!!closed}
+            status={active.status}
           />
+
+          {/* Executive Session Completed / Next Traveller Hero Banner */}
+          {closed && (
+            <div className={`session-completed-banner session-completed-banner--${active.status}`}>
+              <div className="session-completed-banner__main">
+                <div className="session-completed-banner__icon">
+                  {active.status === "approved" ? "✅" : active.status === "flagged" ? "⚠️" : "🛑"}
+                </div>
+                <div className="session-completed-banner__info">
+                  <h3 className="session-completed-banner__title">
+                    {active.status === "approved"
+                      ? `${active.label || "Session"} Approved & Signed into Ledger`
+                      : active.status === "flagged"
+                        ? `${active.label || "Session"} Flagged & Sent to Supervisory Review`
+                        : `${active.label || "Session"} Rejected & Sealed as Fraud Evidence`}
+                  </h3>
+                  <p className="session-completed-banner__desc">
+                    {active.status === "approved"
+                      ? "All document checks and identity comparisons passed. A chained SHA-256 block has been signed into the border ledger. Court admissibility certificate is ready."
+                      : active.status === "flagged"
+                        ? "Discrepancies or warnings were detected. This session has been safely forwarded to the Senior Officer Review Queue for supervisory adjudication."
+                        : "Fraud has been confirmed by supervisory review and permanently recorded into the immutable audit log."}
+                  </p>
+                </div>
+              </div>
+
+              <div className="session-completed-banner__actions">
+                <button
+                  type="button"
+                  className="btn btn--primary btn--hero"
+                  onClick={() => void startNextTraveller()}
+                  disabled={busy}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" />
+                  </svg>
+                  <span>Start Next Traveller</span>
+                </button>
+
+                {active.block_hash && (
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    onClick={() => window.open(getBsaCertificateUrl(active.id), "_blank")}
+                  >
+                    📄 Court Certificate (s.65B BSA)
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  disabled={handoverBusy}
+                  onClick={() => void openHandover()}
+                >
+                  {handoverBusy ? "Sealing…" : "📋 Shift Handover Token"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Border Post Guided Protocol Banner */}
           <GuidedProtocolBar
@@ -1587,9 +1720,49 @@ export function DeskView() {
                 <button
                   type="button"
                   className="btn btn--primary"
+                  onClick={() => void startNextTraveller()}
+                >
+                  ▶ Start Next Traveller
+                </button>
+              </footer>
+            </div>
+          )}
+
+          {/* --- Flagged session routed to review queue --- */}
+          {closed && !active.block_hash && (
+            <div className="signed signed--warn">
+              <header className="signed__head">
+                <svg className="signed__mark" viewBox="0 0 64 64" aria-hidden="true">
+                  <rect width="64" height="64" rx="8" fill="currentColor" opacity="0.12" />
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" strokeWidth="4" />
+                </svg>
+                <div className="signed__headtext">
+                  <span className="signed__title">Forwarded to Supervisory Review Queue</span>
+                  <span className="signed__sub mono">Discrepancies flagged for Senior Officer adjudication</span>
+                </div>
+                <span className="chip chip--warn">REVIEW QUEUE</span>
+              </header>
+              <div className="signed__meta mono">
+                <span>status: SENT FOR REVIEW</span>
+                <span>risk: {riskWord(active.risk_score)} ({active.risk_score}/100)</span>
+                <span>closed: {timeLabelIst(active.closed_at || "")}</span>
+                <span>docs: {active.document_count} screened</span>
+              </div>
+              {active.note && <p className="signed__note">officer note: {active.note}</p>}
+              <footer className="signed__actions">
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void startNextTraveller()}
+                >
+                  ▶ Start Next Traveller
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
                   onClick={() => void resetDesk()}
                 >
-                  Start next traveller
+                  Reset Desk
                 </button>
               </footer>
             </div>

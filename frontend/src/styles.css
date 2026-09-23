@@ -2244,6 +2244,210 @@ textarea::placeholder {
 }
 
 /* ---------------------------------------------------------------------------
+   Steppers & Contextual Guidance
+   --------------------------------------------------------------------------- */
+.stepper-wrap {
+  margin-top: 14px;
+  margin-bottom: 18px;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.stepper__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.stepper__item--now {
+  border-color: var(--seal);
+  background: var(--seal-soft);
+  box-shadow: 0 0 0 1px var(--seal);
+}
+
+.stepper__item--done {
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
+}
+
+.stepper__item--next {
+  opacity: 0.65;
+}
+
+.stepper__dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: var(--bg-2);
+  color: var(--muted);
+}
+
+.stepper__item--now .stepper__dot {
+  background: var(--seal);
+  color: #ffffff;
+}
+
+.stepper__item--done .stepper__dot {
+  background: var(--ok);
+  color: #ffffff;
+}
+
+.stepper__text {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  line-height: 1.25;
+}
+
+.stepper__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.stepper__note {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step-guide-cue {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  margin-top: 10px;
+  animation: fadeIn 0.2s ease;
+}
+
+.step-guide-cue__icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.step-guide-cue__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  display: block;
+}
+
+.step-guide-cue__hint {
+  font-size: 12px;
+  color: var(--muted);
+  display: block;
+  margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Session Completed Banners (Immediate Post-Decision Hero)
+   --------------------------------------------------------------------------- */
+.session-completed-banner {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-bottom: 22px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: fadeIn 0.25s ease;
+}
+
+.session-completed-banner--approved {
+  border-color: var(--ok-line);
+  background: linear-gradient(135deg, var(--panel) 0%, var(--ok-soft) 100%);
+}
+
+.session-completed-banner--flagged {
+  border-color: var(--warn-line);
+  background: linear-gradient(135deg, var(--panel) 0%, var(--warn-soft) 100%);
+}
+
+.session-completed-banner--rejected {
+  border-color: var(--bad-line);
+  background: linear-gradient(135deg, var(--panel) 0%, var(--bad-soft) 100%);
+}
+
+.session-completed-banner__main {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.session-completed-banner__icon {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.session-completed-banner__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 4px 0;
+}
+
+.session-completed-banner__desc {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.session-completed-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+}
+
+.btn--hero {
+  padding: 10px 22px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  box-shadow: 0 2px 4px rgba(29, 78, 216, 0.25);
+}
+
+.btn--hero:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(29, 78, 216, 0.35);
+}
+
+
+/* ---------------------------------------------------------------------------
    12. Responsive
    --------------------------------------------------------------------------- */
 
