@@ -51,6 +51,11 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
     declared = {k: v for k, v in (declared or {}).items()
                 if isinstance(v, str) and v.strip()}
     ext = (filename or "").lower().rsplit(".", 1)[-1] if "." in (filename or "") else ""
+    if not ext or ext not in ("pdf", "jpg", "jpeg", "png", "webp", "bmp", "tiff", "heic"):
+        if data and data.startswith(b"%PDF"):
+            ext = "pdf"
+        else:
+            ext = "jpg"
 
     from screening import extract_fields
 
@@ -68,9 +73,9 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
         result["medium"] = "pdf"
         text, img_bytes = _pdf_text_or_image(data)
         if text:
-            result["fields"] = extract_fields(text)
+            result["fields"] = extract_fields(text, doc_type=doc_type)
         elif img_bytes:
-            img_res = _extract_image(img_bytes)
+            img_res = _extract_image(img_bytes, doc_type=doc_type)
             result["fields"] = img_res.get("fields", {})
             result["mrz"] = img_res.get("mrz")
             result["ocr"] = img_res.get("ocr", {"ran": True, "engine": "pdf-embedded-ocr"})
@@ -79,7 +84,7 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
             result["pdf_no_text"] = True
             result["ocr"] = {"ran": False,
                              "reason": "PDF has no extractable text layer (scan)."}
-    elif ext in ("jpg", "jpeg", "png", "webp", "bmp"):
+    else:
         result["medium"] = "image"
         if _is_aadhaar(doc_type):
             # Aadhaar gets a purpose-built pass: the 5-class YOLO zone detector
@@ -89,7 +94,7 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
             # so screening never hard-fails (Vercel-safe degradation).
             result.update(_extract_aadhaar_image(data))
         else:
-            result.update(_extract_image(data))
+            result.update(_extract_image(data, doc_type=doc_type))
 
     # Merge declared values only into gaps (machine-read values win).
     # Scope parsing to the selected document type: only generic identifier
@@ -160,7 +165,7 @@ def _pdf_text_or_image(data: bytes) -> tuple[str, bytes | None]:
     return "", None
 
 
-def _extract_image(data: bytes) -> dict:
+def _extract_image(data: bytes, doc_type: str = "") -> dict:
     """OCR + MRZ + Barcodes/QR over one image. Each subsystem is isolated: a failure in
     one never loses the rest, and unreadable input degrades to honest 'ran:
     False' rather than a hard error."""
@@ -177,7 +182,7 @@ def _extract_image(data: bytes) -> dict:
     # 1. Barcode & QR extraction (100% exact cryptographic fields if present)
     try:
         from qr_decoder import extract_from_barcodes
-        qr_res = extract_from_barcodes(data)
+        qr_res = extract_from_barcodes(data, doc_type=doc_type)
         if qr_res.get("ran") and qr_res.get("fields"):
             for k, v in qr_res["fields"].items():
                 if v:
@@ -190,7 +195,7 @@ def _extract_image(data: bytes) -> dict:
     out["ocr"] = ocr_meta
     out["text"] = text or ""
     if text:
-        extracted = extract_fields(text)
+        extracted = extract_fields(text, doc_type=doc_type)
         for k, v in extracted.items():
             if v and not out["fields"].get(k):
                 out["fields"][k] = v

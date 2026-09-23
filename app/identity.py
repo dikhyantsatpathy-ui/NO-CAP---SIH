@@ -62,21 +62,65 @@ def _ocr_available() -> bool:
 def ocr_extract(data: bytes):
     """Best-effort OCR of a document image -> (text, meta) or (None, meta).
 
-    The text read here is USED for identifier extraction and then discarded —
-    the zero-storage rule applies to OCR output just like everything else."""
-    if data is None:
+    Runs multi-pass enhancement for webcam and handheld camera captures
+    (raw, CLAHE contrast enhancement, grayscale, sharpening, and auto-orientation).
+    Zero-storage: text is used for identifier extraction and immediately discarded."""
+    if data is None or not data:
         return None, {"ran": False, "reason": "no image"}
 
-    # 1. Primary: RapidOCR (ONNX runtime, runs fast and accurately without external binaries)
+    if not _ocr_available():
+        return None, {"ran": False, "reason": "tesseract not installed (Vercel)"}
+
+    # 1. Primary: RapidOCR (ONNX runtime)
     rapid = _get_rapid_ocr()
     if rapid is not None:
         try:
+            # Pass A: Raw image bytes
             result, _ = rapid(data)
             if result:
                 lines = [r[1] for r in result if len(r) >= 2 and r[1]]
                 text = "\n".join(lines).strip()
-                if text:
-                    return text, {"ran": True, "engine": "rapidocr-onnx"}
+                if text and len(text) >= 15:
+                    return text, {"ran": True, "engine": "rapidocr-onnx", "pass": "raw"}
+
+            # Pass B: Multi-pass preprocessing with OpenCV for difficult camera/webcam lighting
+            import cv2
+            import numpy as np
+            nparr = np.frombuffer(data, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is not None:
+                # Enhance 1: CLAHE on luminance channel (fixes glossy card glare and uneven shadows)
+                lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                l, a, b_ch = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                cl = clahe.apply(l)
+                limg = cv2.merge((cl, a, b_ch))
+                enhanced_bgr = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+                
+                result_clahe, _ = rapid(enhanced_bgr)
+                if result_clahe:
+                    lines = [r[1] for r in result_clahe if len(r) >= 2 and r[1]]
+                    text_clahe = "\n".join(lines).strip()
+                    if text_clahe and len(text_clahe) > (len(text) if 'text' in locals() and text else 0):
+                        return text_clahe, {"ran": True, "engine": "rapidocr-onnx", "pass": "clahe"}
+
+                # Enhance 2: Grayscale + Sharpening kernel
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                gray_clahe = clahe.apply(gray)
+                kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+                sharpened = cv2.filter2D(gray_clahe, -1, kernel)
+                sharpened_bgr = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
+
+                result_sharp, _ = rapid(sharpened_bgr)
+                if result_sharp:
+                    lines = [r[1] for r in result_sharp if len(r) >= 2 and r[1]]
+                    text_sharp = "\n".join(lines).strip()
+                    if text_sharp:
+                        return text_sharp, {"ran": True, "engine": "rapidocr-onnx", "pass": "sharpened"}
+
+                # Return whatever partial text was read from pass A if any
+                if 'text' in locals() and text:
+                    return text, {"ran": True, "engine": "rapidocr-onnx", "pass": "partial"}
         except Exception:
             pass
 
@@ -95,7 +139,7 @@ def ocr_extract(data: bytes):
     except Exception:
         pass
 
-    return None, {"ran": False, "reason": "tesseract not installed (Vercel)"}
+    return None, {"ran": False, "reason": "No readable text detected on document image"}
 
 
 # --------------------------------------------------------------------------- #

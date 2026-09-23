@@ -160,18 +160,69 @@ def extract_mrz(text: str) -> dict:
     return out
 
 
+def _find_pan_robust(source: str) -> str | None:
+    """Extract 10-char PAN with OCR confusion error-correction (e.g. 0/O, 1/I, 5/S)."""
+    # 1. Direct standard regex
+    m = _PAN_RE.search(source)
+    if m:
+        clean = re.sub(r"\s+", "", m.group(0)).upper()
+        if len(clean) == 10:
+            return clean
+    # 2. Token scan for 10-char sequences with character confusions
+    tokens = re.findall(r"\b[A-Za-z0-9]{5}\s*[A-Za-z0-9]{4}\s*[A-Za-z0-9]\b", source)
+    digit_map = {"O": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6"}
+    letter_map = {"0": "O", "1": "I", "5": "S", "8": "B", "2": "Z", "6": "G"}
+    for t in tokens:
+        cand = re.sub(r"\s+", "", t).upper()
+        if len(cand) == 10:
+            f5 = "".join(letter_map.get(c, c) if not c.isalpha() else c for c in cand[:5])
+            m4 = "".join(digit_map.get(c, c) if not c.isdigit() else c for c in cand[5:9])
+            l1 = letter_map.get(cand[9], cand[9]) if not cand[9].isalpha() else cand[9]
+            if f5.isalpha() and m4.isdigit() and l1.isalpha() and f5[3] in "ABCDFGHLJPT":
+                return f"{f5}{m4}{l1}"
+    return None
+
+
+def _find_aadhaar_robust(source: str) -> str | None:
+    """Extract 12-digit Aadhaar UIDAI number, standard or spaced/dashed."""
+    m = re.search(r"\b([2-9]\d{3})[ -]?(\d{4})[ -]?(\d{4})\b", source)
+    if m:
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+    # Handle OCR substitution in 4-digit groups (e.g. S instead of 5, O instead of 0)
+    for cand in re.finditer(r"\b([A-Za-z0-9]{4})[ -]([A-Za-z0-9]{4})[ -]([A-Za-z0-9]{4})\b", source):
+        raw = cand.group(1) + cand.group(2) + cand.group(3)
+        digit_map = {"O": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6"}
+        digits = "".join(digit_map.get(c.upper(), c) for c in raw)
+        if len(digits) == 12 and digits.isdigit() and digits[0] not in ("0", "1"):
+            return digits
+    return None
+
+
+def _find_dl_robust(source: str) -> str | None:
+    """Extract Indian Driving Licence number across all state RTO formats."""
+    # Standard format: State(2) + RTO(2) + Year(4 opt) + Serial(7)
+    m = re.search(r"\b([A-Za-z]{2})[- /]*(\d{2})[- /]*((?:19|20)\d{2})?[- /]*(\d{7})\b", source)
+    if m:
+        st, rto, yr, num = m.groups()
+        if yr:
+            return f"{st.upper()}{rto}{yr}{num}"
+        return f"{st.upper()}{rto}{num}"
+    # Generic DL match: 2 letters + 13-14 digits
+    m2 = re.search(r"\b([A-Za-z]{2})[- /]*(\d{13,14})\b", source)
+    if m2:
+        return f"{m2.group(1).upper()}{m2.group(2)}"
+    return None
+
+
 def _match_identifiers(source: str) -> dict:
     """Run the identifier regexes over one text variant; first valid wins."""
     hits = {}
-    for cand in set(_PAN_RE.findall(source)):
-        clean_pan = re.sub(r"\s+", "", cand).upper()
-        if len(clean_pan) == 10:
-            hits["pan"] = clean_pan          # 10-char structure already proven
-            break
-    for cand in set(_DL_RE.findall(source)):
-        clean_dl = re.sub(r"[\s\-]", "", cand).upper()
-        hits["driving_licence"] = clean_dl
-        break
+    pan = _find_pan_robust(source)
+    if pan:
+        hits["pan"] = pan
+    dl = _find_dl_robust(source)
+    if dl:
+        hits["driving_licence"] = dl
     for cand in set(_PASSPORT_LITE_RE.findall(source)):
         hits["passport"] = cand     # demoted to a review signal if MRZ missing
         break
@@ -181,15 +232,13 @@ def _match_identifiers(source: str) -> dict:
     for cand in set(_PHONE_RE.findall(source)):
         hits["phone"] = cand
         break
-    for cand in set(_AADHAAR_RE.findall(source)):
-        clean_aadh = re.sub(r"[ -]", "", cand)
-        if len(clean_aadh) == 12 and clean_aadh[0] not in ("0", "1"):
-            hits["aadhaar"] = clean_aadh
-            break
+    aadh = _find_aadhaar_robust(source)
+    if aadh:
+        hits["aadhaar"] = aadh
     return hits
 
 
-def extract_fields(text: str) -> dict:
+def extract_fields(text: str, doc_type: str = "") -> dict:
     """Deterministic extraction of Indian identity identifiers from text.
     Returns only validated/masked-able raw values plus explainable flags."""
     text = unicodedata.normalize("NFKC", text or "")
@@ -227,12 +276,44 @@ def extract_fields(text: str) -> dict:
         addr_clean = re.sub(r"\s+", " ", addr_m.group(1)).strip()
         found["address"] = addr_clean[:120]
 
-    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...")
-    name_match = re.search(r"(?i)(?:Name|नाम|Holder|HIA/Name)[:\s\n]+([A-Za-z ]{3,35})", text)
-    if name_match:
-        cand_name = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z ]", "", name_match.group(1))).strip()
-        if cand_name and not any(cand_name.upper().startswith(bad) for bad in ("FATHER", "INCOME", "GOVT", "INDIA", "DEPARTMENT")):
-            found["name"] = cand_name[:80]
+    # Extract state if present in text
+    indian_states = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Delhi", "Jammu and Kashmir", "Ladakh"]
+    for st in indian_states:
+        if re.search(rf"\b{re.escape(st)}\b", text, re.IGNORECASE):
+            found["state"] = st
+            break
+
+    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...") or layout heuristics
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for ln in lines:
+        m = re.search(r"(?i)(?:Name|नाम|Holder(?:'s)?\s*Name|Applicant)[:\s]+([A-Za-z ]{3,40})", ln)
+        if m:
+            cand = re.sub(r"\s+", " ", m.group(1)).strip()
+            if cand and not any(cand.upper().startswith(bad) for bad in ("FATHER", "INCOME", "GOVT", "INDIA", "DEPARTMENT", "DIRECTOR")):
+                found["name"] = cand[:80]
+                break
+
+    # If name not found by explicit label, apply document layout heuristics
+    if not found.get("name"):
+        doc_clean = (doc_type or "").lower()
+        if "pan" in doc_clean:
+            for ln in lines:
+                up = ln.upper()
+                if any(bad in up for bad in ("INCOME", "TAX", "GOVT", "INDIA", "DEPARTMENT", "PERMANENT", "ACCOUNT", "FATHER", "SIGNATURE", "DATE")):
+                    continue
+                words = ln.split()
+                if 1 <= len(words) <= 4 and all(w.isalpha() for w in words) and len(ln) >= 3:
+                    found["name"] = ln.title()[:80]
+                    break
+        elif "aadhaar" in doc_clean:
+            for i, ln in enumerate(lines):
+                up = ln.upper()
+                if any(bad in up for bad in ("GOVERNMENT", "INDIA", "BHARAT", "UNIQUE", "IDENTIFICATION", "AUTHORITY")):
+                    continue
+                if "DOB" in up or "BIRTH" in up or "जन्म" in up:
+                    if i > 0 and lines[i-1].replace(" ", "").isalpha() and len(lines[i-1]) >= 3:
+                        found["name"] = lines[i-1].title()[:80]
+                        break
 
     # Extract gender if present
     g = re.search(r"\b(MALE|FEMALE|पुरुष|महिला)\b", text, re.IGNORECASE)
