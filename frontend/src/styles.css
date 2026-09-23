@@ -2742,27 +2742,28 @@ textarea::placeholder {
 
 /* ---------------------------------------------------------------------------
    Ashoka Chakra Watermark (Sovereign Seal Background)
+   Positioned behind header and tab bar so rotation dips beneath tab layer
    --------------------------------------------------------------------------- */
 .ashoka-watermark {
   position: fixed;
-  right: -50px;
-  bottom: -50px;
-  width: 460px;
-  height: 460px;
-  max-width: 48vw;
-  max-height: 48vw;
+  right: -60px;
+  top: 110px;
+  width: 480px;
+  height: 480px;
+  max-width: 50vw;
+  max-height: 50vw;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
-  z-index: 0;
+  z-index: 1;
   color: #0b2240;
-  opacity: 0.048;
+  opacity: 0.052;
   overflow: hidden;
   transition: opacity 0.3s ease;
 }
 
 [data-theme="dark"] .ashoka-watermark {
-  opacity: 0.055;
+  opacity: 0.058;
   color: #0b2240;
 }
 
@@ -2786,11 +2787,11 @@ textarea::placeholder {
 
 @media (max-width: 768px) {
   .ashoka-watermark {
-    right: -30px;
-    bottom: -30px;
-    width: 260px;
-    height: 260px;
-    opacity: 0.035;
+    right: -40px;
+    top: 140px;
+    width: 280px;
+    height: 280px;
+    opacity: 0.038;
   }
 }
 
