@@ -95,7 +95,7 @@ export function SignInGate() {
     <div className="gate">
       <div className="gate__panel">
         <div className="gate__badge-top">Ministry of Home Affairs · Govt. of India</div>
-        <h1 className="gate__title">SSB Border Screening Console</h1>
+        <h1 className="gate__title">Vibe check-point</h1>
         <p className="gate__sub">
           AI-based fake identity &amp; document screening · SIH 26188
           <br />

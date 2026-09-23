@@ -1,170 +1,129 @@
-// ============================================================================
-// App-wide state: toasts + the authenticated authority session.
-// ============================================================================
-
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+// frontend/src/app/state.tsx
+import { createContext, useContext, useState, useEffect, ReactNode, Fragment } from "react";
 import { getMe, logout as apiLogout, type Me } from "../api";
 
-// ----------------------------------------------------------------------------
-// Toasts
-// ----------------------------------------------------------------------------
-
-export type ToastKind = "success" | "error" | "warn" | "info";
-
-interface ToastItem {
-  id: number;
-  kind: ToastKind;
-  message: string;
+interface Toast {
+  id: string;
+  msg: string;
+  kind: "info" | "success" | "error" | "warn";
 }
 
-interface ToastContextValue {
-  toast: (message: string, kind?: ToastKind) => void;
-}
-
-const ToastContext = createContext<ToastContextValue>({ toast: () => {} });
-
-let toastSeq = 0;
-
-export function ToastProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<ToastItem[]>([]);
-
-  const toast = useCallback((message: string, kind: ToastKind = "info") => {
-    const id = ++toastSeq;
-    setItems((prev) => [...prev.slice(-4), { id, kind, message }]);
-    window.setTimeout(() => {
-      setItems((prev) => prev.filter((t) => t.id !== id));
-    }, 3800);
-  }, []);
-
-  return (
-    <ToastContext.Provider value={{ toast }}>
-      {children}
-      <div className="toast-stack" aria-live="polite">
-        {items.map((t) => (
-          <div key={t.id} className={`toast toast--${t.kind}`}>
-            <span className="toast__bar" aria-hidden="true" />
-            <span className="toast__msg">{t.message}</span>
-          </div>
-        ))}
-      </div>
-    </ToastContext.Provider>
-  );
-}
-
-export function useToast() {
-  return useContext(ToastContext);
-}
-
-// ----------------------------------------------------------------------------
-// Auth session
-// ----------------------------------------------------------------------------
-
-interface AuthContextValue {
-  /** true while the initial /api/admin/me probe is in flight */
+export interface AuthContextValue {
   booting: boolean;
-  me: Me | null;
-  /** actively logged-in authority (me exists, not just probing) */
   signedIn: boolean;
+  admin: Me["admin"] | null;
+  officer: Me["admin"] | null;
+  me: Me["admin"] | null;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
+  setDemoOfficer: (profile?: Partial<Me["admin"]>) => void;
+  toast: (msg: any, kind?: "info" | "success" | "error" | "warn") => void;
 }
 
-const AuthContext = createContext<AuthContextValue>({
-  booting: true,
-  me: null,
-  signedIn: false,
-  refresh: async () => {},
-  signOut: async () => {},
-});
+const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [booting, setBooting] = useState(true);
-  const [me, setMe] = useState<Me | null>(null);
-  const mounted = useRef(true);
+  const [admin, setAdmin] = useState<Me["admin"] | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const refresh = useCallback(async () => {
-    const res = await getMe();
-    if (mounted.current) setMe(res.ok ? res.data : null);
-  }, []);
+  const toast = (rawMsg: any, kind: "info" | "success" | "error" | "warn" = "info") => {
+    if (!rawMsg) return;
+    let text = "";
+    if (typeof rawMsg === "string") {
+      text = rawMsg;
+    } else if (Array.isArray(rawMsg)) {
+      text = rawMsg.map((m) => (typeof m === "object" ? m.msg || JSON.stringify(m) : String(m))).join("; ");
+    } else if (typeof rawMsg === "object") {
+      text = rawMsg.msg || rawMsg.detail || JSON.stringify(rawMsg);
+    } else {
+      text = String(rawMsg);
+    }
+
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, msg: text, kind }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
+  const refresh = async () => {
+    try {
+      const res = await getMe();
+      if (res.data?.admin) {
+        setAdmin(res.data.admin);
+      } else {
+        setAdmin(null);
+      }
+    } catch {
+      setAdmin(null);
+    } finally {
+      setBooting(false);
+    }
+  };
 
   useEffect(() => {
-    mounted.current = true;
-    refresh().finally(() => {
-      if (mounted.current) setBooting(false);
-    });
-    return () => {
-      mounted.current = false;
-    };
-  }, [refresh]);
-
-  const signOut = useCallback(async () => {
-    await apiLogout();
-    setMe(null);
+    refresh();
   }, []);
 
+  const signOut = async () => {
+    try {
+      await apiLogout();
+    } catch {
+      // ignore
+    }
+    setAdmin(null);
+    toast("Signed out successfully", "info");
+  };
+
+  const setDemoOfficer = (profile?: Partial<Me["admin"]>) => {
+    setAdmin({
+      email: profile?.email || "evaluator@ssb.gov.in",
+      name: profile?.name || "Asutosh Nayak",
+      institution: profile?.institution || "SIH26188",
+      designation: profile?.designation || "Student-Supervisor, AN",
+      pending_approval: false,
+      is_super_admin: true,
+    });
+  };
+
+  const value: AuthContextValue = {
+    booting,
+    signedIn: Boolean(admin),
+    admin,
+    officer: admin,
+    me: admin,
+    refresh,
+    signOut,
+    setDemoOfficer,
+    toast,
+  };
+
   return (
-    <AuthContext.Provider value={{ booting, me, signedIn: !!me, refresh, signOut }}>
+    <AuthContext.Provider value={value}>
       {children}
+      {toasts.length > 0 && (
+        <div className="toast-stack">
+          {toasts.map((t) => (
+            <div key={t.id} className={`toast toast--${t.kind}`}>
+              <div className="toast__bar" />
+              <div className="toast__msg">{typeof t.msg === "string" ? t.msg : JSON.stringify(t.msg)}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </AuthContext.Provider>
   );
 }
 
-export function useAuth() {
-  return useContext(AuthContext);
+export function ToastProvider({ children }: { children: ReactNode }) {
+  return <Fragment>{children}</Fragment>;
 }
 
-// ----------------------------------------------------------------------------
-// Analytics metric recording (session memory + local history in localStorage)
-// ----------------------------------------------------------------------------
-
-const EMPTY_METRICS: Record<string, number> = {
-  AUTHENTIC: 0,
-  PROVEN_FAKE: 0,
-  REVOKED: 0,
-  UNSIGNED: 0,
-};
-const LOCAL_METRICS_KEY = "nocap_metrics_local";
-
-export type MetricMap = Record<string, number>;
-
-function readLocalMetrics(): MetricMap {
-  try {
-    return { ...EMPTY_METRICS, ...JSON.parse(localStorage.getItem(LOCAL_METRICS_KEY) || "{}") };
-  } catch {
-    return { ...EMPTY_METRICS };
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error("useAuth must be used within an AuthProvider");
   }
-}
-
-/** Session counters live in a ref so React re-renders are not required. */
-const sessionMetrics: MetricMap = { ...EMPTY_METRICS };
-
-export function recordMetric(verdict: string) {
-  sessionMetrics[verdict] = (sessionMetrics[verdict] || 0) + 1;
-  const local = readLocalMetrics();
-  local[verdict] = (local[verdict] || 0) + 1;
-  localStorage.setItem(LOCAL_METRICS_KEY, JSON.stringify(local));
-}
-
-/** Map a desk-risk verdict (CLEAR/REVIEW/FLAGGED) onto the analytics scopes:
- *  CLEAR counts as AUTHENTIC, FLAGGED as PROVEN_FAKE, REVIEW as UNSIGNED. */
-export function recordScreeningMetric(verdict: string) {
-  const kind =
-    verdict === "CLEAR" ? "AUTHENTIC" : verdict === "FLAGGED" ? "PROVEN_FAKE" : "UNSIGNED";
-  recordMetric(kind);
-}
-
-export function getSessionMetrics(): MetricMap {
-  return { ...sessionMetrics };
-}
-
-export function getLocalMetrics(): MetricMap {
-  return readLocalMetrics();
+  return ctx;
 }

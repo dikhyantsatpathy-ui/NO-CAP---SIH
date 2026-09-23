@@ -1,12 +1,9 @@
 // ============================================================================
 // App shell — SSB Border Screening Console (SIH26188).
-// Clean tabbed console: Desk / Review / Record Log / Watchlist / Staff.
-// One traveller per session on the Desk; sessions sent for review settle under
-// a supervisor; approved-and-settled sessions chain into the Record Log as
-// tamper-proof SHA-256 entries. Zero raw identifiers are persisted anywhere.
+// Government of India, Ministry of Home Affairs.
 // ============================================================================
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth, useToast } from "./app/state";
 import { initials } from "./app/util";
 import { SignInGate } from "./views/GoogleSignIn";
@@ -18,150 +15,13 @@ import { StaffView } from "./views/StaffView";
 
 type ViewKey = "desk" | "review" | "ledger" | "watchlist" | "staff";
 
-const ICONS: Record<ViewKey, ReactNode> = {
-  desk: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7z" />
-      <path d="M9 12l2 2 4-4" />
-    </svg>
-  ),
-  review: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 6h11M9 12h11M9 18h11" />
-      <circle cx="4.5" cy="6" r="1.4" />
-      <circle cx="4.5" cy="12" r="1.4" />
-      <circle cx="4.5" cy="18" r="1.4" />
-    </svg>
-  ),
-  ledger: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="5" y="3" width="14" height="18" rx="1.5" />
-      <path d="M9 8h6M9 12h6M9 16h6" />
-    </svg>
-  ),
-  watchlist: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  ),
-  staff: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="9" cy="8" r="3.5" />
-      <path d="M2.5 20c1-4 3.6-6 6.5-6s5.5 2 6.5 6" />
-      <circle cx="17.5" cy="9" r="2.5" />
-      <path d="M15.5 14.5c2.3.2 4 1.9 4.8 4.5" />
-    </svg>
-  ),
-};
-
-const NAV: { key: ViewKey; label: string }[] = [
-  { key: "desk", label: "Desk" },
-  { key: "review", label: "Review" },
-  { key: "ledger", label: "Record Log" },
-  { key: "watchlist", label: "Watchlist" },
-  { key: "staff", label: "Staff" },
+const NAV: { key: ViewKey; label: string; icon: string }[] = [
+  { key: "desk", label: "Desk", icon: "🖥️" },
+  { key: "review", label: "Review Queue", icon: "📋" },
+  { key: "ledger", label: "Record Log", icon: "⛓️" },
+  { key: "watchlist", label: "Watchlist", icon: "🛡️" },
+  { key: "staff", label: "Staff", icon: "👤" },
 ];
-
-function BrandMark() {
-  return (
-    <svg className="brand__mark" viewBox="0 0 64 64" aria-hidden="true">
-      <rect width="64" height="64" rx="8" fill="var(--seal)" />
-      <g fill="none" stroke="var(--ink-on-seal)" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M32 8l18 9c0 12-4 22-18 30-14-8-18-18-18-30z" />
-        <path d="M25 32l5 5 10-11" />
-      </g>
-    </svg>
-  );
-}
-
-function TopBar() {
-  const { me, signOut } = useAuth();
-  const { toast } = useToast();
-  const [signingOut, setSigningOut] = useState(false);
-
-  const doSignOut = async () => {
-    setSigningOut(true);
-    await signOut();
-    toast("Officer session closed.", "info");
-  };
-
-  return (
-    <header className="topbar">
-      <div className="topbar__brand">
-        <BrandMark />
-        <div>
-          <div className="topbar__title">SSB Border Screening Console</div>
-          <div className="topbar__sub">
-            Ministry of Home Affairs · Sashastra Seema Bal (Police II Division) · SIH 26188
-          </div>
-        </div>
-      </div>
-      <div className="topbar__right">
-        {me && (
-          <div className="officer">
-            <span className="officer__chip">
-              <span className="officer__badge">{initials(me.name)}</span>
-              <span className="officer__meta">
-                <span className="officer__name">{me.name}</span>
-                <span className="officer__role">
-                  {me.designation || (me.pending_approval ? "PENDING APPROVAL" : "SIGNER")}
-                  {me.is_super_admin ? " · SUPERVISOR" : ""}
-                </span>
-              </span>
-            </span>
-            <button className="btn btn--small" disabled={signingOut} onClick={() => void doSignOut()}>
-              Sign out
-            </button>
-          </div>
-        )}
-      </div>
-    </header>
-  );
-}
-
-function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => void }) {
-  return (
-    <nav className="nav" aria-label="Console sections">
-      {NAV.map((n) => (
-        <button
-          key={n.key}
-          className={`nav__tab${active === n.key ? " nav__tab--active" : ""}`}
-          onClick={() => onPick(n.key)}
-        >
-          <span className="nav__icon">{ICONS[n.key]}</span>
-          {n.label}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-function StatusBand() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  const istOffset = 5.5 * 3600 * 1000;
-  const istDate = new Date(now.getTime() + istOffset);
-  const ist = istDate.toISOString().slice(11, 19);
-  return (
-    <div className="statusband">
-      <span className="statusband__item">
-        <span className="dot dot--ok" /> Operational
-      </span>
-      <span className="statusband__item">One traveller per session</span>
-      <span className="statusband__item">Nothing readable is stored — only fingerprints and results</span>
-      <span className="statusband__item">Every decision is recorded in a sealed log</span>
-      <span className="statusband__item statusband__item--right">
-        <span className="clock mono">IST {ist}</span>
-        <span className="divider" />
-        <span className="mono">SIH 26188 · Official use</span>
-      </span>
-    </div>
-  );
-}
 
 export function AshokaChakraWatermark() {
   return (
@@ -176,13 +36,9 @@ export function AshokaChakraWatermark() {
             const angle = i * 15;
             return (
               <g key={i} transform={`rotate(${angle} 100 100)`}>
-                {/* Spoke needle */}
                 <path d="M 98.4 100 L 99.4 15 L 100.6 15 L 101.6 100 Z" opacity="0.9" />
-                {/* Spoke diamond tip */}
                 <polygon points="100,12 102.5,15 100,17 97.5,15" />
-                {/* Outer rim bead */}
                 <circle cx="100" cy="9" r="1.6" />
-                {/* Mid spoke accent bead */}
                 <circle cx="100" cy="78" r="1.1" opacity="0.7" />
               </g>
             );
@@ -193,13 +49,174 @@ export function AshokaChakraWatermark() {
   );
 }
 
+function BootScreen() {
+  return (
+    <div className="boot" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
+      <div style={{ textAlign: "center", color: "#0b2240", fontWeight: 700, fontFamily: "var(--font-ui)" }}>
+        <div style={{ width: 64, height: 64, margin: "0 auto 18px", color: "#1d4ed8" }}>
+          <svg viewBox="0 0 200 200" style={{ width: "100%", height: "100%", animation: "ashokaSpin 6s linear infinite" }}>
+            <g fill="currentColor">
+              <circle cx="100" cy="100" r="95" fill="none" stroke="currentColor" strokeWidth="4" />
+              <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" strokeWidth="2" />
+              <circle cx="100" cy="100" r="20" fill="none" stroke="currentColor" strokeWidth="3" />
+              <circle cx="100" cy="100" r="8" fill="currentColor" />
+              {Array.from({ length: 24 }).map((_, i) => (
+                <g key={i} transform={`rotate(${i * 15} 100 100)`}>
+                  <path d="M 98.2 100 L 99.4 15 L 100.6 15 L 101.8 100 Z" />
+                  <polygon points="100,12 103,15 100,18 97,15" />
+                  <circle cx="100" cy="8" r="2" />
+                </g>
+              ))}
+            </g>
+          </svg>
+        </div>
+        <div style={{ fontSize: "0.95rem", letterSpacing: "0.06em", color: "#0b2240" }}>
+          CONNECTING TO SECURE BORDER GATEWAY...
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SuperHeader() {
+  return (
+    <div className="gov-super-header">
+      <div className="gov-super-header__left">
+        <span>GOVERNMENT OF INDIA</span>
+        <span className="gov-super-header__pipe">|</span>
+        <span>MINISTRY OF HOME AFFAIRS</span>
+      </div>
+      <div className="gov-super-header__right">
+        <a href="#home" className="gov-super-header__link">Home</a>
+        <a href="#services" className="gov-super-header__link">Citizen Services</a>
+        <span className="gov-super-header__badge">Staff Console</span>
+      </div>
+    </div>
+  );
+}
+
+function PortalHeader() {
+  const { me } = useAuth();
+  const officerName = me?.name || me?.admin || "Inspector R. Sharma";
+  const officerRole = me?.designation || (me?.pending_approval ? "Screening Officer" : "Screening Officer");
+  const officerUnit = me?.institution || "SSB Panitanki ICP";
+
+  return (
+    <header className="gov-portal-header">
+      <div className="gov-portal-header__brand">
+        <img
+          src="https://upload.wikimedia.org/wikipedia/commons/5/55/Emblem_of_India.svg"
+          alt="Emblem of India"
+          className="gov-portal-header__emblem"
+          onError={(e) => {
+            // Fallback gracefully if external SVG cannot load offline
+            (e.target as HTMLElement).style.display = "none";
+          }}
+        />
+        <div>
+          <div className="gov-portal-header__sub">
+            GOVERNMENT OF INDIA, MINISTRY OF HOME AFFAIRS
+          </div>
+          <h1 className="gov-portal-header__title">
+            VIBE CHECK-POINT
+          </h1>
+          <p className="gov-portal-header__desc">
+            AI Identity Verification &amp; Border Screening · Indo-Nepal / Indo-Bhutan Sector · SIH 26188
+          </p>
+        </div>
+      </div>
+
+      {me && (
+        <div className="officer-card">
+          <div className="officer-card__avatar">{initials(officerName)}</div>
+          <div className="officer-card__info">
+            <div className="officer-card__name">{officerName}</div>
+            <div className="officer-card__role">
+              {officerRole} · {officerUnit}
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+}
+
+function CommandStatusStrip() {
+  const { signOut } = useAuth();
+  const { toast } = useToast();
+  const [signingOut, setSigningOut] = useState(false);
+  const [istTime, setIstTime] = useState("");
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const istOffset = 5.5 * 3600 * 1000;
+      const istDate = new Date(now.getTime() + istOffset);
+      setIstTime(istDate.toISOString().slice(11, 19) + " IST");
+    };
+    updateTime();
+    const id = window.setInterval(updateTime, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const doSignOut = async () => {
+    setSigningOut(true);
+    await signOut();
+    toast("Officer session closed.", "info");
+  };
+
+  return (
+    <div className="command-strip">
+      <div className="command-strip__left">
+        <span className="command-strip__status">
+          <span className="command-strip__dot" /> OPERATIONAL
+        </span>
+        <span className="command-strip__sep">•</span>
+        <span>Raxaul / Panitanki ICP</span>
+        <span className="command-strip__sep">•</span>
+        <span className="command-strip__live">LIVE SSB SESSION</span>
+      </div>
+
+      <div className="command-strip__right">
+        <span className="command-strip__clock mono">{istTime}</span>
+        <span className="command-strip__sep">|</span>
+        <span>ZERO-STORAGE AUDIT - SHA-256 DIGESTS ONLY</span>
+        <button
+          type="button"
+          className="command-strip__signout"
+          disabled={signingOut}
+          onClick={() => void doSignOut()}
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => void }) {
+  return (
+    <nav className="gov-nav" aria-label="Console sections">
+      {NAV.map((n) => (
+        <button
+          key={n.key}
+          type="button"
+          className={`gov-nav__tab${active === n.key ? " gov-nav__tab--active" : ""}`}
+          onClick={() => onPick(n.key)}
+        >
+          <span className="gov-nav__icon">{n.icon}</span>
+          <span className="gov-nav__label">{n.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export function App() {
   const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
   const prevView = useRef<ViewKey>("desk");
 
-  // Re-assert Desk when the officer session changes so a fresh officer is not
-  // dropped into another signer's open session pane.
   useEffect(() => {
     if (prevView.current !== view) {
       prevView.current = view;
@@ -210,12 +227,7 @@ export function App() {
   }, [signedIn, me]);
 
   if (booting) {
-    return (
-      <div className="boot">
-        <BrandMark />
-        <span className="mono">Establishing secure console…</span>
-      </div>
-    );
+    return <BootScreen />;
   }
 
   if (!signedIn) {
@@ -228,23 +240,28 @@ export function App() {
   }
 
   return (
-    <div className="console">
+    <div className="console-layout">
       <AshokaChakraWatermark />
-      <TopBar />
+      <SuperHeader />
+      <PortalHeader />
+      <CommandStatusStrip />
       <NavTabs active={view} onPick={setView} />
-      <StatusBand />
-      <main className="console__main">
+      <main className="console-main">
         {view === "desk" && <DeskView />}
         {view === "review" && <ReviewQueueView />}
         {view === "ledger" && <LedgerView />}
         {view === "watchlist" && <WatchlistView />}
         {view === "staff" && <StaffView />}
       </main>
-      <footer className="foot">
-        <span className="mono">
-          SIH 26188 · AI-based fake identity &amp; document screening · Zero-storage data policy active
-        </span>
+      <footer className="gov-footer">
+        <span>🔒 CRYPTOGRAPHIC HASHING [SHA-256]</span>
+        <span className="gov-footer__pipe">|</span>
+        <span>🌐 DECENTRALIZED IMMUTABLE LEDGER TECHNOLOGY</span>
+        <span className="gov-footer__pipe">|</span>
+        <span>🛡️ SECURE AUDIT TRAIL</span>
       </footer>
     </div>
   );
 }
+
+export default App;
