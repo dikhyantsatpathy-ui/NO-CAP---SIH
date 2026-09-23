@@ -32,7 +32,7 @@ export interface Me {
 
 export type ApiResult<T> = { ok: true; data: T; response: Response } | { ok: false; error: string };
 
-async function request<T>(url: string, init?: RequestInit, timeoutMs = 12000): Promise<ApiResult<T>> {
+async function request<T>(url: string, init?: RequestInit, timeoutMs = 45000): Promise<ApiResult<T>> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -387,7 +387,7 @@ export function screenDocument(
   }
   if (liveFrame) fd.append("live_frame", liveFrame, "holder_live.jpg");
   if (sessionId) fd.append("session_id", sessionId);
-  return request<ScreenReport>("/api/screen", { method: "POST", body: fd });
+  return request<ScreenReport>("/api/screen", { method: "POST", body: fd }, 90000);
 }
 
 export function getScreenQueue() {
