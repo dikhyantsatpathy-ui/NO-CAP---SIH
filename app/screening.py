@@ -770,6 +770,35 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     report["block_hash"] = ledger_hash
     report["prev_hash"] = prev_hash
 
+    # Module snapshot persisted for the desk/review surfaces. Compact leaf shape
+    # (no raw bytes, no heatmaps): M1 medium/MRZ/OCR, M2 verdict, M3 verdict +
+    # ELA status, M4 verdict/match/score/method.
+    def _mod_leaf(mod: str, path: str):
+        node = report.get("modules", {}).get(mod) or {}
+        for part in path.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+            if node is None:
+                return None
+        return node
+
+    if isinstance(report.get("modules"), dict):
+        modules_snapshot = json.dumps({
+            "extraction": {"medium": _mod_leaf("extraction", "medium"),
+                           "mrz": {"valid": _mod_leaf("extraction", "mrz.valid")},
+                           "ocr": {"ran": _mod_leaf("extraction", "ocr.ran")},
+                           "document_aware": _mod_leaf("extraction", "document_aware")},
+            "validation": {"verdict": _mod_leaf("validation", "verdict")},
+            "tampering": {"verdict": _mod_leaf("tampering", "verdict"),
+                          "ela": {"status": _mod_leaf("tampering", "ela.status")}},
+            "face": {"verdict": _mod_leaf("face", "verdict"),
+                     "match": _mod_leaf("face", "match"),
+                     "score": _mod_leaf("face", "score"),
+                     "method": _mod_leaf("face", "method")},
+        })
+    else:
+        modules_snapshot = None
+    _wl_hits = report.get("watchlist_hits") or []
+
     db.add(ScreeningReport(
         id=report["id"], file_hash=file_hash, filename=report["filename"],
         doc_type=report["doc_type"], checkpoint=report["checkpoint"],
@@ -777,8 +806,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         extracted_fields=json.dumps(report["masked_fields"]),
         signals=json.dumps(reasons),
         ai_detection=json.dumps(report["ai_detection"]),
-        modules=json.dumps({k: report["modules"].get(k, {}).get("verdict")
-                            for k in ("validation", "tampering", "face")}),
+        modules=modules_snapshot,
+        watchlist_hits=json.dumps(_wl_hits) if _wl_hits else None,
         previous_hash=prev_hash,
         ledger_hash=ledger_hash,
         screener=screener,

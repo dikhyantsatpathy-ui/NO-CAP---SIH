@@ -56,12 +56,12 @@ ui-before.png
 # ---- Vercel CLI ----
 .vercel/
 
-# ---- Agent tooling config (session-local, not committed) ----
-.agents/
+# ---- Agent runtime cache (session-local, not committed) ----
 .opencode/
-opencode.json
 .playwright-mcp/
 tasks/
+.agents/**/*.log
+.agents/**/cache/
 
 # ---- Frontend (React + Vite) ----
 frontend/node_modules/

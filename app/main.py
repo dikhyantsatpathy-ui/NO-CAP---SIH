@@ -1108,6 +1108,7 @@ class ScreeningReport(Base):
     signals = Column(Text, nullable=False)           # reasons JSON
     ai_detection = Column(Text, nullable=True)       # detector snapshot JSON
     modules = Column(Text, nullable=True)            # Module 1-4 verdicts JSON
+    watchlist_hits = Column(Text, nullable=True)     # matched watchlist entries JSON (field + mask only)
     previous_hash = Column(String, nullable=True)    # SHA-256 hash-chain block linkage
     ledger_hash = Column(String, nullable=True)      # Current block hash
     adjudication = Column(String, nullable=True)     # CLEARED | CONFIRMED_FRAUD | INCONCLUSIVE
@@ -1209,6 +1210,8 @@ _MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_identifier ON watchlist_entries(identifier_hash);",
     # Module 1-4 verdicts (OCR/validation/tampering/face) as one JSON row.
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS modules TEXT;",
+    # Watchlist matches surfaced on the doc (field + mask only — never raw).
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS watchlist_hits TEXT;",
     # Hash-chain blockchain audit columns
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS previous_hash VARCHAR;",
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS ledger_hash VARCHAR;",
@@ -1290,6 +1293,8 @@ def _ensure_db_initialized():
                         ("session_id", "VARCHAR"),
                         ("field_hashes", "TEXT"),
                         ("ephemeral_raw_fields", "TEXT"),
+                        ("modules", "TEXT"),
+                        ("watchlist_hits", "TEXT"),
                     ):
                         if _sqlite_col not in cols:
                             conn.execute(text(f"ALTER TABLE screening_reports ADD COLUMN {_sqlite_col} {_sqlite_ddl}"))
@@ -2044,8 +2049,23 @@ def _safe_json(raw):
     except Exception:
         return None
 
+def _module_normalize(raw):
+    """Modules snapshot -> the object shape the desk renders.
+
+    Early DB rows persisted verdict strings directly ({"validation": "PASS"});
+    newer rows persist leaf objects ({"validation": {"verdict": "PASS"}}).
+    Normalizing both here means the desk renders the RECORDED verdict instead
+    of fabricating a PASS default when a module actually failed."""
+    if not isinstance(raw, dict):
+        return None
+    first = next(iter(raw.values()), None)
+    if isinstance(first, str):
+        return {k: {"verdict": v} for k, v in raw.items() if isinstance(v, str)}
+    return raw
+
 def _screen_row(r):
     """DB ScreeningReport row -> safe public-shaped dict (fields stay masked)."""
+    signals = _safe_json(r.signals) or []
     return {
         "id": r.id,
         "filename": r.filename,
@@ -2067,6 +2087,13 @@ def _screen_row(r):
         "session_id": getattr(r, "session_id", None),
         "field_hashes": _safe_json(getattr(r, "field_hashes", None)),
         "raw_fields": _safe_json(getattr(r, "ephemeral_raw_fields", None)),
+        # Explainable signal + detector snapshots: always carried so the desk,
+        # review queue and report detail never fall back to invented defaults.
+        "signals": signals,
+        "reasons": signals,
+        "ai_detection": _safe_json(r.ai_detection),
+        "modules": _module_normalize(_safe_json(getattr(r, "modules", None))),
+        "watchlist_hits": _safe_json(getattr(r, "watchlist_hits", None)) or [],
     }
 
 _SYNC_SCREENED_EXTS = ("pdf", "jpg", "jpeg", "png", "webp", "bmp")
@@ -2167,8 +2194,6 @@ def screening_report_detail(report_id: str, request: Request, admin: str = Depen
         if admin != "evaluator@ssb.gov.in" and not is_super_admin(admin) and r.screener != admin:
             raise HTTPException(status_code=403, detail="Not your screening record.")
         row = _screen_row(r)
-        row["signals"] = _safe_json(r.signals) or []
-        row["ai_detection"] = _safe_json(r.ai_detection)
         row["file_hash"] = r.file_hash
         return row
 

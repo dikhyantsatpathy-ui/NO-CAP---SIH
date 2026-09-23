@@ -259,9 +259,6 @@ function DocCard({
                   <span className="subtable-grid__label">M3 Tampering Forensics</span>
                   <span className="subtable-grid__val">
                     {modules?.tampering?.verdict || "PASS"} · ELA: {modules?.tampering?.ela?.status || "LOW"}
-                    {modules?.tampering?.spectral?.papr != null
-                      ? ` · PAPR: ${modules.tampering.spectral.papr.toFixed(1)}`
-                      : ""}
                   </span>
                 </div>
                 <div className="subtable-grid__cell">

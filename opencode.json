@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "name": "NO-CAP-SIH26188",
+  "description": "AI-Based Fake Identity & Document Screening System (SSB / MHA)",
+  "instructions": [
+    ".agents/rules/sih26188-architecture.md",
+    ".agents/rules/security-reviewer.md",
+    ".agents/rules/e2e-testing.md",
+    ".agents/rules/python.md"
+  ],
+  "skills": [
+    ".agents/skills/document-forensics-and-tamper-detection",
+    ".agents/skills/icao-9303-mrz-and-id-validation",
+    ".agents/skills/zero-storage-privacy-and-compliance",
+    ".agents/skills/blockchain-ledger-and-bsa-evidence",
+    ".agents/skills/face-biometrics-and-liveness",
+    ".agents/skills/border-screening-operations"
+  ],
+  "plugins": [
+    ".agents/plugins/sih26188-border-defense"
+  ],
+  "exclude": [
+    "**/*.pt",
+    "**/*.onnx",
+    "**/*.pkl",
+    "**/*.pickle",
+    "**/*.bin",
+    "**/*.db",
+    "data/**",
+    "runs/**",
+    "weights/**",
+    "frontend/node_modules/**",
+    ".git/**"
+  ]
+}
