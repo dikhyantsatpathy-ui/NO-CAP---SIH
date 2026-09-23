@@ -34,6 +34,7 @@ def get_status():
         "models": {
             "yolo_card": "Active" if os.path.exists(os.path.join(models_dir, "card.onnx")) else "Offline",
             "aadhaar_fields": "Active" if os.path.exists(os.path.join(models_dir, "aadhaar_fields.onnx")) else "Offline",
+            "doctype": "Active" if os.path.exists(os.path.join(models_dir, "doctype.onnx")) else "Offline",
             "face_embed": "Active" if face_model else "Standby (Auto-Download)",
             "ai_detector": "Active" if os.path.exists(_model_path()) else "Standby (Auto-Download)",
         },
@@ -43,6 +44,7 @@ def get_status():
             "/api/ml/aadhaar_fields",
             "/api/ml/face_match",
             "/api/ml/detect_image",
+            "/api/ml/doctype",
         ],
     }
 

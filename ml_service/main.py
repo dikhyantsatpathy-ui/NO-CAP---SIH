@@ -142,10 +142,12 @@ def health_check():
             "/api/ml/aadhaar_fields",
             "/api/ml/face_match",
             "/api/ml/detect_image",
+            "/api/ml/doctype",
         ],
         "models": {
             "yolo_card": os.path.exists(os.path.join(models_dir, "card.onnx")),
             "aadhaar_fields": os.path.exists(os.path.join(models_dir, "aadhaar_fields.onnx")),
+            "doctype": os.path.exists(os.path.join(models_dir, "doctype.onnx")),
             "face_embed": face_model,
             "ai_detector": os.path.exists(_model_path()),
         },
@@ -197,3 +199,12 @@ async def api_detect_image(file: UploadFile = File(...)):
     data = await file.read()
     result = onnx_detect(data)
     return result
+
+
+from doctype_cls import classify_document
+@app.post("/api/ml/doctype")
+async def api_doctype(file: UploadFile = File(...)):
+    data = await file.read()
+    result = classify_document(data)
+    return result or {"doc_type": "other", "confidence": 0.0, "scores": {}, "engine": "none"}
+

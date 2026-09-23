@@ -31,6 +31,9 @@ CMP_FIELDS = (
     ("dob", "Date of birth"),
     ("gender", "Gender"),
     ("passport", "Passport / visa number"),
+    ("state", "State / Jurisdiction"),
+    ("pincode", "Pincode / Postal area"),
+    ("address", "Residential address"),
 )
 
 # The extraction pass can surface a holder name under any of these keys,
@@ -308,6 +311,17 @@ def build_comparison(docs: list[dict]) -> dict:
                             "docs": kinds, "masks": masks,
                         })
                         is_harmonized = True
+
+            # Check for Address semantic match (e.g. sharing identical postal pincode)
+            elif key == "address":
+                pin_checks = [c for c in checks if c["field"] == "pincode" and c["status"] == "agree"]
+                if pin_checks:
+                    checks.append({
+                        "field": key, "label": label, "status": "agree",
+                        "detail": f"Addresses share matching postal PIN zone ({pin_checks[0].get('mask')}).",
+                        "docs": kinds, "masks": masks,
+                    })
+                    is_harmonized = True
 
             if not is_harmonized:
                 checks.append({

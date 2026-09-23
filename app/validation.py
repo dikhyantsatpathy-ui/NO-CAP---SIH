@@ -11,6 +11,7 @@ same contract build_identity_report used, folded into the MHA screening desk.
 """
 
 VALIDATORS = {
+    "aadhaar": ("verify_aadhaar", "Aadhaar"),
     "pan": ("verify_pan", "PAN"),
     "driving_licence": ("verify_dl", "Driving licence"),
     "rc": ("verify_rc", "RC"),
@@ -21,6 +22,7 @@ VALIDATORS = {
 
 # doc_type -> screening field key that carries the number
 _FIELD_FOR = {
+    "aadhaar": "aadhaar",
     "pan": "pan",
     "driving_licence": "driving_licence",
     "rc": "driving_licence",
@@ -47,7 +49,7 @@ def validate_document(
     by the caller) folds the hash-only cross-check into the checks so a single
     module carries the whole verdict.
     """
-    from identity import (verify_pan, verify_dl, verify_rc, verify_epic,
+    from identity import (verify_aadhaar, verify_pan, verify_dl, verify_rc, verify_epic,
                           verify_passport, verify_visa, serial_plausibility)
 
     declared = declared or {}
@@ -63,8 +65,8 @@ def validate_document(
                    "detail": "No machine-readable number was extracted — declare it "
                              "or (with tesseract installed) re-photo the document."}]
     elif vfn:
-        fn = {"verify_pan": verify_pan, "verify_dl": verify_dl,
-              "verify_rc": verify_rc, "verify_epic": verify_epic,
+        fn = {"verify_aadhaar": verify_aadhaar, "verify_pan": verify_pan,
+              "verify_dl": verify_dl, "verify_rc": verify_rc, "verify_epic": verify_epic,
               "verify_passport": verify_passport,
               "verify_visa": verify_visa}[vfn[0]]
         if doc_type in ("passport", "visa"):

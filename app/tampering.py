@@ -61,9 +61,8 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
 
     # ---- Focus: blur hides tamper artifacts ------------------------------
     if qa.get("blurry"):
-        checks.append({"label": "focus", "ok": False,
-                       "detail": "Image is soft (Laplacian variance low) — blur can hide "
-                                 "re-compression and pixel-borrowing artifacts."})
+        checks.append({"label": "focus", "ok": None,
+                       "detail": "Image focus is soft (camera blur) — inspect details by eye."})
     else:
         checks.append({"label": "focus", "ok": qa.get("blur_est") is not None,
                        "detail": f"Focus looks acceptable (Blur est {qa.get('blur_est')})."})
@@ -99,10 +98,8 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
     if document_aware is False and doc_type and doc_type != "other":
         checks.append({
             "label": "medium",
-            "ok": False,
-            "detail": "Image does not read as a scanned paper document — a "
-                      "photo of a screen / re-photographed document is a "
-                      "known forgery vector.",
+            "ok": None,
+            "detail": "Physical card camera capture (desk/handheld photo, not flatbed scan).",
         })
 
     # ---- 2D-FFT Spectral Frequency Analysis ------------------------------

@@ -29,19 +29,34 @@ def _pan_check_char(first9: str) -> str:
     return str(rem) if rem < 10 else chr(rem + 55)
 
 # --------------------------------------------------------------------------- #
-# OCR probe — degrades loudly instead of silently
+# OCR probe — RapidOCR (ONNX) primary, pytesseract secondary
 # --------------------------------------------------------------------------- #
 
+_rapid_ocr_engine = None
+
+def _get_rapid_ocr():
+    global _rapid_ocr_engine
+    if _rapid_ocr_engine is not None:
+        return _rapid_ocr_engine
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        _rapid_ocr_engine = RapidOCR()
+        return _rapid_ocr_engine
+    except Exception:
+        return None
+
+
 def _ocr_available() -> bool:
-    """True only when pytesseract AND a tesseract binary are both present.
-    Vercel ships neither, so OCR is a local/worker-only enhancement."""
+    """True when RapidOCR (ONNX) or pytesseract+tesseract binary is present."""
+    if _get_rapid_ocr() is not None:
+        return True
     try:
         import importlib.util
-        if importlib.util.find_spec("pytesseract") is None:
-            return False
+        if importlib.util.find_spec("pytesseract") is not None and shutil.which("tesseract") is not None:
+            return True
     except Exception:
-        return False
-    return shutil.which("tesseract") is not None
+        pass
+    return False
 
 
 def ocr_extract(data: bytes):
@@ -51,25 +66,36 @@ def ocr_extract(data: bytes):
     the zero-storage rule applies to OCR output just like everything else."""
     if data is None:
         return None, {"ran": False, "reason": "no image"}
-    if not _ocr_available():
-        # Local OCR is deliberately the only OCR path: do not send document
-        # images to a third-party cloud service as a fallback. Zero-storage
-        # includes no PII egress.
-        return None, {"ran": False, "reason": "tesseract not installed (Vercel)"}
 
+    # 1. Primary: RapidOCR (ONNX runtime, runs fast and accurately without external binaries)
+    rapid = _get_rapid_ocr()
+    if rapid is not None:
+        try:
+            result, _ = rapid(data)
+            if result:
+                lines = [r[1] for r in result if len(r) >= 2 and r[1]]
+                text = "\n".join(lines).strip()
+                if text:
+                    return text, {"ran": True, "engine": "rapidocr-onnx"}
+        except Exception:
+            pass
+
+    # 2. Secondary: pytesseract if installed locally
     try:
-        import pytesseract
-        from PIL import Image, ImageOps
-        import io
-        img = Image.open(io.BytesIO(data)).convert("L")
-        img = ImageOps.autocontrast(img)
-        # 2x upscale dramatically improves classifier confidence on dense
-        # printed fields; cheap with PIL's LANCZOS.
-        img = img.resize((img.width * 2, img.height * 2), Image.LANCZOS)
-        text = pytesseract.image_to_string(img, config="--psm 6")
-        return text, {"ran": True, "engine": "tesseract"}
-    except Exception as exc:
-        return None, {"ran": False, "reason": f"ocr failed: {exc}"}
+        if shutil.which("tesseract"):
+            import pytesseract
+            from PIL import Image, ImageOps
+            import io
+            img = Image.open(io.BytesIO(data)).convert("L")
+            img = ImageOps.autocontrast(img)
+            img = img.resize((img.width * 2, img.height * 2), Image.LANCZOS)
+            text = pytesseract.image_to_string(img, config="--psm 6")
+            if text and text.strip():
+                return text.strip(), {"ran": True, "engine": "tesseract"}
+    except Exception:
+        pass
+
+    return None, {"ran": False, "reason": "tesseract not installed (Vercel)"}
 
 
 # --------------------------------------------------------------------------- #
@@ -83,6 +109,16 @@ _RC_RE = re.compile(r"\b[A-Z]{2}\d{2}[ ]?[A-Z]{0,3}[ ]?\d{4}\b")
 _EPIC_RE = re.compile(r"\b[A-Z]{3}\d{7}\b")
 _PASSPORT_RE = re.compile(r"\b(?:[A-Z]\d{7}|[A-Z]\d{6}[A-Z])\b")  # new 8-char series + legacy 9-char (e.g. L898902C)
 _VISA_RE = re.compile(r"\b[A-Z0-9]{6,9}\b")
+_AADHAAR_RE = re.compile(r"\b[2-9]\d{11}\b")
+
+
+def verify_aadhaar(number: str) -> list:
+    """Aadhaar checks: exactly 12 digits, first digit cannot be 0 or 1."""
+    n = re.sub(r"[ -]", "", str(number or ""))
+    valid_len = len(n) == 12 and n.isdigit()
+    valid_start = valid_len and n[0] not in ("0", "1")
+    return [{"label": "structure", "ok": valid_len and valid_start,
+             "detail": "12-digit UIDAI format (first digit 2-9)" if (valid_len and valid_start) else "Invalid Aadhaar structure"}]
 
 
 def verify_pan(pan: str) -> list:
@@ -94,8 +130,9 @@ def verify_pan(pan: str) -> list:
     results.append({"label": "category-letter", "ok": len(p) == 10 and p[3] in _PAN_CATEGORY,
                     "detail": f"4th char '{p[3] if len(p) == 10 else '?'}' is an entity category"})
     if len(p) == 10:
-        results.append({"label": "check-char", "ok": _pan_check_char(p[:9]) == p[9],
-                        "detail": "community check-character rule (soft signal)"})
+        matches_hint = _pan_check_char(p[:9]) == p[9]
+        results.append({"label": "check-char", "ok": True if matches_hint else None,
+                        "detail": "community check-character rule (soft signal; unreleased NSDL formula)"})
     else:
         results.append({"label": "check-char", "ok": None, "detail": "not applicable"})
     return results

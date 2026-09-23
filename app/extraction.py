@@ -161,7 +161,7 @@ def _pdf_text_or_image(data: bytes) -> tuple[str, bytes | None]:
 
 
 def _extract_image(data: bytes) -> dict:
-    """OCR + MRZ over one image. Each subsystem is isolated: a failure in
+    """OCR + MRZ + Barcodes/QR over one image. Each subsystem is isolated: a failure in
     one never loses the rest, and unreadable input degrades to honest 'ran:
     False' rather than a hard error."""
     from screening import extract_fields
@@ -171,12 +171,29 @@ def _extract_image(data: bytes) -> dict:
 
     out = {"fields": {}, "mrz": None,
            "ocr": {"ran": False, "reason": "not run"}, "pdf_no_text": False,
-           "llm_extraction": {"ran": False, "reason": "not run"}}
+           "llm_extraction": {"ran": False, "reason": "not run"},
+           "qr_data": None, "text": ""}
+
+    # 1. Barcode & QR extraction (100% exact cryptographic fields if present)
+    try:
+        from qr_decoder import extract_from_barcodes
+        qr_res = extract_from_barcodes(data)
+        if qr_res.get("ran") and qr_res.get("fields"):
+            for k, v in qr_res["fields"].items():
+                if v:
+                    out["fields"][k] = v
+            out["qr_data"] = qr_res
+    except Exception:
+        pass
 
     text, ocr_meta = ocr_extract(data)
     out["ocr"] = ocr_meta
+    out["text"] = text or ""
     if text:
-        out["fields"] = extract_fields(text)
+        extracted = extract_fields(text)
+        for k, v in extracted.items():
+            if v and not out["fields"].get(k):
+                out["fields"][k] = v
         try:
             mrz_res = parse_mrz(text)
             if mrz_res.get("valid"):
@@ -258,15 +275,38 @@ def _extract_aadhaar_image(data: bytes) -> dict:
            "ocr": {"ran": False, "reason": "aadhaar zone OCR not run"},
            "pdf_no_text": False,
            "aadhaar_photo": None,      # b64 PNG crop -> Module 4 (memory only)
-           "aadhaar_zones": []}        # zone metadata (label + confidence; no PII)
+           "aadhaar_zones": [],        # zone metadata (label + confidence; no PII)
+           "qr_data": None}
+
+    photo_b64 = None
+
+    # 0. Barcode & QR extraction (UIDAI Secure QR or Code128 barcode)
+    try:
+        from qr_decoder import extract_from_barcodes
+        qr_res = extract_from_barcodes(data, "aadhaar")
+        if qr_res.get("ran") and qr_res.get("fields"):
+            for k, v in qr_res["fields"].items():
+                if v:
+                    out["fields"][k] = v
+            out["qr_data"] = qr_res
+            if qr_res.get("photo_b64"):
+                photo_b64 = qr_res["photo_b64"]
+    except Exception:
+        pass
+
     boxes = extract_aadhaar_fields(data)
     if not boxes:
         # Model absent (e.g. Vercel) or no zones found: degrade to the generic
         # image pass so Aadhaar still screens with whole-card OCR + LLM heuristics.
-        out.update(_extract_image(data))
+        whole = _extract_image(data)
+        for k, v in whole.get("fields", {}).items():
+            if v and not out["fields"].get(k):
+                out["fields"][k] = v
+        out["ocr"] = whole.get("ocr", out["ocr"])
+        if whole.get("qr_data") and not out.get("qr_data"):
+            out["qr_data"] = whole["qr_data"]
         return out
 
-    photo_b64 = None
     for b in boxes:
         label = str(b.get("label") or "").strip()
         out["aadhaar_zones"].append(
@@ -280,31 +320,28 @@ def _extract_aadhaar_image(data: bytes) -> dict:
             continue
         text = _zone_ocr(crop)
         if text:
-            out["ocr"] = {"ran": True, "engine": "tesseract-aadhaar-zone",
+            out["ocr"] = {"ran": True, "engine": "aadhaar-zone-ocr",
                           "reason": f"zone OCR on {label}"}
             _consume_aadhaar_zone(out["fields"], key, text)
     out["aadhaar_photo"] = photo_b64
+
+    # Backfill with whole-image OCR if key fields are missing
+    if not out["fields"].get("aadhaar") or not out["fields"].get("name"):
+        whole = _extract_image(data)
+        for k, v in whole.get("fields", {}).items():
+            if v and not out["fields"].get(k):
+                out["fields"][k] = v
+        if whole.get("ocr", {}).get("ran"):
+            out["ocr"] = whole["ocr"]
+
     return out
 
 
 def _zone_ocr(crop_bytes: bytes) -> str:
-    """Tesseract over ONE cropped field zone. Same local-only discipline as
-    identity.ocr_extract: no cloud OCR, and a hard no-result when tesseract is
-    absent (Vercel)."""
-    from identity import _ocr_available
-    if not _ocr_available():
-        return ""
-    try:
-        import io
-        import pytesseract
-        from PIL import Image, ImageOps
-        img = Image.open(io.BytesIO(crop_bytes)).convert("L")
-        img = ImageOps.autocontrast(img)
-        img = img.resize((img.width * 2, img.height * 2), Image.LANCZOS)
-        # Single-line layout (psm 7) fits an isolated field zone best.
-        return (pytesseract.image_to_string(img, config="--psm 7") or "").strip()
-    except Exception:
-        return ""
+    """OCR over ONE cropped field zone using RapidOCR or local fallback."""
+    from identity import ocr_extract
+    text, _ = ocr_extract(crop_bytes)
+    return text or ""
 
 
 def _consume_aadhaar_zone(fields: dict, key: str, text: str) -> None:
@@ -313,18 +350,23 @@ def _consume_aadhaar_zone(fields: dict, key: str, text: str) -> None:
     from screening import _first_date
     if not text:
         return
-    if key == "aadhaar_no":
-        m = _AADHAAR_NO_RE.search(text)
-        if m and m.group(0).replace(" ", "").replace("-", "")[0] != "0":
-            # UIDAI numbers start 2-9; a leading 0 is a misread, not a UID.
-            fields["aadhaar"] = re.sub(r"[ -]", "", m.group(0))
-    elif key == "dob":
+    if "aadhaar" in key or "no" in key or "uid" in key:
+        digits = re.sub(r"\D", "", text)
+        if len(digits) == 12 and digits[0] not in ("0", "1"):
+            fields["aadhaar"] = digits
+        else:
+            m = _AADHAAR_NO_RE.search(text)
+            if m:
+                clean = re.sub(r"[ -]", "", m.group(0))
+                if len(clean) == 12 and clean[0] not in ("0", "1"):
+                    fields["aadhaar"] = clean
+    elif "dob" in key or "birth" in key:
         d = _first_date(text)
         if d:
             fields["dob"] = d
-    elif key == "name":
+    elif "name" in key:
         name = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z .\-]", " ", text)).strip()
-        if name:
+        if name and len(name) >= 3:
             fields["name"] = name[:100]
     elif key == "gender":
         g = re.search(r"\b(M|F|MALE|FEMALE)\b", text, re.IGNORECASE)

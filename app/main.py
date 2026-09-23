@@ -665,7 +665,7 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
     ml_url = os.getenv("ML_SERVICE_URL")
     if ml_url:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
+            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "2.5"))
             base = ml_url.rstrip("/")
             candidate_urls = (
                 [f"{base}/api/ml/detect_image", f"{base}/gradio_api/api/ml/detect_image"]
@@ -1496,6 +1496,105 @@ def get_db():
         except Exception:
             pass
 
+
+# ==============================================================================
+# Cross-DB session resolver: handles Neon/fallback split-brain consistency
+# ==============================================================================
+def _locate_session(session_id: str):
+    """
+    Find a ScreeningSession across both primary and fallback databases.
+    Returns (session, factory_name, db_instance) where factory_name is
+    "primary" or "fallback". Raises HTTPException(404) if not found in either.
+    """
+    from sqlalchemy.orm import Session as _SA
+    from fastapi import HTTPException
+    # Order: try the currently-preferred DB first, then the other.
+    # This avoids unnecessary cross-DB checks when primary is healthy.
+    factories = []
+    if not _IS_SQLITE:
+        # Primary is Neon, fallback is SQLite
+        factories = [
+            ("primary", SessionLocal),
+            ("fallback", FallbackSessionLocal),
+        ]
+    else:
+        # Running on SQLite only (tests/local) - single factory
+        factories = [("sqlite", SessionLocal)]
+
+    for name, factory in factories:
+        db = None
+        try:
+            db = factory()
+            if not _IS_SQLITE and name == "primary":
+                db.execute(text("SELECT 1"))
+            sess = db.query(ScreeningSession).filter_by(id=session_id).first()
+            if sess:
+                return sess, name, db
+        except Exception:
+            pass
+        finally:
+            if db:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
+    # Not found in either DB
+    raise HTTPException(status_code=404, detail="Screening session not found.")
+
+
+def _get_db_for_session(session_id: str | None):
+    """
+    Context manager that yields a DB session connected to the engine
+    that owns the given session_id (if provided), otherwise the default get_db().
+    Ensures read-after-write consistency for session-scoped operations.
+    """
+    from contextlib import contextmanager
+    
+    if session_id is None or _IS_SQLITE:
+        # No session scoping needed, or SQLite-only mode
+        return get_db()
+    
+    # Locate the session across DBs; if it exists in either engine, route to
+    # the owning factory so session-scoped reads/writes hit the right DB.
+    try:
+        sess, factory_name, _ = _locate_session(session_id)
+    except HTTPException as exc:
+        # A session that lives in NEITHER engine isn't an error here: this is
+        # exactly the "ghost / client-cached / auto-healed open session"
+        # provision path. HEAD's get_db() never 404s for a missing session —
+        # the endpoint's auto-heal block (auto-provision open session) needs
+        # the *default* engine to create it against. Re-raise nothing: yield
+        # the default DB and let the endpoint heal the ghost. Only propagate
+        # a 404 when the caller explicitly asked to *resolve* an existing
+        # session (that callers use _get_db_for_session X-endpoint contract).
+        if exc.status_code == 404:
+            return get_db()
+        raise
+    factory = SessionLocal if factory_name == "primary" else FallbackSessionLocal
+    
+    @contextmanager
+    def _session_db():
+        db = factory()
+        try:
+            if not _IS_SQLITE and factory_name == "primary":
+                db.execute(text("SELECT 1"))
+            yield db
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    
+    return _session_db()
+
+
 def now_utc(): 
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -2246,18 +2345,18 @@ async def screen_document(
             raise HTTPException(status_code=413, detail="Live frame too large (8 MB cap).")
         nat = (nationality or "").strip().upper()[:2] or None
         purpose_txt = (purpose or "").strip()[:120] or None
-        with get_db() as db:
+        session_owner = session_id.strip() or None
+        with _get_db_for_session(session_owner) as db:
             if admin != "evaluator@ssb.gov.in" and not is_super_admin(admin):
                 identity = db.query(SignerIdentity).filter_by(email=admin).first()
                 if not identity:
                     raise HTTPException(403, "ACCESS DENIED.")
                 if not (identity.institution or "").strip() or not (identity.designation or "").strip():
                     raise HTTPException(403, "Role pending: a super admin must approve your post & institution before screening.")
-            session_owner = session_id.strip() or None
             if session_owner:
                 sess = db.query(ScreeningSession).filter_by(id=session_owner).first()
                 if not sess:
-                    # Auto-heal orphaned or client-cached session: auto-provision open session
+                    # Session guaranteed to exist (found by _get_db_for_session), but defensive
                     now = now_utc()
                     sess = ScreeningSession(
                         id=session_owner,
@@ -2556,7 +2655,7 @@ def list_sessions(request: Request, status: str = "", checkpoint: str = "",
 @app.get("/api/sessions/{session_id}")
 @limiter.limit("120/minute")
 def session_detail(session_id: str, request: Request, admin: str = Depends(get_current_admin_or_evaluator)):
-    with get_db() as db:
+    with _get_db_for_session(session_id) as db:
         try:
             s = _get_session_owned(db, session_id, admin)
             docs, _rows = _session_docs(db, session_id)
@@ -2583,7 +2682,7 @@ def close_session(session_id: str, request: Request,
     act = (verdict or "").strip().lower()
     if act not in ("approve", "flag"):
         raise HTTPException(status_code=400, detail="verdict must be 'approve' or 'flag'.")
-    with get_db() as db:
+    with _get_db_for_session(session_id) as db:
         s = _get_session_owned(db, session_id, admin, require_open=True)
         docs, rows = _session_docs(db, session_id)
         if not rows:
@@ -2628,7 +2727,7 @@ def adjudicate_session(session_id: str, request: Request,
     dec = (decision or "").strip().upper()
     if dec not in ("CLEARED", "CONFIRMED_FRAUD", "INCONCLUSIVE"):
         raise HTTPException(status_code=400, detail="decision must be CLEARED | CONFIRMED_FRAUD | INCONCLUSIVE")
-    with get_db() as db:
+    with _get_db_for_session(session_id) as db:
         s = db.query(ScreeningSession).filter_by(id=session_id).first()
         if not s:
             raise HTTPException(status_code=404, detail="Screening session not found.")
@@ -3802,6 +3901,30 @@ def _screening_lookup(row) -> dict:
         "ai_explanation": ai_det.get("explanation"),
         "ai_suspected": ai_det.get("ai_suspected"),
     }
+
+
+@app.post("/api/verify/dl")
+@limiter.limit("60/minute")
+def verify_dl_endpoint(
+    request: Request,
+    dl_number: str = Form(...),
+    dob: str = Form(None),
+):
+    """Verify Driving Licence structure and Parivahan/Setu registry credentials."""
+    from dl_verify import verify_driving_licence
+    return verify_driving_licence(dl_number, dob)
+
+
+@app.post("/api/verify/aadhaar-qr")
+@limiter.limit("60/minute")
+async def verify_aadhaar_qr_endpoint(
+    request: Request,
+    file: UploadFile = Form(...),
+):
+    """Decode and cryptographically verify Aadhaar QR code or barcode with UIDAI certificate checks."""
+    from qr_decoder import extract_from_barcodes
+    data = await file.read()
+    return extract_from_barcodes(data, "aadhaar")
 
 
 @app.post("/api/verify")

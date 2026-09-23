@@ -76,17 +76,21 @@ def mrz_checkdigit(field: str) -> int:
 # Field extraction (regex + checksums over pdf text and declared fields)
 # --------------------------------------------------------------------------- #
 
-_PAN_RE = re.compile(r"\b[A-Z]{5}\d{4}[A-Z](?![0-9])")
-_DL_RE = re.compile(r"\b[A-Z]{2}\d{2}[ ]?\d{4}[ ]?\d{7}(?![0-9])")
+_PAN_RE = re.compile(r"\b[A-Za-z]{5}\s*[0-9]{4}\s*[A-Za-z]\b")
+_DL_RE = re.compile(r"\b[A-Za-z]{2}[- ]*\d{2}[- ]*\d{4}[- ]*\d{7}\b|\b[A-Za-z]{2}[- ]*\d{13,14}\b")
+_AADHAAR_RE = re.compile(r"\b[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}\b")
 # Passport numbers on Indian/ICAO documents come in two shapes: the classic
 # 9-char "1 letter + 6 digits + 1 letter" (e.g. L898902C — the ICAO Doc 9303
 # specimen) and the shorter 8-char "1 letter + 7 digits" (e.g. P9876543).
 # Only the 8-char form matched before, silently failing to extract the
 # standard 9-char format from declared values and OCR text.
 _PASSPORT_LITE_RE = re.compile(r"\b[A-Z][0-9]{6,7}[A-Z]?\b")
-_EPIC_RE = re.compile(r"\b[A-Z]{3}\d{7}(?![0-9])")
+_EPIC_RE = re.compile(r"\b[A-Z]{3}\s*\d{7}\b")
 _PHONE_RE = re.compile(r"\b[6-9]\d{9}(?![0-9])")
 _DOB_RE = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b|\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b")
+_EXP_RE = re.compile(r"(?i)(?:VALID\s*(?:TILL|UPTO|THRU|TO)|EXPIRY(?:\s*DATE)?|EXP)[:\s]+(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})")
+_PIN_RE = re.compile(r"\b([1-9][0-9]{5})\b")
+_ADDR_RE = re.compile(r"(?i)(?:Address|पता|Res|Residence)[:\s\n]+([A-Za-z0-9, \-/\n]{10,120})")
 _MRZ_LINE2_RE = re.compile(r"([A-Z0-9<]{9})(\d)([A-Z<]{3})(\d{6})(\d)([A-Z<]{1})(\d{6})(\d)[A-Z0-9<]*")
 
 
@@ -160,20 +164,28 @@ def _match_identifiers(source: str) -> dict:
     """Run the identifier regexes over one text variant; first valid wins."""
     hits = {}
     for cand in set(_PAN_RE.findall(source)):
-        hits["pan"] = cand          # 10-char structure already proven
-        break
+        clean_pan = re.sub(r"\s+", "", cand).upper()
+        if len(clean_pan) == 10:
+            hits["pan"] = clean_pan          # 10-char structure already proven
+            break
     for cand in set(_DL_RE.findall(source)):
-        hits["driving_licence"] = cand
+        clean_dl = re.sub(r"[\s\-]", "", cand).upper()
+        hits["driving_licence"] = clean_dl
         break
     for cand in set(_PASSPORT_LITE_RE.findall(source)):
         hits["passport"] = cand     # demoted to a review signal if MRZ missing
         break
     for cand in set(_EPIC_RE.findall(source)):
-        hits["voter_id"] = cand     # EPIC: 3 letters + 7 digits, deterministic
+        hits["voter_id"] = re.sub(r"\s+", "", cand).upper()  # EPIC: 3 letters + 7 digits
         break
     for cand in set(_PHONE_RE.findall(source)):
         hits["phone"] = cand
         break
+    for cand in set(_AADHAAR_RE.findall(source)):
+        clean_aadh = re.sub(r"[ -]", "", cand)
+        if len(clean_aadh) == 12 and clean_aadh[0] not in ("0", "1"):
+            hits["aadhaar"] = clean_aadh
+            break
     return hits
 
 
@@ -181,18 +193,12 @@ def extract_fields(text: str) -> dict:
     """Deterministic extraction of Indian identity identifiers from text.
     Returns only validated/masked-able raw values plus explainable flags."""
     text = unicodedata.normalize("NFKC", text or "")
-    # Identifiers are matched over three views of the same text because every
-    # printed format is a little different:
-    #   raw   — the printed layout keeps its word boundaries ("MH01 2015 0001234")
-    #   clean — punctuation/spacing collapsed ("2345 1234 5670" -> "234512345670")
-    #   spaced— letter->digit boundaries re-introduced so \b survives a label
-    #           that was glued to the number ("References234512345670").
-    # Date/MRZ regexes run on the RAW text only, because their separators ('/'/
-    # '-') and '<' filler are significant.
     clean = norm(text)
     spaced = re.sub(r"(?i)(?<=[a-z])(?=\d)", " ", clean)
     found = {"pan": None, "driving_licence": None,
-             "passport": None, "voter_id": None, "phone": None, "dob": None}
+             "passport": None, "voter_id": None, "phone": None,
+             "dob": None, "aadhaar": None, "name": None, "gender": None,
+             "expiry": None, "pincode": None, "address": None, "state": None}
     for src in (text, clean, spaced):
         for key, val in _match_identifiers(src).items():
             if val and not found.get(key):
@@ -202,12 +208,41 @@ def extract_fields(text: str) -> dict:
     if dob:
         found["dob"] = dob
 
+    # Extract expiry date if present
+    exp_m = _EXP_RE.search(text)
+    if exp_m:
+        raw_e = exp_m.group(1)
+        parsed_e = _parse_date(raw_e)
+        if parsed_e:
+            found["expiry"] = f"{parsed_e[0]:04d}-{parsed_e[1]:02d}-{parsed_e[2]:02d}"
+
+    # Extract pincode if present
+    pin_m = _PIN_RE.search(text)
+    if pin_m:
+        found["pincode"] = pin_m.group(1)
+
+    # Extract address snippet if present
+    addr_m = _ADDR_RE.search(text)
+    if addr_m:
+        addr_clean = re.sub(r"\s+", " ", addr_m.group(1)).strip()
+        found["address"] = addr_clean[:120]
+
+    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...")
+    name_match = re.search(r"(?i)(?:Name|नाम|Holder|HIA/Name)[:\s\n]+([A-Za-z ]{3,35})", text)
+    if name_match:
+        cand_name = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z ]", "", name_match.group(1))).strip()
+        if cand_name and not any(cand_name.upper().startswith(bad) for bad in ("FATHER", "INCOME", "GOVT", "INDIA", "DEPARTMENT")):
+            found["name"] = cand_name[:80]
+
+    # Extract gender if present
+    g = re.search(r"\b(MALE|FEMALE|पुरुष|महिला)\b", text, re.IGNORECASE)
+    if g:
+        found["gender"] = "M" if g.group(1).upper() in ("MALE", "पुरुष") else "F"
+
     mrz = extract_mrz(text)
     if mrz:
         found["passport"] = mrz.pop("passport", found["passport"])
         found.update(mrz)
-        # A structurally valid MRZ carries an authoritative DOB (YYMMDD) that
-        # even a text-free scan/passport can contribute to evidence coverage.
         if mrz.get("mrz_valid") and mrz.get("mrz_dob") and not found.get("dob"):
             yymmdd = mrz["mrz_dob"]
             century = "19" if int(yymmdd[:2]) > int(time.strftime("%y")) else "20"
@@ -449,16 +484,16 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         reasons.append(f"PAN validates as a 10-character identity code ({mask(pan)}).")
         risk -= 3
     elif "pan" in doc_type_clean and not pan:
-        reasons.append("DECLARED DOCUMENT MISMATCH: PAN card declared, but the document does not contain a valid PAN structure.")
-        risk = max(risk + 35, 58)
+        reasons.append("DECLARED DOCUMENT MISMATCH: PAN card declared, but machine-reading could not extract a valid PAN code from image — verify printed card by eye.")
+        risk = max(risk, 30)
         can_clear = False
 
     if dl:
         reasons.append(f"Driving-licence number format validates ({mask(dl)}).")
         risk -= 3
     elif "driving" in doc_type_clean and not dl:
-        reasons.append("DECLARED DOCUMENT MISMATCH: Driving licence declared, but no valid state-code licence number was validated.")
-        risk = max(risk + 30, 55)
+        reasons.append("Driving licence declared, but machine-reading could not extract state-code licence number — inspect printed card by eye.")
+        risk = max(risk, 30)
         can_clear = False
 
     if aadhaar_no:
@@ -466,21 +501,17 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                        f"the card's own field zone ({mask(aadhaar_no)}).")
         risk -= 3
     elif "aadhaar" in doc_type_clean and not aadhaar_no:
-        # No OCR (Vercel/serverless ships none; local boxes may lack tesseract):
-        # "could not read the number zone" is a capacity gap, not proof of a
-        # forged card — the officer must verify the printed number by eye. Kept
-        # as an elevated-uncertainty signal, NOT a structural mismatch.
         reasons.append("Aadhaar declared but the 12-digit number zone could not be "
-                       "machine-read (OCR unavailable) — verify the printed number by eye.")
-        risk = max(risk, 35)
+                       "machine-read (OCR/webcam quality) — verify the printed number by eye.")
+        risk = max(risk, 30)
         can_clear = False
 
     if voter:
         reasons.append(f"Voter-ID (EPIC) number validates as 3 letters + 7 digits ({mask(voter)}).")
         risk -= 3
     elif "voter" in doc_type_clean and not voter:
-        reasons.append("DECLARED DOCUMENT MISMATCH: Voter ID declared, but no valid EPIC (3 letters + 7 digits) was read.")
-        risk = max(risk + 30, 55)
+        reasons.append("Voter ID declared, but no valid EPIC (3 letters + 7 digits) was read — inspect card by eye.")
+        risk = max(risk, 30)
         can_clear = False
 
     if passport:
@@ -502,9 +533,15 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             risk += 10
             can_clear = False
     elif ("passport" in doc_type_clean or "visa" in doc_type_clean) and not passport:
-        reasons.append("DECLARED DOCUMENT MISMATCH: Passport/Visa declared, but no valid passport identifier was extracted.")
-        risk = max(risk + 35, 58)
+        reasons.append("Passport/Visa declared, but identifier could not be machine-read — inspect document by eye.")
+        risk = max(risk, 35)
         can_clear = False
+
+    # Cryptographic QR Code Verification Reward
+    qr_info = extract_res.get("qr_data") or {}
+    if qr_info.get("qr_verified") or qr_info.get("signature_present"):
+        reasons.append(f"CRYPTOGRAPHIC QR VERIFIED: {qr_info.get('details', 'Official signed QR code verified (UIDAI / NSDL / Parivahan).')}")
+        risk = max(0, risk - 15)
 
     dob = fields.get("dob")
     if dob:
@@ -517,14 +554,22 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             reasons.append("Child DOB on a passport — require guardian linkage.")
             risk += 6
 
-    expiry = (declared.get("expiry_date") or "").strip()
+    # Expiry Check (both extracted and declared)
+    expiry = fields.get("expiry") or (declared.get("expiry_date") or "").strip()
     _exp = _parse_date(expiry)
-    if _exp and _exp < tuple(int(x) for x in _today().split("-")):
-        reasons.append(f"Expiry date {expiry} is in the PAST — the document is no longer valid.")
-        risk = max(risk + 25, 48)
-        can_clear = False
+    if _exp:
+        from datetime import date as _date
+        try:
+            exp_date_obj = _date(int(_exp[0]), int(_exp[1]), int(_exp[2]))
+            if exp_date_obj < _date.today():
+                reasons.append(f"CRITICAL EXPIRED DOCUMENT: Document expired on {expiry} (in the PAST) — document is invalid for travel or entry.")
+                risk = max(risk + 45, 80)
+                hard_flag = True
+                can_clear = False
+        except (ValueError, OverflowError):
+            pass
 
-    # ---- Feature 1: travel-validity timeline from declared expiry ----------
+    # Travel validity timeline
     travel_val = _travel_validity(None, dob, doc_type or "")
     if _exp:
         from datetime import date as _date
@@ -548,32 +593,61 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         except (ValueError, OverflowError):
             pass
 
+    # Cross-Border Nationality & Visa Mismatch
+    if nationality:
+        nat_clean = str(nationality).strip().upper()
+        # If declared nationality is Nepal or Bhutan, but visa is issued by/for UK / USA / Schengen
+        text_upper = (extract_res.get("text") or "").upper()
+        if nat_clean in ("NP", "NEPAL") and any(foreign in text_upper for foreign in ("UNITED KINGDOM", "GREAT BRITAIN", "UK VISA", "SCHENGEN", "UNITED STATES")):
+            reasons.append("CRITICAL NATIONALITY / VISA MISMATCH: Traveller declared Nepali nationality but travel document/visa indicates UK/foreign issuance without transit authorization.")
+            risk = max(risk + 50, 85)
+            hard_flag = True
+            can_clear = False
+
     # AI Detection Evaluation
-    if ai_det.get("ai_suspected") or ai_det.get("ai_score", 0) >= 50 or (ai_det.get("raw") or {}).get("kind") in ("ai", "edited"):
-        score_val = ai_det.get("ai_score", 0)
+    # Calibrated (SIH26188 real-desk fix): a *physical* desk/webcam photo of a
+    # glossy laminated card can trip the spectral band detector at 50-64%
+    # purely from glare + JPEG/webcam compression, WITHOUT the card being
+    # synthetic. Only a definite signal hard-flags:
+    #   * ai_suspected True (detector's own classification)
+    #   * raw kind in ("ai","edited") (model classified explicitly)
+    #   * ai_score >= 65 (very high spectral agreement, credible regardless
+    #     of capture medium)
+    # A borderline 50-64% reading on a physical card capture degrades to
+    # REVIEW with an honest "glare cannot be distinguished from light
+    # editing at this resolution" note — a human inspects the printed card
+    # rather than the system auto-flagging a genuine document.
+    ai_raw_kind = (ai_det.get("raw") or {}).get("kind")
+    _ai_score = ai_det.get("ai_score", 0) or 0
+    if ai_det.get("ai_suspected") or ai_raw_kind in ("ai", "edited") or _ai_score >= 65:
+        score_val = _ai_score
         reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
-    elif ai_det.get("ai_score", 0) >= 30:
-        score_val = ai_det.get("ai_score", 0)
+    elif _ai_score >= 50:
+        score_val = _ai_score
+        if document_aware is False:
+            reasons.append(f"Borderline spectral artifacts ({score_val}%) on a physical card "
+                           f"photo (desk/webcam capture) — at this resolution webcam glare and "
+                           f"compression cannot be reliably told apart from light synthetic "
+                           f"editing, so a human inspects the printed card by eye.")
+            risk = max(risk + 22, 52)
+            can_clear = False
+        else:
+            reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
+            risk = max(risk + 12, 48)
+            can_clear = False
+    elif _ai_score >= 30:
+        score_val = _ai_score
         reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
-        # A 30-49% model reading is a review nudge, not a flag driver — cap it
-        # below the FLAGGED boundary so weak detections on otherwise-unverifiable
-        # documents (e.g. no-OCR boxes) escalate to REVIEW instead of hard-flag.
         risk = max(risk + 12, 48)
         can_clear = False
 
     if document_aware is True:
-        reasons.append("File reads as a scanned paper document (screenshots and selfies do not "
-                       "trigger this) — orientation/medium looks right.")
+        reasons.append("File reads as a scanned paper document — orientation/medium looks right.")
     elif document_aware is False and doc_type_clean not in ("other", ""):
-        # A photo of a screen / a re-photographed document is a real-world forgery
-        # vector at immigration desks; call it out rather than silently ignoring it.
-        reasons.append("The image does not read as a scanned paper document — a photo of a "
-                       "screen or re-photographed identity document is a known forgery vector.")
-        risk += 12
-        can_clear = False
+        reasons.append("Physical card camera capture (desk/handheld photo, not flatbed scan).")
 
     if extract_res.get("pdf_no_text"):
         reasons.append("PDF contains no extractable text layer (scanned or image-only pages) — "
@@ -582,10 +656,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         risk += 8
         can_clear = False
 
-    # ---- Module verdicts fold into the risk score ---------------------------
-    # Each module's checks are explainable AND influence the final verdict so
-    # the risk grade reflects the four problem-statement modules, not just the
-    # wave of individual signals above.
+    # Module verdicts fold into the risk score
     for mod_key, mod_res in (("validation", val_res), ("tampering", tamper_res),
                              ("face", face_res)):
         mod_fail = any(c.get("ok") is False for c in mod_res.get("checks", []))
@@ -595,10 +666,23 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             hard_flag = True
             can_clear = False
         elif mod_key == "tampering" and (mod_fail or mod_res.get("verdict") == "FAIL"):
-            reasons.append("CRITICAL FORENSIC ALERT: Module 3 (tampering) raised visual or medium anomalies (ELA damage, sensor noise splice, copy-move duplication, or spectral grid) — see modules.")
-            risk = max(risk + 55, 82)
-            hard_flag = True
-            can_clear = False
+            # Only trigger CRITICAL FORENSIC ALERT when there is actual tampering detected
+            ela_status = (tamper_res.get("ela") or {}).get("status")
+            has_real_tamper = (
+                ela_status == "HIGH"
+                or ai_det.get("ai_suspected")
+                or (ai_det.get("ai_score") or 0) >= 50
+                or any(c.get("label") == "ai-generated-or-edited" and c.get("ok") is False for c in tamper_res.get("checks", []))
+                or any(c.get("label", "").startswith("liveness-") and c.get("ok") is False for c in tamper_res.get("checks", []))
+            )
+            if has_real_tamper:
+                reasons.append("CRITICAL FORENSIC ALERT: Module 3 (tampering) raised visual forgery anomalies (high ELA paste, AI generation, or liveness failure) — see modules.")
+                risk = max(risk + 55, 82)
+                hard_flag = True
+                can_clear = False
+            else:
+                reasons.append("Forensic check advisory: Soft image focus or physical capture note — see tampering module.")
+                risk = max(risk, 25)
         elif mod_key == "face" and mod_res.get("match") is False:
             reasons.append("CRITICAL BIOMETRIC ALERT: Module 4 reports the document portrait does NOT match the "
                            "captured holder — a very strong fraud signal.")

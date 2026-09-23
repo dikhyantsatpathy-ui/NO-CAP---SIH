@@ -98,28 +98,6 @@ def classify_document(data: bytes) -> dict | None:
     """
     sess = _get_session()
     if sess is None:
-        # Fallback to remote ML microservice if configured (e.g. on Vercel deployment)
-        ml_url = os.getenv("ML_SERVICE_URL")
-        if ml_url:
-            try:
-                timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
-                base = ml_url.rstrip("/")
-                candidate_urls = (
-                    [f"{base}/api/ml/doctype", f"{base}/gradio_api/api/ml/doctype"]
-                    if "/gradio_api" not in base else [f"{base}/api/ml/doctype"]
-                )
-                for target_url in candidate_urls:
-                    files = {"file": ("image.png", data, "image/png")}
-                    try:
-                        import httpx
-                        res = httpx.post(target_url, files=files, timeout=timeout_sec)
-                    except ImportError:
-                        import requests
-                        res = requests.post(target_url, files=files, timeout=timeout_sec)
-                    if res is not None and res.status_code == 200:
-                        return res.json()
-            except Exception as exc:
-                logger.warning("remote doctype classify failed: %s", exc)
         return None
     try:
         img = Image.open(io.BytesIO(data)).convert("RGB")

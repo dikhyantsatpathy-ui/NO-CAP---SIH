@@ -357,8 +357,14 @@ def test_screening_ai_suspected_hard_flags():
         "explanation": "High confidence synthetic image",
         "latency_ms": 10,
     }
-    with patch("main.detect_image", return_value=ai_mock):
-        res = run_screening(db, b"\xff\xd8\xff\xe0mock_ai_image", "ai_fake.jpg", "pan", "CP-1", {})
+    import main
+    with patch.object(main, "detect_image", return_value=ai_mock):
+        if "app.main" in sys.modules:
+            import app.main
+            with patch.object(app.main, "detect_image", return_value=ai_mock):
+                res = run_screening(db, b"\xff\xd8\xff\xe0mock_ai_image", "ai_fake.jpg", "pan", "CP-1", {})
+        else:
+            res = run_screening(db, b"\xff\xd8\xff\xe0mock_ai_image", "ai_fake.jpg", "pan", "CP-1", {})
         assert res["verdict"] == "FLAGGED"
         assert res["risk_score"] >= 70
         assert any("ai" in r.lower() for r in res["reasons"])
