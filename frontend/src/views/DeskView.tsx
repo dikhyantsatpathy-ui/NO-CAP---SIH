@@ -547,10 +547,19 @@ function WebcamCapture({
   const [liveExtract, setLiveExtract] = useState<LiveExtractResult | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [guideMode, setGuideMode] = useState<"document" | "face" | "none">("document");
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [shutterFlashing, setShutterFlashing] = useState(false);
+  const countdownTimerRef = useRef<number | null>(null);
   const { toast } = useToast();
   const streamRef = useRef<MediaStream | null>(null);
 
   const stopCamera = useCallback(() => {
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setCountdown(null);
     if (streamRef.current) {
       try {
         streamRef.current.getTracks().forEach((t) => {
@@ -619,7 +628,7 @@ function WebcamCapture({
     };
   }, [selectedDeviceId, stopCamera]);
 
-  const snapFrame = () => {
+  const snapFrame = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !video.videoWidth) return;
@@ -627,6 +636,8 @@ function WebcamCapture({
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    setShutterFlashing(true);
+    window.setTimeout(() => setShutterFlashing(false), 360);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob((blob) => {
       if (blob) {
@@ -635,6 +646,25 @@ function WebcamCapture({
         setPreviewBlob({ file: f, url });
       }
     }, "image/jpeg", 0.92);
+  }, []);
+
+  const triggerCountdownCapture = () => {
+    if (countdown !== null) return;
+    let count = 3;
+    setCountdown(count);
+    countdownTimerRef.current = window.setInterval(() => {
+      count -= 1;
+      if (count <= 0) {
+        if (countdownTimerRef.current) {
+          window.clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+        setCountdown(null);
+        snapFrame();
+      } else {
+        setCountdown(count);
+      }
+    }, 1000);
   };
 
   const runPreviewExtraction = async () => {
@@ -674,51 +704,147 @@ function WebcamCapture({
 
   return (
     <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Capture document from webcam">
-      <div className="modal" style={{ maxWidth: 640 }}>
+      <div className="modal" style={{ maxWidth: 660 }}>
         <header className="modal__head">
-          <span className="modal__title">Webcam capture</span>
+          <span className="modal__title">Live Camera Capture &amp; Alignment</span>
           <button type="button" className="btn btn--small" onClick={handleClose}>
             Close
           </button>
         </header>
 
         <div className="modal__body">
-          {/* Camera switcher */}
-          {devices.length > 1 && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span className="k" style={{ whiteSpace: "nowrap" }}>CAMERA:</span>
-              <select
-                value={selectedDeviceId}
-                onChange={(e) => setSelectedDeviceId(e.target.value)}
-                style={{ flex: 1, padding: "5px 8px", fontSize: 12 }}
-              >
-                {devices.map((d, i) => (
-                  <option key={d.deviceId || i} value={d.deviceId}>
-                    {d.label || `Camera ${i + 1}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Controls Bar: Camera selector + Alignment guide selector */}
+          <div className="camera-controls-bar">
+            {devices.length > 1 && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <span className="k" style={{ whiteSpace: "nowrap" }}>CAMERA:</span>
+                <select
+                  value={selectedDeviceId}
+                  onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  style={{ padding: "4px 8px", fontSize: 12, borderRadius: 6 }}
+                >
+                  {devices.map((d, i) => (
+                    <option key={d.deviceId || i} value={d.deviceId}>
+                      {d.label || `Camera ${i + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {!previewBlob && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+                <span className="k">GUIDE:</span>
+                <div className="camera-mode-toggle">
+                  <button
+                    type="button"
+                    className={`camera-mode-btn${guideMode === "document" ? " camera-mode-btn--active" : ""}`}
+                    onClick={() => setGuideMode("document")}
+                  >
+                    Document Frame
+                  </button>
+                  <button
+                    type="button"
+                    className={`camera-mode-btn${guideMode === "face" ? " camera-mode-btn--active" : ""}`}
+                    onClick={() => setGuideMode("face")}
+                  >
+                    Face Oval
+                  </button>
+                  <button
+                    type="button"
+                    className={`camera-mode-btn${guideMode === "none" ? " camera-mode-btn--active" : ""}`}
+                    onClick={() => setGuideMode("none")}
+                  >
+                    Off
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {streamError && (
             <div className="banner banner--bad">{streamError}</div>
           )}
 
           <div style={{ position: "relative" }}>
-            {/* Live Camera Feed: always kept mounted so retake has zero lag and video element is never destroyed */}
+            {/* Live Camera Viewport */}
             <div style={{ display: previewBlob ? "none" : "block" }}>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="webcam"
-                style={{ width: "100%", maxHeight: 360, objectFit: "cover", borderRadius: 8, background: "#000" }}
-              />
-              <canvas ref={canvasRef} style={{ display: "none" }} />
-              <p className="hint" style={{ marginTop: 6 }}>
-                Hold the document flat and steady, with the text and photo facing the camera.
+              <div className="camera-viewport">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="webcam"
+                  style={{ width: "100%", maxHeight: 380, objectFit: "cover", display: "block" }}
+                />
+                <canvas ref={canvasRef} style={{ display: "none" }} />
+
+                {/* Shutter flash effect */}
+                {shutterFlashing && <div className="camera-flash" aria-hidden="true" />}
+
+                {/* Live Countdown Badge */}
+                {countdown !== null && (
+                  <div className="camera-countdown-badge" aria-live="assertive">
+                    {countdown}
+                  </div>
+                )}
+
+                {/* Alignment Guides Overlay */}
+                {guideMode !== "none" && (
+                  <div className="camera-guide-overlay" aria-hidden="true">
+                    {guideMode === "document" ? (
+                      <svg viewBox="0 0 400 260" preserveAspectRatio="none" style={{ width: "88%", height: "80%" }}>
+                        {/* Outer ID Card Boundary */}
+                        <rect
+                          x="10"
+                          y="10"
+                          width="380"
+                          height="240"
+                          rx="14"
+                          fill="none"
+                          stroke="rgba(5, 150, 105, 0.75)"
+                          strokeWidth="2.5"
+                          strokeDasharray="6 4"
+                        />
+                        {/* Corner Target L-Brackets */}
+                        <path d="M 10 36 L 10 10 L 36 10" fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" />
+                        <path d="M 390 36 L 390 10 L 364 10" fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" />
+                        <path d="M 10 224 L 10 250 L 36 250" fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" />
+                        <path d="M 390 224 L 390 250 L 364 250" fill="none" stroke="#059669" strokeWidth="4" strokeLinecap="round" />
+                        {/* Photo Box Placeholder Target */}
+                        <rect x="25" y="32" width="90" height="110" rx="8" fill="rgba(5, 150, 105, 0.08)" stroke="rgba(5, 150, 105, 0.6)" strokeWidth="1.5" />
+                        {/* Text Lines Guide */}
+                        <line x1="130" y1="50" x2="365" y2="50" stroke="rgba(255, 255, 255, 0.25)" strokeWidth="2" />
+                        <line x1="130" y1="80" x2="340" y2="80" stroke="rgba(255, 255, 255, 0.25)" strokeWidth="2" />
+                        <line x1="130" y1="110" x2="310" y2="110" stroke="rgba(255, 255, 255, 0.25)" strokeWidth="2" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 300 360" style={{ width: "70%", height: "85%" }}>
+                        {/* Biometric Face Oval Guide */}
+                        <ellipse
+                          cx="150"
+                          cy="175"
+                          rx="85"
+                          ry="125"
+                          fill="rgba(5, 150, 105, 0.06)"
+                          stroke="rgba(5, 150, 105, 0.85)"
+                          strokeWidth="3"
+                          strokeDasharray="8 5"
+                        />
+                        {/* Eye level horizontal alignment line */}
+                        <line x1="100" y1="145" x2="200" y2="145" stroke="rgba(5, 150, 105, 0.5)" strokeWidth="1.5" strokeDasharray="3 3" />
+                        {/* Center vertical chin axis */}
+                        <line x1="150" y1="75" x2="150" y2="280" stroke="rgba(5, 150, 105, 0.4)" strokeWidth="1.5" strokeDasharray="4 4" />
+                      </svg>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="hint" style={{ marginTop: 8 }}>
+                {guideMode === "face"
+                  ? "Align traveller's face inside the oval frame for optimal liveness & biometric scoring."
+                  : "Fit the ID card inside the green border brackets with steady natural lighting."}
               </p>
             </div>
 
@@ -728,7 +854,7 @@ function WebcamCapture({
                 <img
                   src={previewBlob.url}
                   alt="Captured document preview"
-                  style={{ width: "100%", maxHeight: 320, objectFit: "contain", borderRadius: 8, border: "1px solid var(--line)" }}
+                  style={{ width: "100%", maxHeight: 330, objectFit: "contain", borderRadius: 8, border: "1px solid var(--line)" }}
                 />
                 {/* Live Extraction Preview Panel */}
                 {liveExtract && (
@@ -761,7 +887,7 @@ function WebcamCapture({
           </div>
         </div>
 
-        <footer className="modal__foot" style={{ display: "flex", justifyContent: "space-between" }}>
+        <footer className="modal__foot" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <button type="button" className="btn" onClick={handleClose}>
               Cancel
@@ -769,9 +895,24 @@ function WebcamCapture({
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             {!previewBlob ? (
-              <button type="button" className="btn btn--primary" onClick={snapFrame}>
-                Capture photo
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={countdown !== null}
+                  onClick={triggerCountdownCapture}
+                >
+                  ⏱ 3s Timer
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={countdown !== null}
+                  onClick={snapFrame}
+                >
+                  Capture photo
+                </button>
+              </>
             ) : (
               <>
                 <button type="button" className="btn" onClick={retake}>
