@@ -22,6 +22,7 @@ from codebase import (
     _snippets,
     codebase_context,
     _MAX_CONTEXT_CHARS,
+    _sanitize_secrets,
 )
 
 
@@ -108,6 +109,33 @@ def test_reload_index():
     from codebase import reload_index
     idx = reload_index()
     assert len(idx) > 35
+
+
+def test_sanitize_secrets_redacts_credentials():
+    raw_code = (
+        'DATABASE_URL = "postgresql://myuser:p4ssw0rd!@ep-tiny-lake-99.neon.tech/neondb"\n'
+        'GEMINI_KEY = "AIzaSyD_TestFakeKey1234567890123456789"\n'
+        'OPENAI_KEY = "sk-proj-123456789012345678901234567890"\n'
+        'GROQ_KEY = "gsk-abcdefghijklmnopqrstuvwxyz123456"\n'
+        'AUTH_HEADER = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.xyz"\n'
+        'secret_key = "SuperSecretVaultKey123"\n'
+        '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n-----END RSA PRIVATE KEY-----\n'
+    )
+    sanitized = _sanitize_secrets(raw_code)
+
+    assert "p4ssw0rd!" not in sanitized
+    assert "[REDACTED_PASSWORD]" in sanitized
+    assert "ep-tiny-lake-99.neon.tech" not in sanitized
+    assert "[REDACTED_DB_HOST]" in sanitized
+    assert "AIzaSyD_TestFakeKey1234567890123456789" not in sanitized
+    assert "[REDACTED_GOOGLE_API_KEY]" in sanitized
+    assert "sk-proj-123456789012345678901234567890" not in sanitized
+    assert "gsk-abcdefghijklmnopqrstuvwxyz123456" not in sanitized
+    assert "[REDACTED_AI_API_KEY]" in sanitized
+    assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in sanitized
+    assert "SuperSecretVaultKey123" not in sanitized
+    assert "MIIEowIBAAKCAQEA0" not in sanitized
+    assert "[REDACTED_PRIVATE_KEY_BLOCK]" in sanitized
 
 
 if __name__ == "__main__":

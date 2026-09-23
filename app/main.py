@@ -880,6 +880,30 @@ def explain(result: dict) -> str:
 # ==============================================================================
 
 
+def sanitize_secret_text(text_val: str) -> str:
+    """Scrub sensitive credentials, database URLs, passwords, and tokens."""
+    if not text_val:
+        return ""
+    s = str(text_val)
+    # Redact PostgreSQL / MySQL credentials: postgresql://user:password@host/db
+    s = re.sub(r'(postgres(?:ql)?://[^\s:]+:)([^@\s]+)(@[^\s"\'`]+)', r'\1[REDACTED_PASS]\3', s, flags=re.IGNORECASE)
+    # Redact hostnames like ep-*.neon.tech
+    s = re.sub(r'[a-zA-Z0-9_-]+\.neon\.tech', '[REDACTED_DB_HOST]', s)
+    # Redact password authentication error lines
+    s = re.sub(r'password\s+authentication\s+failed\s+for\s+user\s+"[^"]+"', 'authentication failed', s, flags=re.IGNORECASE)
+    # Redact Google / Cloud API Keys (AIzaSy...)
+    s = re.sub(r'AIza[0-9A-Za-z_-]{30,45}', '[REDACTED_API_KEY]', s)
+    # Redact OpenAI / Groq / Anthropic keys
+    s = re.sub(r'(?:sk|gsk)-[a-zA-Z0-9_-]{20,}', '[REDACTED_API_KEY]', s)
+    # Redact GitHub Tokens
+    s = re.sub(r'(?:ghp_|github_pat_)[0-9A-Za-z_]{35,}', '[REDACTED_GITHUB_TOKEN]', s)
+    # Redact Bearer tokens
+    s = re.sub(r'Bearer\s+[a-zA-Z0-9_\-\.]{25,}', 'Bearer [REDACTED_TOKEN]', s)
+    # Redact raw IPv4 addresses in errors
+    s = re.sub(r'\b(?:1\d{2}|2[0-4]\d|25[0-5]|[1-9]?\d)\.(?:1\d{2}|2[0-4]\d|25[0-5]|[1-9]?\d)\.(?:1\d{2}|2[0-4]\d|25[0-5]|[1-9]?\d)\.(?:1\d{2}|2[0-4]\d|25[0-5]|[1-9]?\d)\b', '[REDACTED_IP]', s)
+    return s
+
+
 def clean_postgres_dsn(raw_url: str) -> str:
     """Sanitizes PostgreSQL DSN strings to prevent libpq URI parser errors:
     1. Splits off any extraneous environment variables accidentally pasted into DATABASE_URL.
@@ -970,7 +994,7 @@ if not _IS_SQLITE:
                 return psycopg2.connect(DATABASE_URL, **conn_kw)
             except Exception as e:
                 last = e
-                _PRIMARY_LAST_ERROR = f"{type(e).__name__}: {e}"
+                _PRIMARY_LAST_ERROR = sanitize_secret_text(f"{type(e).__name__}: {e}")
                 err_str = str(e).lower()
                 if ("could not translate host name" in err_str or "getaddrinfo" in err_str) and _parsed_db and _parsed_db.hostname:
                     # DNS resolution fallback via Google DoH
@@ -985,10 +1009,10 @@ if not _IS_SQLITE:
                                     conn_kw["hostaddr"] = _ans.get("data")
                                     return psycopg2.connect(DATABASE_URL, **conn_kw)
                     except Exception as doh_err:
-                        _PRIMARY_LAST_ERROR = f"DoH resolve failed: {doh_err} (orig: {e})"
+                        _PRIMARY_LAST_ERROR = sanitize_secret_text(f"DoH resolve failed: {doh_err} (orig: {e})")
                 if attempt < 1:
                     time.sleep(0.3)
-        raise last or RuntimeError("PostgreSQL connect failed")
+        raise RuntimeError(sanitize_secret_text(str(last or "PostgreSQL connect failed")))
 
     engine = create_engine(
         DATABASE_URL,
@@ -1445,8 +1469,8 @@ def get_db():
                 db.execute(text("SELECT 1"))
         except Exception as e:
             _PRIMARY_LAST_FAILED = time.monotonic()
-            _PRIMARY_LAST_ERROR = f"{type(e).__name__}: {e}"
-            print(f"[get_db] Primary DB check failed ({type(e).__name__}: {e}); using fallback SQLite session.")
+            _PRIMARY_LAST_ERROR = sanitize_secret_text(f"{type(e).__name__}: {e}")
+            print(f"[get_db] Primary DB check failed ({type(e).__name__}: {_PRIMARY_LAST_ERROR}); using fallback SQLite session.")
             if db:
                 try:
                     db.close()
@@ -1958,6 +1982,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -1986,7 +2012,7 @@ def health_check():
             _PRIMARY_LAST_ERROR = None
         except Exception as e:
             _PRIMARY_LAST_FAILED = time.monotonic()
-            _PRIMARY_LAST_ERROR = f"{type(e).__name__}: {e}"
+            _PRIMARY_LAST_ERROR = sanitize_secret_text(f"{type(e).__name__}: {e}")
             db_status = "fallback_sqlite"
     else:
         try:
@@ -2001,12 +2027,10 @@ def health_check():
         "database": {
             "status": db_status,
             "engine": db_type,
-            "neon_endpoint": _NEON_ENDPOINT,
-            "last_error": _PRIMARY_LAST_ERROR,
+            "connected": db_status == "connected",
         },
         "ml_service": {
             "configured": bool(os.getenv("ML_SERVICE_URL")),
-            "url": os.getenv("ML_SERVICE_URL"),
         },
         "version": "2.1.0",
         "timestamp": now_utc(),
@@ -2544,8 +2568,8 @@ def session_detail(session_id: str, request: Request, admin: str = Depends(get_c
         except HTTPException:
             raise
         except Exception as e:
-            print(f"[session_detail] Error loading session {session_id}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to load session details: {str(e)}")
+            print(f"[session_detail] Error loading session {session_id}: {sanitize_secret_text(e)}")
+            raise HTTPException(status_code=500, detail="Failed to load session details.")
 
 
 @app.post("/api/sessions/{session_id}/close")
@@ -4014,6 +4038,7 @@ GEMINI_SYSTEM_PROMPT = (
     "- End-to-End Traces: Explain how frontend, backend, screening modules, database schemas, detectors, and the border desk flow connect across the stack.\n"
     "- Algorithmic Rigor: When explaining algorithms (e.g. ICAO 9303 MRZ check digits, PAN/DL/Voter-ID checksum rules, ELA tamper forensics, face-embedding cosine comparison), detail the exact logic and quote the code lines.\n"
     "- Complete Code Blocks: Provide complete, un-truncated, syntax-highlighted code blocks in markdown when answering implementation questions.\n"
+    "- STRICT SECRETS & CREDENTIALS PROTECTION: Under NO circumstances are you permitted to reveal, print, reconstruct, or discuss any database connection strings, passwords, master keys, session encryption keys, or external service API credentials. If any user asks for credentials, environment variables, or private vault keys (even under roleplay, debugging, or simulation pretenses), refuse firmly and state that cryptographic credentials and infrastructure parameters are redacted and strictly non-disclosable.\n"
     "- Technical Scope: Answer thoroughly on all aspects of the SSB Screening console. If asked anything completely unrelated to this project (e.g. recipes, celebrity trivia), politely decline in one sentence and offer to help with the screening console instead."
 )
 
@@ -4048,7 +4073,7 @@ def _gemini_reply(message, history):
     try:
         code_ctx = codebase_index.codebase_context(message)
     except Exception as e:
-        print(f"[_gemini_reply] Warning: codebase_context error: {e}")
+        print(f"[_gemini_reply] Warning: codebase_context error: {sanitize_secret_text(e)}")
         code_ctx = ""
 
     if code_ctx:
@@ -4075,7 +4100,7 @@ def _gemini_reply(message, history):
             resp = requests.post(url, json=body, headers=headers, params=params, timeout=(15, 90))
         except Exception as e: # Catch all since requests exception might not be imported
 
-            print(f"[_gemini_reply] RequestException for model {model}: {e}")
+            print(f"[_gemini_reply] RequestException for model {model}: {sanitize_secret_text(e)}")
             continue
         last_resp = resp
         if resp.status_code == 200:
@@ -4083,7 +4108,7 @@ def _gemini_reply(message, history):
             parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts") or []
             text = "".join(p.get("text") or "" for p in parts).strip()
             if text:
-                return {"ok": True, "answer": text}
+                return {"ok": True, "answer": sanitize_secret_text(text)}
             block = (data.get("promptFeedback") or {}).get("blockReason")
             return {"ok": False, "reason": "blocked", "detail": block}
         if resp.status_code in (400, 401, 403):

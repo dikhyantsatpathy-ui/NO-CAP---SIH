@@ -28,13 +28,15 @@ SKIP_DIRS = {
 }
 
 # Files / extensions that never belong in the code context.
-SKIP_FILE_PREFIXES = (".env",)
+SKIP_FILE_PREFIXES = (".env", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
 SKIP_FILE_NAMES = {
-    "bun.lock", "package-lock.json",
+    "bun.lock", "package-lock.json", "credentials.json", "service_account.json",
+    "service-account.json", "client_secret.json", "nocap.db", "nocap_fallback.db",
 }
 SKIP_FILE_EXTS = {
     ".bat", ".bin", ".exe", ".gif", ".ico", ".jpeg", ".jpg", ".lock", ".log",
     ".otf", ".pdf", ".png", ".pyc", ".sh", ".ttf", ".woff", ".woff2", ".pyw",
+    ".pem", ".key", ".p12", ".pfx", ".sqlite", ".sqlite3", ".db",
 }
 INCLUDE_EXTS = {
     ".css", ".html", ".js", ".json", ".jsx", ".md", ".py", ".toml", ".ts",
@@ -53,6 +55,42 @@ _MAX_CONTEXT_CHARS = 2_500_000  # Comfortably holds 100% of the entire codebase 
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 _CAMEL_RE = re.compile(r"([a-z])([A-Z])")
+
+
+def _sanitize_secrets(text: str) -> str:
+    """Scrub sensitive credentials, database URLs, passwords, and tokens from code context."""
+    if not text:
+        return text
+    # 1. Database Connection Strings (Postgres / MySQL / etc)
+    s = re.sub(
+        r'(postgres(?:ql)?://[^\s:]+:)([^@\s]+)(@[^\s"\'`]+)',
+        r'\1[REDACTED_PASSWORD]\3',
+        text,
+        flags=re.IGNORECASE,
+    )
+    # 2. Hostnames like ep-*.neon.tech
+    s = re.sub(r'[a-zA-Z0-9_-]+\.neon\.tech', '[REDACTED_DB_HOST]', s)
+    # 3. Google / Cloud API Keys (AIzaSy...)
+    s = re.sub(r'AIza[0-9A-Za-z_-]{30,45}', '[REDACTED_GOOGLE_API_KEY]', s)
+    # 4. GitHub Personal Access Tokens / Secrets
+    s = re.sub(r'(?:ghp_|github_pat_)[0-9A-Za-z_]{35,}', '[REDACTED_GITHUB_TOKEN]', s)
+    # 5. OpenAI / Anthropic / Groq Keys
+    s = re.sub(r'(?:sk|gsk)-[a-zA-Z0-9_-]{20,}', '[REDACTED_AI_API_KEY]', s)
+    # 6. Bearer / Auth tokens
+    s = re.sub(r'Bearer\s+[a-zA-Z0-9_\-\.]{25,}', 'Bearer [REDACTED_TOKEN]', s)
+    # 7. Private Key blocks
+    s = re.sub(
+        r'-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----',
+        '[REDACTED_PRIVATE_KEY_BLOCK]',
+        s,
+    )
+    # 8. Assignment of sensitive credentials in configs / scripts
+    s = re.sub(
+        r'(?i)(password|secret_key|master_vault_key|auth_token|api_secret)\s*([:=])\s*(["\'])[^\3\n]{6,}\3',
+        r'\1 \2 \3[REDACTED_CREDENTIAL]\3',
+        s,
+    )
+    return s
 
 _lock = threading.Lock()
 _index: list[dict] | None = None
@@ -113,11 +151,12 @@ def _load_index() -> list[dict]:
         for rel, abs_path in _iter_source_files():
             try:
                 with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
-                    text = fh.read(_MAX_FILE_CHARS)
+                    raw_text = fh.read(_MAX_FILE_CHARS)
             except OSError:
                 continue
-            if not text.strip():
+            if not raw_text.strip():
                 continue
+            text = _sanitize_secrets(raw_text)
             lines = text.splitlines()
             width = len(str(len(lines)))
             snippet = "\n".join(f"{i + 1:>{width}}| {ln}" for i, ln in enumerate(lines))
