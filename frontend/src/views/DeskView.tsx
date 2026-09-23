@@ -845,6 +845,7 @@ export function DeskView() {
   // Document intake form
   const [file, setFile] = useState<File | null>(null);
   const [fileKey, setFileKey] = useState(0);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [docType, setDocType] = useState<ScreenDocType>("passport");
   const [docNumber, setDocNumber] = useState("");
   const [declaredName, setDeclaredName] = useState("");
@@ -852,6 +853,15 @@ export function DeskView() {
   const [specimenBusy, setSpecimenBusy] = useState(false);
   const [note, setNote] = useState("");
   const [modelHint, setModelHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (file && file.type.startsWith("image/")) {
+      const url = URL.createObjectURL(file);
+      setThumbUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setThumbUrl(null);
+  }, [file]);
 
   const [showWebcam, setShowWebcam] = useState(false);
   const [handover, setHandover] = useState<ShiftHandoverPacket | null>(null);
@@ -1229,8 +1239,37 @@ export function DeskView() {
           <div className="panel__row">
             <div>
               <div className="k">CURRENT TRAVELLER</div>
-              <div className="session-label">
-                {active.label || `Session #${active.id.slice(0, 6)}`}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "4px 0" }}>
+                <div className="session-label">
+                  {active.label || `Session #${active.id.slice(0, 6)}`}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn--small btn--ghost"
+                  style={{ padding: "2px 8px", fontSize: "11px" }}
+                  onClick={() => {
+                    void copyText(active.id);
+                    toast("Copied session ID to clipboard.", "info");
+                  }}
+                  title="Copy session UUID to clipboard"
+                >
+                  Copy ID
+                </button>
+                {openList.length > 1 && (
+                  <div className="session-quick-switcher" title="Quick switch between open sessions today">
+                    <span className="muted" style={{ fontSize: 11 }}>Switch to:</span>
+                    <select
+                      value={active.id}
+                      onChange={(e) => void resumeSession(e.target.value)}
+                    >
+                      {openList.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label || `Session · ${s.id.slice(0, 6)}`} ({s.checkpoint})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="session-meta">
                 <span className="chip chip--mute">{active.checkpoint}</span>
@@ -1368,7 +1407,15 @@ export function DeskView() {
             <>
               {/* --- Document intake -------------------------------------- */}
               {/* --- Document intake card -------------------------------- */}
-              <div className="intake-card">
+              <div
+                className="intake-card"
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && file && !busy) {
+                    e.preventDefault();
+                    void screenIntoSession();
+                  }
+                }}
+              >
                 <div className="intake-card__header">
                   <div>
                     <h3 className="intake-card__title">Scan a document</h3>
@@ -1460,6 +1507,33 @@ export function DeskView() {
                     </p>
 
                     <div className="intake-capture-zone">
+                      {file && (
+                        <div className="file-thumb-preview">
+                          {thumbUrl ? (
+                            <img src={thumbUrl} alt="Document preview" className="file-thumb-preview__img" />
+                          ) : (
+                            <div className="file-thumb-preview__icon">📄</div>
+                          )}
+                          <div className="file-thumb-preview__meta">
+                            <span className="file-thumb-preview__name">{file.name}</span>
+                            <span className="file-thumb-preview__size">
+                              {(file.size / 1024).toFixed(0)} KB · {file.type || "Document"}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn--small btn--ghost"
+                            onClick={() => {
+                              setFile(null);
+                              setFileKey((k) => k + 1);
+                            }}
+                            title="Remove attached file"
+                          >
+                            ✕ Remove
+                          </button>
+                        </div>
+                      )}
+
                       <label className={`dropzone ${file ? "dropzone--has-file" : ""}`}>
                         <input
                           key={fileKey}
@@ -1475,7 +1549,7 @@ export function DeskView() {
                           </svg>
                         </div>
                         <span className="dropzone__label">
-                          {file ? file.name : "Click to select a photo or scan"}
+                          {file ? "Change attached photo or scan" : "Click to select a photo or scan"}
                         </span>
                         <span className="dropzone__hint">JPEG, PNG, WEBP or PDF up to 10 MB</span>
                       </label>
@@ -1518,8 +1592,10 @@ export function DeskView() {
                     className="btn btn--primary btn--hero"
                     disabled={busy || !file}
                     onClick={() => void screenIntoSession()}
+                    title="Screen this document into current session (Ctrl+Enter)"
                   >
                     {busy ? "Checking…" : "Check this document"}
+                    <span style={{ fontSize: 11, opacity: 0.85, marginLeft: 6 }}>[Ctrl + ↵]</span>
                   </button>
                 </div>
 

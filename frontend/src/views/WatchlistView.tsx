@@ -21,7 +21,7 @@ import {
   type WatchlistEntry,
 } from "../api";
 import { useAuth, useToast } from "../app/state";
-import { copyText, shortHash, timeLabelIst } from "../app/util";
+import { copyText, downloadBlob, shortHash, timeLabelIst } from "../app/util";
 
 export function WatchlistView() {
   const { toast } = useToast();
@@ -35,6 +35,10 @@ export function WatchlistView() {
   const [reason, setReason] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
+  // QoL Controls: search, category filter, export
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterCat, setFilterCat] = useState("ALL");
+
   const load = useCallback(async () => {
     const res = await getWatchlist();
     if (res.ok) setEntries(res.data.entries);
@@ -44,6 +48,40 @@ export function WatchlistView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const exportWatchlistCsv = () => {
+    const rows = [
+      ["ID", "Category", "Masked_Identifier", "Reason", "Added_By", "Added_At_IST"],
+      ...filteredEntries.map((e) => [
+        `WL-${e.id}`,
+        SCREEN_WATCHLIST_LABELS[(e.category || "passport") as ScreenWatchlistCategory] || e.category,
+        e.mask,
+        `"${(e.reason || "").replace(/"/g, '""')}"`,
+        e.added_by,
+        timeLabelIst(e.created_at),
+      ]),
+    ];
+    const csv = rows.map((r) => r.join(",")).join("\n");
+    const date = new Date().toISOString().slice(0, 10);
+    downloadBlob(new Blob([csv], { type: "text/csv" }), `SSB_BORDER_WATCHLIST_${date}.csv`);
+    toast(`Exported ${filteredEntries.length} watchlist entries to CSV.`, "success");
+  };
+
+  const filteredEntries = entries.filter((e) => {
+    if (filterCat !== "ALL" && e.category !== filterCat) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const rawCat = e.category || "passport";
+      const catLabel = (SCREEN_WATCHLIST_LABELS[rawCat as ScreenWatchlistCategory] || rawCat || "").toLowerCase();
+      const match =
+        catLabel.includes(q) ||
+        (e.mask && e.mask.toLowerCase().includes(q)) ||
+        (e.reason && e.reason.toLowerCase().includes(q)) ||
+        (e.added_by && e.added_by.toLowerCase().includes(q));
+      if (!match) return false;
+    }
+    return true;
+  });
 
   const add = async () => {
     if (!value.trim()) {
@@ -140,10 +178,85 @@ export function WatchlistView() {
           </button>
         </div>
 
+        {/* QoL Filter & Search Bar */}
+        <div className="filter-bar">
+          <div className="filter-bar__search">
+            <span className="filter-bar__search-icon" aria-hidden="true">
+              🔍
+            </span>
+            <input
+              type="text"
+              placeholder="Search by masked value, reason, or supervisor…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="filter-bar__group">
+            <select
+              className="filter-bar__select"
+              value={filterCat}
+              onChange={(e) => setFilterCat(e.target.value)}
+              title="Filter by document category"
+            >
+              <option value="ALL">All categories ({SCREEN_WATCHLIST_CATEGORIES.length})</option>
+              {SCREEN_WATCHLIST_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {SCREEN_WATCHLIST_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="filter-bar__actions">
+            <button
+              type="button"
+              className="btn btn--small btn--ghost"
+              onClick={exportWatchlistCsv}
+              disabled={filteredEntries.length === 0}
+              title="Download privacy-safe watchlist CSV export"
+            >
+              📥 Export CSV
+            </button>
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={() => void load()}
+              title="Reload watchlist from database"
+            >
+              ↻ Reload
+            </button>
+          </div>
+        </div>
+
+        <div className="filter-summary">
+          <span>
+            Showing {filteredEntries.length} of {entries.length} watchlist entries
+            {searchQuery.trim() && ` matching "${searchQuery}"`}
+            {filterCat !== "ALL" && ` in ${SCREEN_WATCHLIST_LABELS[filterCat as ScreenWatchlistCategory] || filterCat}`}
+          </span>
+          {(searchQuery || filterCat !== "ALL") && (
+            <button
+              type="button"
+              className="btn btn--small btn--ghost"
+              onClick={() => {
+                setSearchQuery("");
+                setFilterCat("ALL");
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
         {loading ? (
           <p className="hint">Loading watchlist…</p>
-        ) : entries.length === 0 ? (
-          <p className="hint">Watchlist empty.</p>
+        ) : filteredEntries.length === 0 ? (
+          <p className="hint">
+            {entries.length === 0
+              ? "Watchlist empty."
+              : "No watchlist entries match your filter or search criteria."}
+          </p>
         ) : (
           <table className="tbl">
             <thead>
@@ -158,7 +271,7 @@ export function WatchlistView() {
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => (
+              {filteredEntries.map((e) => (
                 <>
                   <tr key={e.id}>
                     <td>

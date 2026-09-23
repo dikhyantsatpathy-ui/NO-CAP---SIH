@@ -48,16 +48,31 @@ function FlaggedCard({
   isSuper,
   onAdjudicate,
   busyId,
+  forceExpand,
 }: {
   flag: ScreeningSession;
   isSuper: boolean;
   onAdjudicate: (id: string, decision: Decision, note: string) => void;
   busyId: string | null;
+  forceExpand?: boolean | null;
 }) {
   const [detail, setDetail] = useState<ScreeningSessionDetail | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState("");
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (forceExpand === true) {
+      if (!detail) {
+        getSession(flag.id).then((res) => {
+          if (res.ok) setDetail(res.data);
+        }).catch(() => {});
+      }
+      setExpanded(true);
+    } else if (forceExpand === false) {
+      setExpanded(false);
+    }
+  }, [forceExpand, flag.id, detail]);
 
   const toggle = async () => {
     if (!expanded && !detail) {
@@ -395,6 +410,13 @@ export function ReviewQueueView() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // QoL Controls: Search, filters, sort, expand-all
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterCheckpoint, setFilterCheckpoint] = useState("ALL");
+  const [filterRisk, setFilterRisk] = useState("ALL");
+  const [sortMode, setSortMode] = useState("time_desc");
+  const [forceExpandFlagged, setForceExpandFlagged] = useState<boolean | null>(null);
+
   const load = useCallback(async () => {
     const [f, s] = await Promise.all([getSessions("flagged"), getSessions("approved")]);
     setFlagged(f.ok ? f.data.sessions : []);
@@ -417,6 +439,49 @@ export function ReviewQueueView() {
       toast(res.error, "error");
     }
   };
+
+  const checkpoints = Array.from(
+    new Set([...flagged, ...settled].map((s) => s.checkpoint).filter(Boolean)),
+  ).sort();
+
+  const filterFn = (s: ScreeningSession) => {
+    if (filterCheckpoint !== "ALL" && s.checkpoint !== filterCheckpoint) return false;
+    if (filterRisk === "HIGH" && (s.risk_score || 0) < 60) return false;
+    if (filterRisk === "MED" && ((s.risk_score || 0) < 30 || (s.risk_score || 0) >= 60)) return false;
+    if (filterRisk === "LOW" && (s.risk_score || 0) >= 30) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const match =
+        (s.label && s.label.toLowerCase().includes(q)) ||
+        s.id.toLowerCase().includes(q) ||
+        (s.screener && s.screener.toLowerCase().includes(q)) ||
+        (s.checkpoint && s.checkpoint.toLowerCase().includes(q)) ||
+        (s.note && s.note.toLowerCase().includes(q)) ||
+        (s.block_hash && s.block_hash.toLowerCase().includes(q));
+      if (!match) return false;
+    }
+    return true;
+  };
+
+  const sortFn = (a: ScreeningSession, b: ScreeningSession) => {
+    if (sortMode === "time_asc") {
+      return (
+        new Date(a.created_at || a.created_at_ist || "").getTime() -
+        new Date(b.created_at || b.created_at_ist || "").getTime()
+      );
+    }
+    if (sortMode === "risk_desc") {
+      return (b.risk_score || 0) - (a.risk_score || 0);
+    }
+    // Default time_desc
+    return (
+      new Date(b.created_at || b.created_at_ist || "").getTime() -
+      new Date(a.created_at || a.created_at_ist || "").getTime()
+    );
+  };
+
+  const filteredFlagged = flagged.filter(filterFn).sort(sortFn);
+  const filteredSettled = settled.filter(filterFn).sort(sortFn);
 
   if (!isSuper) {
     return (
@@ -448,19 +513,118 @@ export function ReviewQueueView() {
           </button>
         </div>
 
+        {/* QoL Filter & Search Bar */}
+        <div className="filter-bar">
+          <div className="filter-bar__search">
+            <span className="filter-bar__search-icon" aria-hidden="true">
+              🔍
+            </span>
+            <input
+              type="text"
+              placeholder="Search by session name, ID, screener, post, hash…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="filter-bar__group">
+            <select
+              className="filter-bar__select"
+              value={filterCheckpoint}
+              onChange={(e) => setFilterCheckpoint(e.target.value)}
+              title="Filter by border checkpoint"
+            >
+              <option value="ALL">All border posts ({checkpoints.length || "0"})</option>
+              {checkpoints.map((cp) => (
+                <option key={cp} value={cp}>
+                  {cp}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="filter-bar__select"
+              value={filterRisk}
+              onChange={(e) => setFilterRisk(e.target.value)}
+              title="Filter by risk score"
+            >
+              <option value="ALL">All risk levels</option>
+              <option value="HIGH">High risk (≥ 60)</option>
+              <option value="MED">Moderate risk (30 - 59)</option>
+              <option value="LOW">Low risk (&lt; 30)</option>
+            </select>
+
+            <select
+              className="filter-bar__select"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value)}
+              title="Sort sessions"
+            >
+              <option value="time_desc">Newest first</option>
+              <option value="time_asc">Oldest first</option>
+              <option value="risk_desc">Highest risk first</option>
+            </select>
+          </div>
+
+          <div className="filter-bar__actions">
+            <button
+              type="button"
+              className="btn btn--small btn--ghost"
+              onClick={() => setForceExpandFlagged((prev) => (prev ? false : true))}
+              title="Toggle expanded details on all flagged cards"
+            >
+              {forceExpandFlagged ? "▲ Collapse cards" : "▼ Expand cards"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={() => void load()}
+              title="Refresh session queue"
+            >
+              ↻ Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="filter-summary">
+          <span>
+            Showing {filteredFlagged.length} of {flagged.length} flagged sessions awaiting review
+            {searchQuery.trim() && ` matching "${searchQuery}"`}
+            {filterCheckpoint !== "ALL" && ` at ${filterCheckpoint}`}
+          </span>
+          {(searchQuery || filterCheckpoint !== "ALL" || filterRisk !== "ALL") && (
+            <button
+              type="button"
+              className="btn btn--small btn--ghost"
+              onClick={() => {
+                setSearchQuery("");
+                setFilterCheckpoint("ALL");
+                setFilterRisk("ALL");
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
         {loading ? (
           <p className="hint">Loading queue…</p>
-        ) : flagged.length === 0 ? (
-          <p className="hint">No sessions awaiting adjudication.</p>
+        ) : filteredFlagged.length === 0 ? (
+          <p className="hint">
+            {flagged.length === 0
+              ? "No sessions awaiting adjudication."
+              : "No flagged sessions match your search or filter."}
+          </p>
         ) : (
           <div className="queue">
-            {flagged.map((f) => (
+            {filteredFlagged.map((f) => (
               <FlaggedCard
                 key={f.id}
                 flag={f}
                 isSuper={isSuper}
                 onAdjudicate={adjudicate}
                 busyId={busyId}
+                forceExpand={forceExpandFlagged}
               />
             ))}
           </div>
@@ -471,11 +635,13 @@ export function ReviewQueueView() {
         <h2 className="panel__title">Signed sessions — the record</h2>
         <p className="panel__body" style={{ marginBottom: 12 }}>
           Expand a session with <span className="mono">[▶]</span> to see the documents behind it, or
-          download a court-admissible copy (BSA 2023).
+          download a court-admissible copy (BSA 2023). Showing {filteredSettled.length} of {settled.length} records.
         </p>
 
-        {settled.length === 0 ? (
-          <p className="hint">No sessions signed yet.</p>
+        {filteredSettled.length === 0 ? (
+          <p className="hint">
+            {settled.length === 0 ? "No sessions signed yet." : "No signed sessions match your filter criteria."}
+          </p>
         ) : (
           <table className="tbl">
             <thead>
@@ -492,7 +658,7 @@ export function ReviewQueueView() {
               </tr>
             </thead>
             <tbody>
-              {settled.map((s) => (
+              {filteredSettled.map((s) => (
                 <SettledSessionRow key={s.id} session={s} />
               ))}
             </tbody>
