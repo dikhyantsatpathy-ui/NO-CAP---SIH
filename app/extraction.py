@@ -57,7 +57,10 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
         else:
             ext = "jpg"
 
-    from screening import extract_fields
+    try:
+        from app.screening import extract_fields
+    except ImportError:
+        from screening import extract_fields
 
     result = {
         "medium": "unknown",
@@ -169,10 +172,16 @@ def _extract_image(data: bytes, doc_type: str = "") -> dict:
     """OCR + MRZ + Barcodes/QR over one image. Each subsystem is isolated: a failure in
     one never loses the rest, and unreadable input degrades to honest 'ran:
     False' rather than a hard error."""
-    from screening import extract_fields
-    from identity import ocr_extract
-    from mrz import parse_mrz
-    from llm import extract_document_data
+    try:
+        from app.screening import extract_fields
+        from app.identity import ocr_extract
+        from app.mrz import parse_mrz
+        from app.llm import extract_document_data
+    except ImportError:
+        from screening import extract_fields
+        from identity import ocr_extract
+        from mrz import parse_mrz
+        from llm import extract_document_data
 
     out = {"fields": {}, "mrz": None,
            "ocr": {"ran": False, "reason": "not run"}, "pdf_no_text": False,
@@ -181,7 +190,10 @@ def _extract_image(data: bytes, doc_type: str = "") -> dict:
 
     # 1. Barcode & QR extraction (100% exact cryptographic fields if present)
     try:
-        from qr_decoder import extract_from_barcodes
+        try:
+            from app.qr_decoder import extract_from_barcodes
+        except ImportError:
+            from qr_decoder import extract_from_barcodes
         qr_res = extract_from_barcodes(data, doc_type=doc_type)
         if qr_res.get("ran") and qr_res.get("fields"):
             for k, v in qr_res["fields"].items():
@@ -232,7 +244,10 @@ def _extract_image(data: bytes, doc_type: str = "") -> dict:
 def _mrz_public(res: dict) -> dict:
     """Slim MRZ result for the report: format + check-digit outcome + masked
     identifiers. Never the raw MRZ lines (zero-storage rule)."""
-    from screening import mask
+    try:
+        from app.screening import mask
+    except ImportError:
+        from screening import mask
     checks = res.get("checks") or {}
     pub = {
         "format": res.get("format"),
@@ -274,7 +289,10 @@ def _extract_aadhaar_image(data: bytes) -> dict:
     photos are USED and DISCARDED: nothing persists (zero-storage rule).
     """
     import base64
-    from yolo_roi import crop_region_to_bytes, extract_aadhaar_fields
+    try:
+        from app.yolo_roi import crop_region_to_bytes, extract_aadhaar_fields
+    except ImportError:
+        from yolo_roi import crop_region_to_bytes, extract_aadhaar_fields
 
     out = {"fields": {}, "mrz": None,
            "ocr": {"ran": False, "reason": "aadhaar zone OCR not run"},
@@ -287,7 +305,10 @@ def _extract_aadhaar_image(data: bytes) -> dict:
 
     # 0. Barcode & QR extraction (UIDAI Secure QR or Code128 barcode)
     try:
-        from qr_decoder import extract_from_barcodes
+        try:
+            from app.qr_decoder import extract_from_barcodes
+        except ImportError:
+            from qr_decoder import extract_from_barcodes
         qr_res = extract_from_barcodes(data, "aadhaar")
         if qr_res.get("ran") and qr_res.get("fields"):
             for k, v in qr_res["fields"].items():
@@ -344,7 +365,10 @@ def _extract_aadhaar_image(data: bytes) -> dict:
 
 def _zone_ocr(crop_bytes: bytes) -> str:
     """OCR over ONE cropped field zone using RapidOCR or local fallback."""
-    from identity import ocr_extract
+    try:
+        from app.identity import ocr_extract
+    except ImportError:
+        from identity import ocr_extract
     text, _ = ocr_extract(crop_bytes)
     return text or ""
 
@@ -352,7 +376,10 @@ def _zone_ocr(crop_bytes: bytes) -> str:
 def _consume_aadhaar_zone(fields: dict, key: str, text: str) -> None:
     """Fold one OCR'd zone into the normalized field map. Garbage yields a gap,
     never a wrong value — downstream validators skip absent fields."""
-    from screening import _first_date
+    try:
+        from app.screening import _first_date
+    except ImportError:
+        from screening import _first_date
     if not text:
         return
     if "aadhaar" in key or "no" in key or "uid" in key:

@@ -249,6 +249,30 @@ def _match_identifiers(source: str) -> dict:
     return hits
 
 
+_COMMON_SURNAMES = (
+    "SATAPATHY", "SATPATHY", "SHARMA", "KUMAR", "SINGH", "PATEL", "GUPTA", "VERMA", "JOSHI",
+    "REDDY", "RAO", "NAIR", "DAS", "MISHRA", "MOHAPATRA", "PANDA", "PRADHAN", "ROUT", "SAHOO",
+    "BEHERA", "NAYAK", "KHAN", "ALI", "CHOUDHURY", "CHOWDHURY", "ROY", "SEN", "BANERJEE",
+    "MUKHERJEE", "CHATTERJEE", "DUTTA", "BOSE", "GHOSE", "GHOSH", "AGRAWAL", "AGARWAL",
+    "JAIN", "MEHTA", "SHAH", "YADAV", "TIWARI", "PANDEY", "DUBEY", "TRIPATHI", "CHAUHAN",
+    "THAKUR", "SHUKLA", "BHAT", "BHATT", "DESHMUKH", "PATIL", "KULKARNI", "PAWAR", "SHINDE"
+)
+
+def _format_glued_name(raw: str) -> str:
+    s = raw.strip()
+    if " " in s:
+        return s
+    up = s.upper()
+    for sur in _COMMON_SURNAMES:
+        if up.endswith(sur) and len(up) > len(sur):
+            first = up[:-len(sur)].strip()
+            if len(first) >= 2:
+                if s.isupper():
+                    return f"{first} {sur}"
+                return f"{first.title()} {sur.title()}"
+    return s
+
+
 def extract_fields(text: str, doc_type: str = "") -> dict:
     """Deterministic extraction of Indian identity identifiers from text.
     Returns only validated/masked-able raw values plus explainable flags."""
@@ -296,41 +320,97 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
 
     # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...", "lame: ...") or layout heuristics
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    for ln in lines:
-        m = re.search(r"(?i)(?:(?:[NnLlM][a-z]{2,3}|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक))[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
-        if m:
-            cand = re.sub(r"\s+", " ", m.group(1)).strip()
-            up = cand.upper()
-            if not any(bad in up for bad in ("FATHER", "INCOME", "GOVT", "INDIA", "DEPARTMENT", "DIRECTOR", "PERMANENT", "ACCOUNT")):
-                words = [w for w in cand.split() if w.isalpha()]
-                if 1 <= len(words) <= 5:
-                    found["name"] = " ".join(words).title()[:80]
+    bad_roots = [
+        "INCOME", "TAX", "GOVT", "INDIA", "DEPART", "PERMANENT", "ACCOUNT", "CARD",
+        "SIGN", "DATE", "BIRTH", "BLRTH", "BLTH", "DOB", "MALE", "FEMALE", "NUMBER", "AYAKAR",
+        "BHARAT", "GOVERN", "SIGNED", "PHYSIC", "APPLIC", "VALID", "UNLESS", "DIGIT",
+        "REPUBLIC", "MINISTRY", "AUTHORITY", "NATIONAL", "FATHER", "MOTHER", "HUSBAND",
+        "NAME", "HOLDER", "APLI", "PUD", "HALL", "TION", "DIGI"
+    ]
+
+    # Find father's name first if explicitly labeled
+    father_cands = set()
+    for i, ln in enumerate(lines):
+        up = ln.upper()
+        if any(k in up for k in ("FATHER", "पिता")) and not any(k in up for k in ("INCOME", "TAX", "CARD", "PERMANENT")):
+            for offset in (0, 1, 2):
+                idx = i + offset
+                if 0 <= idx < len(lines):
+                    cand_ln = lines[idx]
+                    if offset == 0:
+                        m_f = re.search(r"(?i)(?:Father(?:'s)?\s*Name|पिता(?: का)?\s*नाम)[:\s.\-_/]+([A-Za-z ]{3,50})", cand_ln)
+                        if m_f:
+                            cand_ln = m_f.group(1)
+                    raw_c = re.sub(r"[^A-Za-z ]", " ", cand_ln).strip()
+                    raw_c = re.sub(r"\s+", " ", raw_c)
+                    if len(raw_c) >= 3 and not any(b in raw_c.upper() for b in ("FATHER", "NAME", "पिता", "SIGN", "VALID")):
+                        fmt_f = _format_glued_name(raw_c)
+                        father_cands.add(fmt_f.upper())
+
+    # 1. Label on same line or immediate next line below Name / नाम
+    for i, ln in enumerate(lines):
+        up = ln.upper()
+        # Same-line match: Name: ...
+        m_same = re.search(r"(?i)(?:(?:[NnLlM][a-z]{2,3}|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक))[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
+        if m_same and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
+            cand = re.sub(r"\s+", " ", m_same.group(1)).strip()
+            cand_up = cand.upper()
+            if not any(bad in cand_up for bad in bad_roots):
+                fmt = _format_glued_name(cand)
+                words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                if 1 <= len(words) <= 4 and fmt.upper() not in father_cands:
+                    found["name"] = fmt[:80]
                     break
 
-    # If name not found by explicit label, apply document layout heuristics
+        # Next line check after Name / नाम
+        if any(k in up for k in ("NAME", "नाम", "/NAME")) and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
+            for offset in (1, 2):
+                if i + offset < len(lines):
+                    next_ln = lines[i + offset].strip()
+                    next_up = next_ln.upper()
+                    if not any(bad in next_up for bad in bad_roots) and len(next_ln) >= 3:
+                        cand = re.sub(r"[^A-Za-z ]", " ", next_ln).strip()
+                        cand = re.sub(r"\s+", " ", cand)
+                        if cand and not any(bad in cand.upper() for bad in bad_roots):
+                            fmt = _format_glued_name(cand)
+                            words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                            if 1 <= len(words) <= 4 and fmt.upper() not in father_cands:
+                                found["name"] = fmt[:80]
+                                break
+            if found.get("name"):
+                break
+
+    # 2. Scored candidate extraction for PAN and ID cards
     if not found.get("name"):
-        doc_clean = (doc_type or "").lower()
-        if "pan" in doc_clean:
-            bad_keywords = {"INCOME", "TAX", "GOVT", "INDIA", "DEPARTMENT", "PERMANENT", "ACCOUNT", "CARD", "SIGNATURE", "DATE", "FATHER", "BIRTH", "DOB", "MALE", "FEMALE", "NUMBER", "AYAKAR", "BHARAT", "GOVERNMENT"}
-            for ln in lines:
-                cleaned = re.sub(r"[^A-Za-z ]", " ", ln).strip()
-                cleaned = re.sub(r"\s+", " ", cleaned)
-                up = cleaned.upper()
-                if any(bad in up for bad in bad_keywords):
-                    continue
-                words = cleaned.split()
-                if 2 <= len(words) <= 4 and all(len(w) >= 2 for w in words):
-                    found["name"] = cleaned.title()[:80]
-                    break
-        elif "aadhaar" in doc_clean:
-            for i, ln in enumerate(lines):
-                up = ln.upper()
-                if any(bad in up for bad in ("GOVERNMENT", "INDIA", "BHARAT", "UNIQUE", "IDENTIFICATION", "AUTHORITY")):
-                    continue
-                if "DOB" in up or "BIRTH" in up or "जन्म" in up:
-                    if i > 0 and lines[i-1].replace(" ", "").isalpha() and len(lines[i-1]) >= 3:
-                        found["name"] = lines[i-1].title()[:80]
-                        break
+        scored_cands = []
+        for ln in lines:
+            raw_clean = re.sub(r"[^A-Za-z ]", " ", ln).strip()
+            raw_clean = re.sub(r"\s+", " ", raw_clean)
+            if len(raw_clean) < 3:
+                continue
+            up = raw_clean.upper()
+            if any(bad in up for bad in bad_roots):
+                continue
+            fmt = _format_glued_name(raw_clean)
+            words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+            if not (1 <= len(words) <= 4) or any(len(w) > 18 or len(w) < 2 for w in words):
+                continue
+
+            score = 0
+            if any(fmt.upper().endswith(sur) for sur in _COMMON_SURNAMES):
+                score += 50
+            if len(words) in (2, 3):
+                score += 30
+            if all(len(w) >= 3 for w in words):
+                score += 15
+            # Non-father preferred
+            if fmt.upper() in father_cands:
+                score -= 40
+            scored_cands.append((score, fmt))
+
+        scored_cands.sort(key=lambda x: x[0], reverse=True)
+        if scored_cands and scored_cands[0][0] >= 30:
+            found["name"] = scored_cands[0][1][:80]
 
     # Extract gender if present
     g = re.search(r"\b(MALE|FEMALE|पुरुष|महिला)\b", text, re.IGNORECASE)
@@ -659,7 +739,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             risk += 6
 
     # Expiry Check (both extracted and declared)
-    expiry = fields.get("expiry") or (declared.get("expiry_date") or "").strip()
+    expiry = fields.get("expiry") or ((declared or {}).get("expiry_date") or "").strip()
     _exp = _parse_date(expiry)
     if _exp:
         from datetime import date as _date
@@ -709,31 +789,39 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             can_clear = False
 
     # AI Detection Evaluation
+    # AI Detection Evaluation
     # Calibrated (SIH26188 real-desk fix): a *physical* desk/webcam photo of a
     # glossy laminated card can trip the spectral band detector at 50-64%
     # purely from glare + JPEG/webcam compression, WITHOUT the card being
-    # synthetic. Only a definite signal hard-flags:
-    #   * ai_suspected True (detector's own classification)
-    #   * raw kind in ("ai","edited") (model classified explicitly)
-    #   * ai_score >= 65 (very high spectral agreement, credible regardless
-    #     of capture medium)
-    # A borderline 50-64% reading on a physical card capture degrades to
-    # REVIEW with an honest "glare cannot be distinguished from light
-    # editing at this resolution" note — a human inspects the printed card
-    # rather than the system auto-flagging a genuine document.
+    # synthetic.
     ai_raw_kind = (ai_det.get("raw") or {}).get("kind")
     _ai_score = ai_det.get("ai_score", 0) or 0
-    if ai_det.get("ai_suspected") or ai_raw_kind in ("ai", "edited") or _ai_score >= 65:
-        score_val = _ai_score
-        reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
+    is_physical_camera = (document_aware is False)
+    val_passed = (val_res.get("verdict") == "PASS")
+    tamper_passed = (tamper_res.get("verdict") == "PASS")
+
+    if ai_raw_kind in ("ai", "edited"):
+        score_val = max(_ai_score, 85)
+        reasons.append(f"CRITICAL AI-ALERT: Visual/metadata scan confirms AI-GENERATED or edited image ({score_val}% confidence) — synthetic documents are a known forgery vector.")
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
+    elif (ai_det.get("ai_suspected") or _ai_score >= 65):
+        if is_physical_camera and val_passed and tamper_passed:
+            reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% spectral variation).")
+            risk += 5
+        else:
+            score_val = _ai_score
+            reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
+            risk = max(risk + 55, 82)
+            hard_flag = True
+            can_clear = False
     elif _ai_score >= 55 and document_aware is not True:
-        score_val = _ai_score
-        reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
-        risk = max(risk + 12, 48)
-        can_clear = False
+        if not (is_physical_camera and val_passed):
+            score_val = _ai_score
+            reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
+            risk = max(risk + 12, 48)
+            can_clear = False
 
     if document_aware is True:
         reasons.append("File reads as a scanned paper document — orientation/medium looks right.")
@@ -761,8 +849,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             ela_status = (tamper_res.get("ela") or {}).get("status")
             has_real_tamper = (
                 ela_status == "HIGH"
-                or ai_det.get("ai_suspected")
-                or (ai_det.get("ai_score") or 0) >= 50
+                or ai_raw_kind in ("ai", "edited")
                 or any(c.get("label") == "ai-generated-or-edited" and c.get("ok") is False for c in tamper_res.get("checks", []))
                 or any(c.get("label", "").startswith("liveness-") and c.get("ok") is False for c in tamper_res.get("checks", []))
             )
@@ -938,8 +1025,13 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     }
 
     # Hash-chain linkage: compute block hash linking to the previous report
-    prev_row = db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc()).first()
-    prev_hash = prev_row.ledger_hash if (prev_row and getattr(prev_row, "ledger_hash", None)) else "GENESIS"
+    prev_hash = "GENESIS"
+    if db is not None:
+        try:
+            prev_row = db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc()).first()
+            prev_hash = prev_row.ledger_hash if (prev_row and getattr(prev_row, "ledger_hash", None)) else "GENESIS"
+        except Exception:
+            prev_hash = "GENESIS"
     block_payload = f"{prev_hash}:{file_hash}:{verdict}:{risk}:{report['created_at']}:{screener or 'unknown'}"
     ledger_hash = hashlib.sha256(block_payload.encode("utf-8")).hexdigest()
     report["block_hash"] = ledger_hash
@@ -974,25 +1066,32 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         modules_snapshot = None
     _wl_hits = report.get("watchlist_hits") or []
 
-    db.add(ScreeningReport(
-        id=report["id"], file_hash=file_hash, filename=report["filename"],
-        doc_type=report["doc_type"], checkpoint=report["checkpoint"],
-        verdict=verdict, risk_score=risk, confidence=confidence,
-        extracted_fields=json.dumps(report["masked_fields"]),
-        signals=json.dumps(reasons),
-        ai_detection=json.dumps(report["ai_detection"]),
-        modules=modules_snapshot,
-        watchlist_hits=json.dumps(_wl_hits) if _wl_hits else None,
-        previous_hash=prev_hash,
-        ledger_hash=ledger_hash,
-        screener=screener,
-        latency_ms=report.get("latency_ms"),
-        created_at=report["created_at"],
-        session_id=session_id or report.get("session_id"),
-        field_hashes=json.dumps(_fh) if _fh else None,
-        ephemeral_raw_fields=json.dumps(extract_res.get("fields", {})) if extract_res.get("fields") else None,
-        nationality=nationality,
-        purpose=purpose,
-    ))
-    db.commit()
+    if db is not None:
+        try:
+            db.add(ScreeningReport(
+                id=report["id"], file_hash=file_hash, filename=report["filename"],
+                doc_type=report["doc_type"], checkpoint=report["checkpoint"],
+                verdict=verdict, risk_score=risk, confidence=confidence,
+                extracted_fields=json.dumps(report["masked_fields"]),
+                signals=json.dumps(reasons),
+                ai_detection=json.dumps(report["ai_detection"]),
+                modules=modules_snapshot,
+                watchlist_hits=json.dumps(_wl_hits) if _wl_hits else None,
+                previous_hash=prev_hash,
+                ledger_hash=ledger_hash,
+                screener=screener,
+                latency_ms=report.get("latency_ms"),
+                created_at=report["created_at"],
+                session_id=session_id or report.get("session_id"),
+                field_hashes=json.dumps(_fh) if _fh else None,
+                ephemeral_raw_fields=json.dumps(extract_res.get("fields", {})) if extract_res.get("fields") else None,
+                nationality=nationality,
+                purpose=purpose,
+            ))
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
     return report

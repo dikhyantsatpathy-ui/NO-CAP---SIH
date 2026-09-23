@@ -22,14 +22,16 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
     doc_type = (doc_type or "").strip().lower()
     ai_detection = ai_detection or {"ran": False, "explanation": "No image."}
 
-    if image_bytes is None:
+    try:
+        from app.forensics import forensics_report
+    except ImportError:
         from forensics import forensics_report
+
+    if image_bytes is None:
         f0 = forensics_report(b"")  # always returns the "not readable" shape
         return {"checks": [{"label": "ela", "ok": None, "detail": "No image supplied."}],
                 "ela": f0["ela"], "qa": f0["qa"], "roi": [], "liveness": [],
                 "ai_detection": ai_detection, "verdict": "UNVERIFIED"}
-
-    from forensics import forensics_report
 
     fr = forensics_report(image_bytes)
     if fr.get("error"):

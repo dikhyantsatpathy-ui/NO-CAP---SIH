@@ -49,8 +49,12 @@ def validate_document(
     by the caller) folds the hash-only cross-check into the checks so a single
     module carries the whole verdict.
     """
-    from identity import (verify_aadhaar, verify_pan, verify_dl, verify_rc, verify_epic,
-                          verify_passport, verify_visa, serial_plausibility)
+    try:
+        from app.identity import (verify_aadhaar, verify_pan, verify_dl, verify_rc, verify_epic,
+                                  verify_passport, verify_visa, serial_plausibility)
+    except ImportError:
+        from identity import (verify_aadhaar, verify_pan, verify_dl, verify_rc, verify_epic,
+                              verify_passport, verify_visa, serial_plausibility)
 
     declared = declared or {}
     doc_type = (doc_type or "").strip().lower()
@@ -100,7 +104,10 @@ def validate_document(
 
     # ---- Expiry sanity (driving licence, passports, visas) ----------------
     exp = (declared.get("expiry_date") or fields.get("expiry") or "").strip()
-    from screening import _parse_date, _today
+    try:
+        from app.screening import _parse_date, _today
+    except ImportError:
+        from screening import _parse_date, _today
     exp_parsed = _parse_date(exp)
     if exp_parsed:
         if exp_parsed < tuple(int(x) for x in _today().split("-")):

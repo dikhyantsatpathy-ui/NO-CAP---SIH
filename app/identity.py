@@ -117,9 +117,11 @@ def ocr_extract(data: bytes, doc_type: str = ""):
                         pass
                     return variants
 
-                collected_lines = []
-                seen_lines = set()
-                found_id = False
+                best_pass_lines = []
+                best_pass_score = -1
+                best_rot = 0
+                all_seen = set()
+                accumulated_lines = []
 
                 for rot_angle in (0, 90, 180, 270):
                     if rot_angle == 0:
@@ -134,30 +136,46 @@ def ocr_extract(data: bytes, doc_type: str = ""):
                     for var in _get_variants(cur_bgr):
                         res, _ = rapid(var)
                         if res:
-                            pass_lines = [r[1].strip() for r in res if len(r) >= 2 and r[1] and r[1].strip()]
+                            # Sort bounding boxes top-to-bottom, left-to-right
+                            try:
+                                sorted_res = sorted(res, key=lambda item: (item[0][0][1], item[0][0][0]))
+                            except Exception:
+                                sorted_res = res
+                            pass_lines = [r[1].strip() for r in sorted_res if len(r) >= 2 and r[1] and r[1].strip()]
                             pass_text = "\n".join(pass_lines)
+                            
+                            # Score rotation pass quality
+                            pass_score = len(pass_lines)
                             try:
                                 ids = _match_identifiers(pass_text)
                                 if any(ids.values()):
-                                    found_id = True
+                                    pass_score += 50 * sum(1 for v in ids.values() if v)
                             except Exception:
                                 pass
-                            for ln in pass_lines:
-                                if ln not in seen_lines:
-                                    seen_lines.add(ln)
-                                    collected_lines.append(ln)
-                        if found_id:
-                            break
-                    if found_id:
-                        break
 
-                if collected_lines:
-                    full_text = "\n".join(collected_lines).strip()
+                            if pass_score > best_pass_score:
+                                best_pass_score = pass_score
+                                best_pass_lines = pass_lines
+                                best_rot = rot_angle
+
+                            for ln in pass_lines:
+                                if ln not in all_seen:
+                                    all_seen.add(ln)
+                                    accumulated_lines.append(ln)
+
+                # Prioritize best rotation lines in reading order, then append any other distinct lines
+                final_lines = list(best_pass_lines)
+                for ln in accumulated_lines:
+                    if ln not in final_lines:
+                        final_lines.append(ln)
+
+                if final_lines:
+                    full_text = "\n".join(final_lines).strip()
                     return full_text, {
                         "ran": True,
                         "engine": "rapidocr-onnx",
-                        "lines_count": len(collected_lines),
-                        "rotation": rot_angle if found_id else 0,
+                        "lines_count": len(final_lines),
+                        "rotation": best_rot,
                     }
         except Exception:
             pass
