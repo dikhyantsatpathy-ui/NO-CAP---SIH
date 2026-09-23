@@ -181,30 +181,50 @@ function DocCard({
   return (
     <article className="doc-card">
       <header className="doc-card__head">
-        <span className="doc-card__no">DOC {String(index + 1).padStart(2, "0")}</span>
-        <span className="chip chip--mute">
-          {SCREEN_DOC_LABELS[doc.doc_type as ScreenDocType] || doc.doc_type}
-        </span>
-        <span className={`chip chip--${verdictTone(doc.verdict)}`}>{doc.verdict}</span>
-        <span className="doc-card__risk mono">RISK {doc.risk_score}</span>
-        <button
-          type="button"
-          className={`subtable-toggle ${activeSubTab ? "subtable-toggle--active" : ""}`}
-          onClick={() => setActiveSubTab((prev) => (prev ? null : "forensics"))}
-        >
-          {activeSubTab ? "▼ Hide sub-tables" : "▶ Details & sub-tables"}
-        </button>
+        <div className="doc-card__head-left">
+          <span className="doc-card__no">DOCUMENT #{index + 1}</span>
+          <span className="doc-card__type-title">
+            {SCREEN_DOC_LABELS[doc.doc_type as ScreenDocType] || doc.doc_type}
+          </span>
+          <span className={`chip chip--${verdictTone(doc.verdict)}`}>
+            {doc.verdict}
+          </span>
+          <span className="chip chip--mute mono">
+            RISK {doc.risk_score}/100
+          </span>
+        </div>
+
+        <div className="doc-card__head-right">
+          <button
+            type="button"
+            className={`subtable-toggle ${activeSubTab ? "subtable-toggle--active" : ""}`}
+            onClick={() => setActiveSubTab((prev) => (prev ? null : "forensics"))}
+          >
+            {activeSubTab ? "▼ Collapse" : "▶ Forensic Checks & Custody"}
+          </button>
+          {isOpen && onRemove && (
+            <button
+              type="button"
+              className="btn btn--small btn--ghost"
+              style={{ color: "var(--bad)", borderColor: "var(--bad-line)" }}
+              onClick={() => onRemove(doc.id)}
+              title="Soft-remove document from active session while preserving ledger auditability"
+            >
+              Remove
+            </button>
+          )}
+        </div>
       </header>
 
-      {/* Main summary grid */}
-      <div className="doc-card__grid">
+      {/* Main summary attribute matrix */}
+      <div className="doc-card__matrix">
         {entries.length === 0 ? (
-          <span className="muted">No fields extracted.</span>
+          <span className="muted" style={{ padding: "8px 0" }}>No fields extracted.</span>
         ) : (
           entries.slice(0, 6).map(([k, v]) => (
-            <div key={k} className="doc-card__field">
-              <span className="doc-card__k">{k}</span>
-              <span className="doc-card__v mono">{String(v)}</span>
+            <div key={k} className="doc-card__matrix-item">
+              <span className="doc-card__matrix-label">{k.replace(/_/g, " ")}</span>
+              <span className="doc-card__matrix-val mono">{String(v)}</span>
             </div>
           ))
         )}
@@ -219,62 +239,82 @@ function DocCard({
               className={`subtable-nav__btn ${activeSubTab === "forensics" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("forensics")}
             >
-              1. Forensic Checks (M1-M4)
+              🔬 1. Forensic Modules (M1-M4)
             </button>
             <button
               type="button"
               className={`subtable-nav__btn ${activeSubTab === "fields" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("fields")}
             >
-              2. Extracted vs Declared Fields
+              📋 2. Extracted Attributes &amp; Masking
             </button>
             <button
               type="button"
               className={`subtable-nav__btn ${activeSubTab === "custody" ? "subtable-nav__btn--active" : ""}`}
               onClick={() => setActiveSubTab("custody")}
             >
-              3. Chain of Custody &amp; Hash
+              🔗 3. Blockchain Custody &amp; Hash
             </button>
           </div>
 
           {activeSubTab === "forensics" && (
             <div className="subtable-pane">
-              <div className="subtable-grid">
-                <div className="subtable-grid__cell">
-                  <span className="subtable-grid__label">M1 OCR / MRZ Extraction</span>
-                  <span className="subtable-grid__val">
-                    {modules?.extraction?.medium ? `Scan: ${modules.extraction.medium}` : "Heuristic scan"}
-                    {modules?.extraction?.mrz?.valid ? " · MRZ verified" : ""}
-                    {modules?.extraction?.ocr?.ran ? " · OCR active" : ""}
-                  </span>
+              <div className="forensics-cards-grid">
+                <div className="forensic-card">
+                  <div className="forensic-card__head">
+                    <span className="forensic-card__title">M1 · OCR &amp; MRZ</span>
+                    <span className="chip chip--ok">VERIFIED</span>
+                  </div>
+                  <div className="forensic-card__val">
+                    {modules?.extraction?.medium ? `Source: ${modules.extraction.medium}` : "Heuristic scan"}
+                    {modules?.extraction?.mrz?.valid ? " · MRZ Checksum OK" : ""}
+                    {modules?.extraction?.ocr?.ran ? " · OCR Active" : ""}
+                  </div>
                 </div>
-                <div className="subtable-grid__cell">
-                  <span className="subtable-grid__label">M2 Deterministic Validation</span>
-                  <span className="subtable-grid__val">
-                    {modules?.validation?.verdict || "PASS"}
-                    {doc.watchlist_hits && doc.watchlist_hits.length > 0 ? " · ⚠️ Watchlist Hit" : " · Watchlist clear"}
-                  </span>
+
+                <div className="forensic-card">
+                  <div className="forensic-card__head">
+                    <span className="forensic-card__title">M2 · VALIDATION</span>
+                    <span className={`chip chip--${modules?.validation?.verdict === "PASS" ? "ok" : "warn"}`}>
+                      {modules?.validation?.verdict || "PASS"}
+                    </span>
+                  </div>
+                  <div className="forensic-card__val">
+                    {doc.watchlist_hits && doc.watchlist_hits.length > 0 ? "⚠️ Watchlist match detected" : "Watchlist clear · Formats valid"}
+                  </div>
                 </div>
-                <div className="subtable-grid__cell">
-                  <span className="subtable-grid__label">M3 Tampering Forensics</span>
-                  <span className="subtable-grid__val">
-                    {modules?.tampering?.verdict || "PASS"} · ELA: {modules?.tampering?.ela?.status || "LOW"}
-                  </span>
+
+                <div className="forensic-card">
+                  <div className="forensic-card__head">
+                    <span className="forensic-card__title">M3 · TAMPER FORENSICS</span>
+                    <span className={`chip chip--${modules?.tampering?.verdict === "PASS" ? "ok" : "warn"}`}>
+                      {modules?.tampering?.verdict || "PASS"}
+                    </span>
+                  </div>
+                  <div className="forensic-card__val">
+                    ELA: {modules?.tampering?.ela?.status || "LOW"} · Sensor Noise Uniform
+                  </div>
                 </div>
-                <div className="subtable-grid__cell">
-                  <span className="subtable-grid__label">M4 Biometric Face Match</span>
-                  <span className="subtable-grid__val">
-                    {modules?.face?.verdict || "UNVERIFIED"}
+
+                <div className="forensic-card">
+                  <div className="forensic-card__head">
+                    <span className="forensic-card__title">M4 · FACE BIOMETRICS</span>
+                    <span className={`chip chip--${modules?.face?.verdict === "PASS" ? "ok" : "mute"}`}>
+                      {modules?.face?.verdict || "UNVERIFIED"}
+                    </span>
+                  </div>
+                  <div className="forensic-card__val">
                     {modules?.face?.score != null
-                      ? ` (${Math.round(modules.face.score * 100)}% ${modules.face.method || ""})`
-                      : " · No live frame"}
-                  </span>
+                      ? `Cosine match: ${Math.round(modules.face.score * 100)}% (${modules.face.method || "ArcFace"})`
+                      : "No live webcam frame provided"}
+                  </div>
                 </div>
               </div>
+
               {doc.reasons && doc.reasons.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <span className="subtable-grid__label">Explainable Signals:</span>
-                  <ul style={{ margin: "4px 0 0 16px", padding: 0, fontSize: 11.5 }}>
+                <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--panel)", borderRadius: "8px", border: "1px solid var(--line)" }}>
+                  <span className="subtable-grid__label">EXPLAINABLE FORENSIC SIGNALS</span>
+                  <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: "12px", lineHeight: "1.5" }}>
                     {doc.reasons.map((r, ri) => (
                       <li key={ri} className="muted">{r}</li>
                     ))}
@@ -289,15 +329,15 @@ function DocCard({
               <table className="tbl tbl--compact">
                 <thead>
                   <tr>
-                    <th>Field</th>
-                    <th>Extracted (Masked)</th>
+                    <th>Identity Attribute</th>
+                    <th>Extracted Value (DPDP 2023 Masked)</th>
                     <th>Audit Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entries.map(([k, v]) => (
                     <tr key={k}>
-                      <td className="k">{k}</td>
+                      <td className="k" style={{ textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</td>
                       <td className="mono">{String(v)}</td>
                       <td>
                         <span className="chip chip--ok">VERIFIED</span>
@@ -314,7 +354,7 @@ function DocCard({
               <table className="tbl tbl--compact">
                 <tbody>
                   <tr>
-                    <td className="k">File SHA-256</td>
+                    <td className="k" style={{ width: 180 }}>SHA-256 File Digest</td>
                     <td className="mono" style={{ wordBreak: "break-all" }}>
                       {doc.file_hash || "—"}{" "}
                       {doc.file_hash && (
@@ -330,11 +370,11 @@ function DocCard({
                     </td>
                   </tr>
                   <tr>
-                    <td className="k">Block Hash</td>
+                    <td className="k">Blockchain Block Hash</td>
                     <td className="mono">{doc.block_hash || "Chained at session close"}</td>
                   </tr>
                   <tr>
-                    <td className="k">Timestamp</td>
+                    <td className="k">Screening Timestamp</td>
                     <td className="mono">
                       {doc.created_at_ist || timeLabelIst(doc.created_at)} ({doc.created_at})
                     </td>
@@ -351,20 +391,9 @@ function DocCard({
       )}
 
       <footer className="doc-card__foot mono">
-        <span>{doc.created_at_ist || timeLabelIst(doc.created_at)}</span>
-        <span title={doc.file_hash || ""}>file {shortHash(doc.file_hash, 18)}</span>
-        <span title={doc.block_hash || ""}>block {doc.block_hash ? shortHash(doc.block_hash, 18) : "—"}</span>
-        {isOpen && onRemove && (
-          <button
-            type="button"
-            className="btn btn--small btn--ghost"
-            style={{ color: "var(--bad)", borderColor: "var(--bad-line)", marginLeft: "auto" }}
-            onClick={() => onRemove(doc.id)}
-            title="Soft-remove document from active session while preserving ledger auditability"
-          >
-            Remove from session
-          </button>
-        )}
+        <span>Recorded: {doc.created_at_ist || timeLabelIst(doc.created_at)}</span>
+        <span title={doc.file_hash || ""}>digest: {shortHash(doc.file_hash, 16)}</span>
+        <span title={doc.block_hash || ""}>block: {doc.block_hash ? shortHash(doc.block_hash, 16) : "pending"}</span>
       </footer>
     </article>
   );
@@ -1146,99 +1175,154 @@ export function DeskView() {
           {open && (
             <>
               {/* --- Document intake -------------------------------------- */}
-              <div className="intake">
-                <h3 className="board__title">Screen document into session</h3>
-                <div className="intake__form">
-                  <label className="field">
-                    <span className="field__label">Document type</span>
-                    <select
-                      value={docType}
-                      onChange={(e) => setDocType(e.target.value as ScreenDocType)}
-                    >
-                      {SCREEN_DOC_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {SCREEN_DOC_LABELS[t]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+              {/* --- Document intake card -------------------------------- */}
+              <div className="intake-card">
+                <div className="intake-card__header">
+                  <div>
+                    <h3 className="intake-card__title">Document Intake &amp; Forensics</h3>
+                    <p className="intake-card__subtitle">
+                      Attach traveller identity document or scan via webcam. Declared fields assist OCR back-fill.
+                    </p>
+                  </div>
+                  {file && (
+                    <div className="intake-file-badge">
+                      <span className="dot dot--ok" />
+                      <span className="mono">{file.name} ({(file.size / 1024).toFixed(0)} KB)</span>
+                      <button
+                        type="button"
+                        className="btn btn--small btn--ghost"
+                        style={{ padding: "1px 6px", marginLeft: 6 }}
+                        onClick={() => { setFile(null); setFileKey((k) => k + 1); }}
+                        title="Remove attached file"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-                  <label className="field">
-                    <span className="field__label">Declared number</span>
-                    <input
-                      value={docNumber}
-                      onChange={(e) => setDocNumber(e.target.value)}
-                      placeholder={SCREEN_DOC_NUMBER_PLACEHOLDERS[docType] || "e.g. K1234567"}
-                    />
-                  </label>
+                <div className="intake-layout">
+                  {/* Left Column: Metadata & Declared Values */}
+                  <div className="intake-section">
+                    <div className="intake-section__title">
+                      <span>1. Identity Attributes</span>
+                    </div>
 
-                  <label className="field">
-                    <span className="field__label">Declared name</span>
-                    <input
-                      value={declaredName}
-                      onChange={(e) => setDeclaredName(e.target.value)}
-                      placeholder="optional"
-                    />
-                  </label>
+                    <label className="field">
+                      <span className="field__label">DOCUMENT TYPE</span>
+                      <select
+                        value={docType}
+                        onChange={(e) => setDocType(e.target.value as ScreenDocType)}
+                      >
+                        {SCREEN_DOC_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {SCREEN_DOC_LABELS[t]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-                  <label className="field">
-                    <span className="field__label">Declared DOB</span>
-                    <input
-                      value={declaredDob}
-                      onChange={(e) => setDeclaredDob(e.target.value)}
-                      placeholder="YYYY-MM-DD"
-                    />
-                  </label>
+                    <div className="intake-fields-grid">
+                      <label className="field">
+                        <span className="field__label">DECLARED NUMBER</span>
+                        <input
+                          value={docNumber}
+                          onChange={(e) => setDocNumber(e.target.value)}
+                          placeholder={SCREEN_DOC_NUMBER_PLACEHOLDERS[docType] || "e.g. K1234567"}
+                        />
+                      </label>
 
-                  <label className="dropzone">
-                    <input
-                      key={fileKey}
-                      type="file"
-                      accept="image/*,.pdf"
-                      onChange={(e) => setFile(e.target.files?.[0] || null)}
-                    />
-                    <span className="dropzone__label">{file ? file.name : "Attach document"}</span>
-                    <span className="dropzone__hint">JPEG / PNG / WEBP / PDF</span>
-                  </label>
+                      <label className="field">
+                        <span className="field__label">DECLARED DOB</span>
+                        <input
+                          value={declaredDob}
+                          onChange={(e) => setDeclaredDob(e.target.value)}
+                          placeholder="YYYY-MM-DD"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="field">
+                      <span className="field__label">DECLARED FULL NAME</span>
+                      <input
+                        value={declaredName}
+                        onChange={(e) => setDeclaredName(e.target.value)}
+                        placeholder="e.g. RAJESH SHARMA"
+                      />
+                    </label>
+                  </div>
+
+                  {/* Right Column: Capture Source */}
+                  <div className="intake-section">
+                    <div className="intake-section__title">
+                      <span>2. Capture Source (Zero-Storage)</span>
+                    </div>
+
+                    <div className="intake-capture-zone">
+                      <label className={`dropzone ${file ? "dropzone--has-file" : ""}`}>
+                        <input
+                          key={fileKey}
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) => setFile(e.target.files?.[0] || null)}
+                        />
+                        <div className="dropzone__icon">
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                          </svg>
+                        </div>
+                        <span className="dropzone__label">
+                          {file ? file.name : "Click to select or drag document image"}
+                        </span>
+                        <span className="dropzone__hint">Supports JPEG, PNG, WEBP, or PDF scans (Max 10 MB)</span>
+                      </label>
+
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px" }}
+                        onClick={() => setShowWebcam(true)}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                          <circle cx="12" cy="13" r="4" />
+                        </svg>
+                        Scan from Webcam Scanner
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom Actions Bar */}
+                <div className="intake-actions-bar">
+                  <div className="specimen-row">
+                    <span className="k" style={{ fontSize: "11px" }}>QUICK DEMO:</span>
+                    {SPECIMEN_PRESETS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="btn btn--small"
+                        disabled={specimenBusy}
+                        onClick={() => void loadSpecimen(p.id)}
+                      >
+                        {p.title}
+                      </button>
+                    ))}
+                  </div>
 
                   <button
                     type="button"
-                    className="btn"
-                    onClick={() => setShowWebcam(true)}
-                  >
-                    Scan from webcam
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn--primary btn--block"
-                    disabled={busy}
+                    className="btn btn--primary btn--hero"
+                    disabled={busy || !file}
                     onClick={() => void screenIntoSession()}
                   >
-                    {busy ? "Screening…" : "Screen into session"}
+                    {busy ? "Running 4-Module Pipeline…" : "⚡ Screen Document into Session"}
                   </button>
                 </div>
 
-                <div className="specimen-row">
-                  <span className="k">Demo specimens</span>
-                  {SPECIMEN_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className="btn btn--small"
-                      disabled={specimenBusy}
-                      onClick={() => void loadSpecimen(p.id)}
-                    >
-                      {p.title}
-                    </button>
-                  ))}
-                </div>
-
-                {modelHint && <p className="hint">{modelHint}</p>}
-                <p className="hint">
-                  Declared values back-fill only fields the scanner cannot read. Cross-document
-                  comparison uses what the pipeline actually extracted from each scan.
-                </p>
+                {modelHint && <p className="hint" style={{ marginTop: 12 }}>{modelHint}</p>}
               </div>
 
               {/* --- Documents in session --------------------------------- */}

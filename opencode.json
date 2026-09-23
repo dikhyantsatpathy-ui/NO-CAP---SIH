@@ -9,6 +9,8 @@
     ".agents/rules/python.md"
   ],
   "skills": [
+    ".agents/skills/ui-decluttering-and-visual-hierarchy",
+    ".agents/skills/data-labeling-and-annotation-engineering",
     ".agents/skills/document-forensics-and-tamper-detection",
     ".agents/skills/icao-9303-mrz-and-id-validation",
     ".agents/skills/zero-storage-privacy-and-compliance",
@@ -30,6 +32,9 @@
     "runs/**",
     "weights/**",
     "frontend/node_modules/**",
-    ".git/**"
+    ".git/**",
+    ".agents/skills/browser-testing-with-devtools/**",
+    ".agents/skills/project-graveyard/**",
+    ".agents/references/**"
   ]
 }

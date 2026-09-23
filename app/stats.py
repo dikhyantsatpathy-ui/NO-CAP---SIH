@@ -97,9 +97,16 @@ def report_stats(db, limit: int = 5000) -> dict:
         bo["count"] += 1
         bo["flagged"] += 1 if v == "FLAGGED" else 0
 
+        # Modules snapshot drifted shape over time: early rows persist verdict
+        # strings ({"validation": "PASS"}), newer rows persist leaf objects
+        # ({"validation": {"verdict": "PASS"}}). Normalize both so the stats
+        # aggregation never keys on a dict (unhashable).
         mods = _module_verdict(getattr(r, "modules", None))
         for mkey in ("validation", "tampering", "face"):
-            mv = mods.get(mkey) or "N/A"
+            mv = mods.get(mkey)
+            if isinstance(mv, dict):
+                mv = mv.get("verdict")
+            mv = mv if isinstance(mv, str) and mv else "N/A"
             out["modules"][mkey][mv] = out["modules"][mkey].get(mv, 0) + 1
 
         ai = {}

@@ -1045,121 +1045,275 @@ textarea::placeholder {
   padding-top: 16px;
 }
 
-.intake {
+/* Clean, Decluttered Intake Architecture ---------------------------------- */
+.intake-card {
   margin-top: 20px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
 }
-.intake__form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 14px;
-  align-items: end;
-}
-.specimen-row {
+
+.intake-card__header {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
 
-.board {
-  margin-top: 22px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-}
-.board__title {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  color: var(--ink-soft);
-  text-transform: none;
-}
-.board__note {
-  margin: 12px 0 0;
-  max-width: 80ch;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--faint);
+.intake-card__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 750;
+  color: var(--ink);
+  letter-spacing: -0.01em;
 }
 
-/* Documents --------------------------------------------------------------- */
-.docs {
-  margin-top: 20px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
+.intake-card__subtitle {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
 }
-.docs__grid {
+
+.intake-file-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.intake-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  align-items: stretch;
 }
-.docs--stack {
+
+@media (max-width: 900px) {
+  .intake-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+.intake-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+}
+
+.intake-section__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.intake-fields-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.intake-capture-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  justify-content: space-between;
+}
+
+.dropzone--has-file {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+
+.intake-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.btn--hero {
+  padding: 11px 24px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--seal) 28%, transparent);
+}
+
+.specimen-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Spacious Documents List & Cards ----------------------------------------- */
+.docs {
+  margin-top: 24px;
+}
+
+.docs__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .doc-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow-sm);
-  padding: 15px 16px;
+  padding: 20px 24px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+
+.doc-card:hover {
+  border-color: var(--line-2);
+  box-shadow: var(--shadow-md);
+}
+
 .doc-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.doc-card__head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.doc-card__no {
+  font-size: 12.5px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  color: var(--seal);
+}
+
+.doc-card__type-title {
+  font-size: 14.5px;
+  font-weight: 750;
+  color: var(--ink);
+}
+
+.doc-card__head-right {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
-.doc-card__no {
-  margin-right: auto;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--seal);
-}
-.doc-card__risk {
-  font-size: 11px;
-  color: var(--faint);
-}
-.doc-card__grid {
+
+.doc-card__matrix {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 14px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 16px 0;
 }
-.doc-card__field {
+
+.doc-card__matrix-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 6px 0;
-  border-top: 1px dashed var(--line-2);
+  gap: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  border-radius: 8px;
 }
-.doc-card__k {
-  font-size: 11px;
+
+.doc-card__matrix-label {
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.doc-card__v {
+
+.doc-card__matrix-val {
   font-size: 13px;
-  word-break: break-word;
+  font-weight: 600;
   color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.forensics-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.forensic-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.forensic-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.forensic-card__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.forensic-card__val {
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
 .doc-card__foot {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
-  padding-top: 10px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
   font-size: 11.5px;
   color: var(--faint);
+  align-items: center;
 }
 
 .doc-line {

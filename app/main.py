@@ -2866,6 +2866,18 @@ def screening_evidentiary_dossier(
         mod_dict = json.loads(report.modules or "{}")
     except Exception:
         pass
+    if not isinstance(mod_dict, dict):
+        mod_dict = {}
+
+    # Module snapshot drifted shape: legacy rows persisted verdict strings
+    # ({"validation": "PASS"}), newer rows persist leaf objects
+    # ({"validation": {"verdict": "PASS"}}). Resolve per-key so the matrix
+    # renders the RECORDED verdict and never crashes on .get() of a string.
+    def _mod(key):
+        v = mod_dict.get(key)
+        if isinstance(v, dict):
+            return v
+        return {"verdict": v} if isinstance(v, str) else {}
 
     dossier_payload = f"{report.id}:{report.file_hash}:{report.verdict}:{report.risk_score}:{report.created_at}:{admin}"
     dossier_seal = hmac.new(MASTER_VAULT_KEY, dossier_payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -2943,10 +2955,10 @@ def screening_evidentiary_dossier(
   <div class="section">
     <h2>Four-Module Inspection Matrix</h2>
     <ul>
-      <li><strong>Module 1 (OCR Extraction):</strong> {'Extracted successfully' if mod_dict.get('extraction') else 'Executed'} (Medium: {mod_dict.get('extraction', {}).get('medium', 'N/A')})</li>
-      <li><strong>Module 2 (Document Validation):</strong> Status {mod_dict.get('validation', {}).get('verdict', 'N/A')}</li>
-      <li><strong>Module 3 (AI Tampering & Forensics):</strong> Status {mod_dict.get('tampering', {}).get('verdict', 'N/A')}</li>
-      <li><strong>Module 4 (Biometric Face Verification):</strong> Status {mod_dict.get('face', {}).get('verdict', 'N/A')}</li>
+      <li><strong>Module 1 (OCR Extraction):</strong> {'Extracted successfully' if _mod('extraction') else 'Executed'} (Medium: {_mod('extraction').get('medium') or 'N/A'})</li>
+      <li><strong>Module 2 (Document Validation):</strong> Status {_mod('validation').get('verdict') or 'N/A'}</li>
+      <li><strong>Module 3 (AI Tampering & Forensics):</strong> Status {_mod('tampering').get('verdict') or 'N/A'}</li>
+      <li><strong>Module 4 (Biometric Face Verification):</strong> Status {_mod('face').get('verdict') or 'N/A'}</li>
     </ul>
   </div>
 
