@@ -264,21 +264,30 @@ a:hover {
   padding: 9px 15px;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease,
-    box-shadow 0.12s ease, transform 0.06s ease;
+  transition: background-color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.08s cubic-bezier(0.16, 1, 0.3, 1);
   white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .btn:hover:not(:disabled) {
   background: var(--panel-2);
   border-color: var(--line-3);
   color: var(--ink);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 .btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(0px) scale(0.985);
+  box-shadow: var(--shadow-sm);
 }
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn--primary {
@@ -286,11 +295,18 @@ a:hover {
   border-color: var(--seal);
   color: var(--ink-on-seal);
   font-weight: 600;
+  box-shadow: 0 1px 3px rgba(29, 78, 216, 0.25), 0 2px 6px -1px rgba(29, 78, 216, 0.2);
 }
 .btn--primary:hover:not(:disabled) {
   background: var(--seal-deep);
   border-color: var(--seal-deep);
   color: var(--ink-on-seal);
+  box-shadow: 0 4px 12px -2px rgba(29, 78, 216, 0.35), 0 2px 4px -2px rgba(29, 78, 216, 0.2);
+  transform: translateY(-1px);
+}
+.btn--primary:active:not(:disabled) {
+  transform: translateY(0px) scale(0.985);
+  box-shadow: 0 1px 2px rgba(29, 78, 216, 0.2);
 }
 
 .btn--approve,
@@ -305,6 +321,8 @@ a:hover {
   background: color-mix(in srgb, var(--ok-soft) 70%, var(--ok));
   border-color: var(--ok);
   color: var(--ok);
+  box-shadow: 0 3px 8px -2px rgba(6, 118, 71, 0.25);
+  transform: translateY(-1px);
 }
 
 .btn--flag,
@@ -319,6 +337,8 @@ a:hover {
   background: color-mix(in srgb, var(--bad-soft) 70%, var(--bad));
   border-color: var(--bad);
   color: var(--bad);
+  box-shadow: 0 3px 8px -2px rgba(180, 35, 24, 0.25);
+  transform: translateY(-1px);
 }
 
 .btn--warn {
@@ -331,6 +351,8 @@ a:hover {
   background: color-mix(in srgb, var(--warn-soft) 70%, var(--warn));
   border-color: var(--warn);
   color: var(--warn);
+  box-shadow: 0 3px 8px -2px rgba(181, 71, 8, 0.25);
+  transform: translateY(-1px);
 }
 
 .btn--ghost {
@@ -343,10 +365,15 @@ a:hover {
   background: var(--panel-2);
   border-color: var(--line);
   color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.btn--ghost:active:not(:disabled) {
+  transform: translateY(0px);
 }
 
 .btn--small {
-  padding: 6px 10px;
+  padding: 6px 11px;
   font-size: 12px;
   border-radius: 6px;
 }
@@ -2694,5 +2721,59 @@ textarea::placeholder {
   }
   .gate__panel {
     padding: 30px 24px 24px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Ashoka Chakra Watermark (Sovereign Seal Background)
+   --------------------------------------------------------------------------- */
+.ashoka-watermark {
+  position: fixed;
+  right: -50px;
+  bottom: -50px;
+  width: 420px;
+  height: 420px;
+  max-width: 48vw;
+  max-height: 48vw;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 0;
+  color: var(--seal);
+  opacity: 0.038;
+  overflow: hidden;
+  transition: opacity 0.3s ease;
+}
+
+[data-theme="dark"] .ashoka-watermark {
+  opacity: 0.052;
+  color: var(--seal-deep);
+}
+
+.ashoka-watermark__svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  animation: ashokaSpin 220s linear infinite;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+}
+
+@keyframes ashokaSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .ashoka-watermark {
+    right: -30px;
+    bottom: -30px;
+    width: 260px;
+    height: 260px;
+    opacity: 0.025;
   }
 }

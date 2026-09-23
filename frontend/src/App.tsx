@@ -163,6 +163,36 @@ function StatusBand() {
   );
 }
 
+export function AshokaChakraWatermark() {
+  return (
+    <div className="ashoka-watermark" aria-hidden="true">
+      <svg viewBox="0 0 200 200" className="ashoka-watermark__svg">
+        <g fill="currentColor">
+          <circle cx="100" cy="100" r="95" fill="none" stroke="currentColor" strokeWidth="2.8" />
+          <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <circle cx="100" cy="100" r="18" fill="none" stroke="currentColor" strokeWidth="2.4" />
+          <circle cx="100" cy="100" r="7" fill="currentColor" />
+          {Array.from({ length: 24 }).map((_, i) => {
+            const angle = i * 15;
+            return (
+              <g key={i} transform={`rotate(${angle} 100 100)`}>
+                {/* Spoke needle */}
+                <path d="M 98.4 100 L 99.4 15 L 100.6 15 L 101.6 100 Z" opacity="0.9" />
+                {/* Spoke diamond tip */}
+                <polygon points="100,12 102.5,15 100,17 97.5,15" />
+                {/* Outer rim bead */}
+                <circle cx="100" cy="9" r="1.6" />
+                {/* Mid spoke accent bead */}
+                <circle cx="100" cy="78" r="1.1" opacity="0.7" />
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 export function App() {
   const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
@@ -189,11 +219,17 @@ export function App() {
   }
 
   if (!signedIn) {
-    return <SignInGate />;
+    return (
+      <>
+        <AshokaChakraWatermark />
+        <SignInGate />
+      </>
+    );
   }
 
   return (
     <div className="console">
+      <AshokaChakraWatermark />
       <TopBar />
       <NavTabs active={view} onPick={setView} />
       <StatusBand />
