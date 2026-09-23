@@ -143,7 +143,9 @@ function StatusBand() {
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const utc = now.toISOString().slice(11, 19);
+  const istOffset = 5.5 * 3600 * 1000;
+  const istDate = new Date(now.getTime() + istOffset);
+  const ist = istDate.toISOString().slice(11, 19);
   return (
     <div className="statusband">
       <span className="statusband__item">
@@ -153,7 +155,7 @@ function StatusBand() {
       <span className="statusband__item">SHA-256 digests only — no raw identifiers stored</span>
       <span className="statusband__item">Chained session ledger</span>
       <span className="statusband__item statusband__item--right">
-        <span className="clock mono">UTC {utc}</span>
+        <span className="clock mono">IST {ist}</span>
         <span className="divider" />
         <span className="mono">SIH 26188 · Official use</span>
       </span>

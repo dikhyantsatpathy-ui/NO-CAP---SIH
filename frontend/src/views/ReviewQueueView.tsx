@@ -4,19 +4,23 @@
 //   CLEARED → session is signed into the ledger as an approved block.
 //   CONFIRMED_FRAUD → session is signed as a REJECTED evidence block.
 //   INCONCLUSIVE → signed as rejected, review note recorded.
-// Settled sessions stay listed for audit. No raw identifiers rendered.
+// Settled sessions stay listed for audit with interactive expandable sub-tables.
+// No raw identifiers rendered.
 // ============================================================================
 
 import { useCallback, useEffect, useState } from "react";
 import {
   adjudicateSession,
+  getBsaCertificateUrl,
   getSession,
   getSessions,
+  SCREEN_DOC_LABELS,
+  type ScreenDocType,
   type ScreeningSession,
   type ScreeningSessionDetail,
 } from "../api";
 import { useAuth, useToast } from "../app/state";
-import { shortHash, timeLabel } from "../app/util";
+import { copyText, shortHash, timeLabelIst } from "../app/util";
 
 type Decision = "CLEARED" | "CONFIRMED_FRAUD" | "INCONCLUSIVE";
 
@@ -68,67 +72,142 @@ function FlaggedCard({
 
   return (
     <article className={`queue-card queue-card--${flag.status === "rejected" ? "bad" : "warn"}`}>
-      <header className="queue-card__head" role="button" tabIndex={0} onClick={() => void toggle()} onKeyDown={(e) => e.key === "Enter" && void toggle()}>
+      <header
+        className="queue-card__head"
+        role="button"
+        tabIndex={0}
+        onClick={() => void toggle()}
+        onKeyDown={(e) => e.key === "Enter" && void toggle()}
+      >
         <span className="chip chip--warn">FLAGGED</span>
         <span className="mono queue-card__id">{flag.id}</span>
         <span className="chip chip--mute">{flag.checkpoint}</span>
+        {flag.nationality && <span className="chip chip--info">NAT: {flag.nationality}</span>}
         <span className="queue-card__meta">
           {flag.document_count} doc(s) · risk {flag.risk_score ?? "—"} ·{" "}
-          {timeLabel(flag.closed_at || flag.updated_at)}
+          {timeLabelIst(flag.created_at_ist || flag.closed_at || flag.updated_at)}
         </span>
-        <span className="queue-card__toggle">{expanded ? "▾" : "▸"}</span>
+        <span className="queue-card__toggle">{expanded ? "▼" : "▶"}</span>
       </header>
 
       {flag.note && <p className="queue-card__note">desk note: {flag.note}</p>}
       {flag.adjudicator && (
         <p className="queue-card__settle">
-          settled by {flag.adjudicator} · {flag.verdict} · {timeLabel(flag.adjudicated_at || "")}
+          settled by {flag.adjudicator} · {flag.verdict} · {timeLabelIst(flag.adjudicated_at || "")}
         </p>
       )}
 
       {expanded && (
         <div className="queue-card__body">
+          {/* Sub-table: Comparison discrepancies */}
           {checks.length > 0 && (
-            <table className="tbl tbl--compact">
-              <tbody>
-                {checks.map((c) => (
-                  <tr key={c.field}>
-                    <td>
-                      <span className="k">{c.label}</span>
-                    </td>
-                    <td>
-                      <span className={`chip chip--${c.status === "agree" ? "ok" : c.status === "disagree" ? "bad" : c.status === "cross-script" ? "info" : "mute"}`}>
-                        {c.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="cell-detail">{c.detail}</td>
+            <div style={{ marginBottom: 12 }}>
+              <span className="k" style={{ fontSize: 11 }}>CROSS-DOCUMENT COMPARISON SUB-TABLE</span>
+              <table className="tbl tbl--compact" style={{ marginTop: 4 }}>
+                <thead>
+                  <tr>
+                    <th>Field</th>
+                    <th>Status</th>
+                    <th>Assessment &amp; Reasons</th>
                   </tr>
-                ))}
+                </thead>
+                <tbody>
+                  {checks.map((c) => (
+                    <tr key={c.field}>
+                      <td>
+                        <span className="k">{c.label}</span>
+                        <span className="cell-sub mono">{c.field}</span>
+                      </td>
+                      <td>
+                        <span
+                          className={`chip chip--${
+                            c.status === "agree"
+                              ? "ok"
+                              : c.status === "disagree"
+                                ? "bad"
+                                : c.status === "cross-script"
+                                  ? "info"
+                                  : "mute"
+                          }`}
+                        >
+                          {c.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="cell-detail">{c.detail}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Sub-table: Screened documents list */}
+          <div style={{ marginBottom: 12 }}>
+            <span className="k" style={{ fontSize: 11 }}>SCREENED DOCUMENTS AUDIT SUB-TABLE ({docs.length})</span>
+            <table className="tbl tbl--compact" style={{ marginTop: 4 }}>
+              <thead>
+                <tr>
+                  <th>Doc</th>
+                  <th>Type</th>
+                  <th>Verdict</th>
+                  <th>Risk</th>
+                  <th>Masked Identifier</th>
+                  <th>File SHA-256</th>
+                </tr>
+              </thead>
+              <tbody>
+                {docs.map((d, i) => {
+                  const mFields = Object.entries(d.masked_fields || {}).filter(([, v]) => v != null);
+                  const displayId = mFields.length > 0 ? `${mFields[0][0]}: ${String(mFields[0][1])}` : "—";
+                  return (
+                    <tr key={d.id}>
+                      <td className="mono">DOC {String(i + 1).padStart(2, "0")}</td>
+                      <td>
+                        <span className="chip chip--mute">
+                          {SCREEN_DOC_LABELS[d.doc_type as ScreenDocType] || d.doc_type}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={`chip chip--${
+                            d.verdict === "CLEAR"
+                              ? "ok"
+                              : d.verdict === "FLAGGED"
+                                ? "bad"
+                                : "warn"
+                          }`}
+                        >
+                          {d.verdict}
+                        </span>
+                      </td>
+                      <td className="mono">{d.risk_score}</td>
+                      <td className="mono muted">{displayId}</td>
+                      <td className="mono" title={d.file_hash || ""}>
+                        {shortHash(d.file_hash, 16)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          )}
-          <div className="docs docs--stack">
-            {docs.map((d, i) => (
-              <div key={d.id} className="doc-line">
-                <span>DOC {String(i + 1).padStart(2, "0")}</span>
-                <span className={`chip chip--${d.verdict === "CLEAR" ? "ok" : d.verdict === "FLAGGED" ? "bad" : "warn"}`}>{d.verdict}</span>
-                <span className="muted">{d.doc_type}</span>
-                <span className="mono muted">file {shortHash(d.file_hash, 14)}</span>
-                <span className="mono muted">risk {d.risk_score}</span>
-              </div>
-            ))}
           </div>
 
+          {/* Supervisor decision panel */}
           {isSuper && flag.status === "flagged" && (
             <div className="adjudicate">
               <div className="adjudicate__note">
-                <span className="k">Review note</span>
-                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="supervisory finding (optional)" />
+                <span className="k">Supervisory review note</span>
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="supervisory finding / court-admissible reason"
+                />
               </div>
               <div className="adjudicate__actions">
                 {(Object.keys(DECISION_META) as Decision[]).map((d) => (
                   <button
                     key={d}
+                    type="button"
                     className={`btn btn--${DECISION_META[d].tone}`}
                     disabled={busyId === flag.id}
                     onClick={() => onAdjudicate(flag.id, d, note)}
@@ -137,7 +216,9 @@ function FlaggedCard({
                   </button>
                 ))}
               </div>
-              <p className="hint">Any decision signs the session into the ledger with its verdict embedded.</p>
+              <p className="hint">
+                Adjudication settles the session and writes an immutable decision block into the ledger.
+              </p>
             </div>
           )}
         </div>
@@ -145,6 +226,161 @@ function FlaggedCard({
     </article>
   );
 }
+
+// ----------------------------------------------------------------------------
+// Settled session row with expandable sub-table
+// ----------------------------------------------------------------------------
+
+function SettledSessionRow({ session }: { session: ScreeningSession }) {
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<ScreeningSessionDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
+  const toggle = async () => {
+    if (!expanded && !detail) {
+      setLoading(true);
+      const res = await getSession(session.id);
+      setLoading(false);
+      if (res.ok) setDetail(res.data);
+      else toast(`Failed to load session details: ${res.error}`, "error");
+    }
+    setExpanded((v) => !v);
+  };
+
+  const docs = detail?.documents || [];
+
+  return (
+    <>
+      <tr>
+        <td className="mono">
+          <button
+            type="button"
+            className="subtable-toggle"
+            style={{ padding: "2px 6px", fontSize: 11 }}
+            onClick={() => void toggle()}
+          >
+            {expanded ? "▼" : "▶"} {session.id}
+          </button>
+        </td>
+        <td>
+          <span
+            className={`chip chip--${
+              session.status === "approved"
+                ? "ok"
+                : session.status === "rejected"
+                  ? "bad"
+                  : "warn"
+            }`}
+          >
+            {session.status.toUpperCase()}
+          </span>
+        </td>
+        <td>{session.verdict || "—"}</td>
+        <td className="mono">{session.risk_score}</td>
+        <td>{session.checkpoint}</td>
+        <td className="mono">{session.document_count}</td>
+        <td>{session.screener || "—"}</td>
+        <td className="mono">{timeLabelIst(session.created_at_ist || session.closed_at || "")}</td>
+        <td className="mono" title={session.block_hash || ""}>
+          {shortHash(session.block_hash, 16)}
+        </td>
+      </tr>
+
+      {/* Expandable nested sub-table for settled session */}
+      {expanded && (
+        <tr>
+          <td colSpan={9} style={{ padding: 0, background: "var(--panel-2)" }}>
+            <div style={{ padding: "12px 18px", borderBottom: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span className="k" style={{ fontSize: 11 }}>
+                  SESSION AUDIT MANIFEST · {session.id} ({docs.length} documents)
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn--small btn--ghost"
+                    onClick={() => window.open(getBsaCertificateUrl(session.id), "_blank")}
+                  >
+                    BSA 2023 · s.65B Certificate
+                  </button>
+                  {session.block_hash && (
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      onClick={() => void copyText(session.block_hash || "")}
+                    >
+                      Copy Block Hash
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {loading ? (
+                <p className="hint">Loading document manifest…</p>
+              ) : docs.length === 0 ? (
+                <p className="hint">No documents attached.</p>
+              ) : (
+                <table className="tbl tbl--compact" style={{ background: "var(--panel)" }}>
+                  <thead>
+                    <tr>
+                      <th>Doc</th>
+                      <th>Type</th>
+                      <th>Verdict</th>
+                      <th>Risk</th>
+                      <th>Extracted Mask</th>
+                      <th>File SHA-256</th>
+                      <th>IST Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docs.map((d, idx) => {
+                      const mFields = Object.entries(d.masked_fields || {}).filter(([, v]) => v != null);
+                      const maskStr = mFields.length > 0 ? `${mFields[0][0]}: ${String(mFields[0][1])}` : "—";
+                      return (
+                        <tr key={d.id}>
+                          <td className="mono">DOC {String(idx + 1).padStart(2, "0")}</td>
+                          <td>
+                            <span className="chip chip--mute">
+                              {SCREEN_DOC_LABELS[d.doc_type as ScreenDocType] || d.doc_type}
+                            </span>
+                          </td>
+                          <td>
+                            <span
+                              className={`chip chip--${
+                                d.verdict === "CLEAR"
+                                  ? "ok"
+                                  : d.verdict === "FLAGGED"
+                                    ? "bad"
+                                    : "warn"
+                              }`}
+                            >
+                              {d.verdict}
+                            </span>
+                          </td>
+                          <td className="mono">{d.risk_score}</td>
+                          <td className="mono muted">{maskStr}</td>
+                          <td className="mono" title={d.file_hash || ""}>
+                            {shortHash(d.file_hash, 16)}
+                          </td>
+                          <td className="mono muted">{d.created_at_ist || timeLabelIst(d.created_at)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Supervisory Review Queue View
+// ----------------------------------------------------------------------------
 
 export function ReviewQueueView() {
   const { toast } = useToast();
@@ -171,7 +407,7 @@ export function ReviewQueueView() {
     const res = await adjudicateSession(id, decision, note);
     setBusyId(null);
     if (res.ok) {
-      toast(`Session ${id.slice(0, 8)}… signed as ${decision}.`, "success");
+      toast(`Session ${id.slice(0, 8)}… settled as ${decision}.`, "success");
       await load();
     } else {
       toast(res.error, "error");
@@ -197,13 +433,13 @@ export function ReviewQueueView() {
       <section className="panel">
         <div className="panel__row">
           <div>
-            <h2 className="panel__title">Review queue — flagged sessions</h2>
+            <h2 className="panel__title">Review queue — flagged border sessions</h2>
             <p className="panel__body">
-              Adjudicate each flagged session. The decision is verified here and signed into the
-              session ledger with the verdict embedded.
+              Adjudicate each flagged session with human-in-the-loop oversight. Expand each session
+              to examine cross-document discrepancies, extracted fields, and forensic signals.
             </p>
           </div>
-          <button className="btn" onClick={() => void load()}>
+          <button type="button" className="btn" onClick={() => void load()}>
             Refresh
           </button>
         </div>
@@ -215,14 +451,24 @@ export function ReviewQueueView() {
         ) : (
           <div className="queue">
             {flagged.map((f) => (
-              <FlaggedCard key={f.id} flag={f} isSuper={isSuper} onAdjudicate={adjudicate} busyId={busyId} />
+              <FlaggedCard
+                key={f.id}
+                flag={f}
+                isSuper={isSuper}
+                onAdjudicate={adjudicate}
+                busyId={busyId}
+              />
             ))}
           </div>
         )}
       </section>
 
       <section className="panel">
-        <h2 className="panel__title">Recently signed sessions</h2>
+        <h2 className="panel__title">Recently signed sessions audit trail</h2>
+        <p className="panel__body" style={{ marginBottom: 12 }}>
+          Expand any session with <span className="mono">[▶]</span> to view its screened documents manifest and generate a court-admissible BSA 2023 certificate.
+        </p>
+
         {settled.length === 0 ? (
           <p className="hint">No sessions signed yet.</p>
         ) : (
@@ -236,25 +482,13 @@ export function ReviewQueueView() {
                 <th>Checkpoint</th>
                 <th>Docs</th>
                 <th>Screened by</th>
-                <th>Closed</th>
-                <th>Block</th>
+                <th>Closed (IST)</th>
+                <th>Block Hash</th>
               </tr>
             </thead>
             <tbody>
               {settled.map((s) => (
-                <tr key={s.id}>
-                  <td className="mono">{s.id}</td>
-                  <td>
-                    <span className={`chip chip--${s.status === "approved" ? "ok" : s.status === "rejected" ? "bad" : "warn"}`}>{s.status.toUpperCase()}</span>
-                  </td>
-                  <td>{s.verdict || "—"}</td>
-                  <td>{s.risk_score}</td>
-                  <td>{s.checkpoint}</td>
-                  <td>{s.document_count}</td>
-                  <td>{s.screener || "—"}</td>
-                  <td className="mono">{timeLabel(s.closed_at || "")}</td>
-                  <td className="mono" title={s.block_hash || ""}>{shortHash(s.block_hash, 18)}</td>
-                </tr>
+                <SettledSessionRow key={s.id} session={s} />
               ))}
             </tbody>
           </table>

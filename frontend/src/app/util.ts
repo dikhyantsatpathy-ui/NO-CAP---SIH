@@ -59,6 +59,22 @@ export function timeLabel(t?: string): string {
   return `${mon} ${day} · ${hh}:${mm} UTC`;
 }
 
+/** Formatted IST time for operational border clock and shift displays. */
+export function timeLabelIst(t?: string | null): string {
+  if (!t) return "—";
+  if (typeof t === "string" && t.endsWith("IST")) return t;
+  const ts = parseUtc(t);
+  if (!ts) return String(t);
+  const d = new Date(ts);
+  const istOffset = 5.5 * 3600 * 1000;
+  const istDate = new Date(d.getTime() + istOffset);
+  const hh = String(istDate.getUTCHours()).padStart(2, "0");
+  const mm = String(istDate.getUTCMinutes()).padStart(2, "0");
+  const day = String(istDate.getUTCDate()).padStart(2, "0");
+  const mon = istDate.toLocaleString("en", { month: "short", timeZone: "UTC" });
+  return `${mon} ${day} · ${hh}:${mm} IST`;
+}
+
 export function initials(name?: string): string {
   return (name || "")
     .split(/\s+/)

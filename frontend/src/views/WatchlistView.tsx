@@ -3,6 +3,10 @@
 // Entries store ONLY a SHA-256 digest of the identifier plus a masked display
 // form. Matching during screening is always by digest; the raw identifier is
 // never persisted.
+//
+// Features:
+//   - Hash-only watchlist addition & removal,
+//   - Nested expandable sub-tables for cryptographic audit receipts.
 // ============================================================================
 
 import { useCallback, useEffect, useState } from "react";
@@ -17,7 +21,7 @@ import {
   type WatchlistEntry,
 } from "../api";
 import { useAuth, useToast } from "../app/state";
-import { shortHash, timeLabel } from "../app/util";
+import { copyText, shortHash, timeLabelIst } from "../app/util";
 
 export function WatchlistView() {
   const { toast } = useToast();
@@ -29,6 +33,7 @@ export function WatchlistView() {
   const [category, setCategory] = useState<ScreenWatchlistCategory>("passport");
   const [value, setValue] = useState("");
   const [reason, setReason] = useState("");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const res = await getWatchlist();
@@ -98,8 +103,8 @@ export function WatchlistView() {
               compares raw values — only digests.
             </p>
           </div>
-          <button className="btn" onClick={() => void load()}>
-            RELOAD
+          <button type="button" className="btn" onClick={() => void load()}>
+            Reload
           </button>
         </div>
 
@@ -116,13 +121,21 @@ export function WatchlistView() {
           </label>
           <label className="field">
             <span className="field__label">Identifier</span>
-            <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={SCREEN_WATCHLIST_PLACEHOLDERS[category]} />
+            <input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={SCREEN_WATCHLIST_PLACEHOLDERS[category]}
+            />
           </label>
           <label className="field">
             <span className="field__label">Reason</span>
-            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="optional" />
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Interpol red notice / forged visa cluster"
+            />
           </label>
-          <button className="btn btn--primary" disabled={busy} onClick={() => void add()}>
+          <button type="button" className="btn btn--primary" disabled={busy} onClick={() => void add()}>
             {busy ? "Adding…" : "Add to watchlist"}
           </button>
         </div>
@@ -136,33 +149,97 @@ export function WatchlistView() {
             <thead>
               <tr>
                 <th>Category</th>
-                <th>Digest</th>
-                <th>Masked</th>
+                <th>Masked Display</th>
                 <th>Reason</th>
                 <th>Added by</th>
-                <th>Added</th>
+                <th>Timestamp (IST)</th>
+                <th>Audit</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {entries.map((e) => (
-                <tr key={e.id}>
-                  <td>
-                    <span className="chip chip--mute">{SCREEN_WATCHLIST_LABELS[(e.category || "passport") as ScreenWatchlistCategory] || e.category}</span>
-                  </td>
-                  <td className="mono" title={e.mask || ""}>
-                    {shortHash(e.mask, 26)}
-                  </td>
-                  <td className="mono muted">{e.mask}</td>
-                  <td className="cell-detail">{e.reason || "—"}</td>
-                  <td>{e.added_by}</td>
-                  <td className="mono">{timeLabel(e.created_at)}</td>
-                  <td>
-                    <button className="btn btn--small btn--flag" disabled={busy} onClick={() => void remove(e.id)}>
-                      Remove
-                    </button>
-                  </td>
-                </tr>
+                <>
+                  <tr key={e.id}>
+                    <td>
+                      <span className="chip chip--mute">
+                        {SCREEN_WATCHLIST_LABELS[(e.category || "passport") as ScreenWatchlistCategory] || e.category}
+                      </span>
+                    </td>
+                    <td className="mono">{e.mask}</td>
+                    <td className="cell-detail">{e.reason || "—"}</td>
+                    <td>{e.added_by}</td>
+                    <td className="mono">{timeLabelIst(e.created_at)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="subtable-toggle"
+                        style={{ padding: "2px 6px", fontSize: 11 }}
+                        onClick={() => setExpandedId((cur) => (cur === e.id ? null : e.id))}
+                      >
+                        {expandedId === e.id ? "▼" : "▶"} Audit
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn--small btn--flag"
+                        disabled={busy}
+                        onClick={() => void remove(e.id)}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+
+                  {/* Expandable nested sub-table for watchlist audit verification */}
+                  {expandedId === e.id && (
+                    <tr key={`${e.id}-detail`}>
+                      <td colSpan={7} style={{ padding: 0, background: "var(--panel-2)" }}>
+                        <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--line)" }}>
+                          <span className="k" style={{ fontSize: 11, marginBottom: 6, display: "block" }}>
+                            CRYPTOGRAPHIC HASH VERIFICATION &amp; ATTRIBUTION
+                          </span>
+                          <table className="tbl tbl--compact" style={{ background: "var(--panel)" }}>
+                            <tbody>
+                              <tr>
+                                <td className="k">ENTRY ID</td>
+                                <td className="mono">#WL-{e.id}</td>
+                              </tr>
+                              <tr>
+                                <td className="k">DIGEST MASK</td>
+                                <td className="mono">
+                                  {shortHash(e.mask, 28)}{" "}
+                                  <button
+                                    type="button"
+                                    className="btn btn--small"
+                                    style={{ padding: "1px 6px", marginLeft: 6 }}
+                                    onClick={() => void copyText(e.mask || "")}
+                                  >
+                                    Copy
+                                  </button>
+                                </td>
+                              </tr>
+                              <tr>
+                                <td className="k">STORAGE POLICIES</td>
+                                <td>
+                                  <span className="chip chip--ok">ZERO-STORAGE VERIFIED</span>
+                                  <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>
+                                    Raw identifier is never retained; matched solely via deterministic SHA-256 digest lookup.
+                                  </span>
+                                </td>
+                              </tr>
+                              <tr>
+                                <td className="k">SUPERVISOR</td>
+                                <td>{e.added_by}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>

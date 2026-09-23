@@ -314,7 +314,9 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                   checkpoint: str | None, declared: dict | None,
                   screener: str | None = None,
                   live_frame: bytes | None = None,
-                  session_id: str | None = None) -> dict:
+                  session_id: str | None = None,
+                  nationality: str | None = None,
+                  purpose: str | None = None) -> dict:
     """Full Upload->Extract->Analyze->Verify->AssessRisk pass. Returns a
     report dict AND persists an immutable ScreeningReport row.
 
@@ -719,6 +721,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "field_hashes": _fh,
         "session_id": session_id,
         "watchlist_hits": hits,
+        "nationality": nationality,
+        "purpose": purpose,
         "reasons": reasons,
         "ai_detection": {k: ai_det.get(k) for k in
                          ("ran", "ai_suspected", "ai_score", "model", "provider",
@@ -755,6 +759,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         },
         "latency_ms": int((time.monotonic() - started) * 1000),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+        "created_at_ist": None,  # filled by the API layer (IST display)
     }
 
     # Hash-chain linkage: compute block hash linking to the previous report
@@ -782,6 +787,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         session_id=session_id or report.get("session_id"),
         field_hashes=json.dumps(_fh) if _fh else None,
         ephemeral_raw_fields=json.dumps(extract_res.get("fields", {})) if extract_res.get("fields") else None,
+        nationality=nationality,
+        purpose=purpose,
     ))
     db.commit()
     return report

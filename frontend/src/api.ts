@@ -242,6 +242,12 @@ export interface ScreenReport {
   latency_ms?: number;
   declared_count?: number;
   modules?: ScreenModules;
+  created_at_ist?: string | null;
+  removed_at?: string | null;
+  removed_at_ist?: string | null;
+  removed_by?: string | null;
+  nationality?: string | null;
+  purpose?: string | null;
   travel_validity?: ScreenTravelValidity | null;
   syndicate_alerts?: Array<{
     level: string;
@@ -752,11 +758,16 @@ export interface ScreeningSession {
   adjudicator: string | null;
   adjudicated_at: string | null;
   created_at: string;
+  created_at_ist?: string | null;
   updated_at: string;
   closed_at: string | null;
   block_hash: string | null;
   prev_hash: string | null;
   document_count?: number;
+  nationality?: string | null;
+  purpose?: string | null;
+  mode?: string | null;
+  guide?: GuidedFlow | null;
 }
 
 export interface ScreeningSessionDetail extends ScreeningSession {
@@ -780,11 +791,159 @@ export interface SessionLedgerVerify {
   reason?: string;
 }
 
+export interface CheckpointCluster {
+  key: string;
+  label: string;
+  mode: string;
+  checkpoints: string[];
+}
+
+export interface CheckpointCatalog {
+  checkpoints: {
+    clusters: CheckpointCluster[];
+    all: string[];
+    modes: Record<string, string>;
+  };
+  documents: Record<string, { label: string; field: string; hint: string }>;
+  nationalities: { code: string; label: string }[];
+}
+
+export interface GuidedStep {
+  phase: string;
+  order: number;
+  text: string;
+  detail?: string;
+}
+
+export interface GuidedFlow {
+  checkpoint: string;
+  cluster: string;
+  cluster_label: string;
+  mode: string;
+  doc_type: string;
+  doc_label: string;
+  nationality: string;
+  nationality_label: string;
+  expected_documents: string[];
+  officer_steps: GuidedStep[];
+  traveller_steps: { order: number; text: string }[];
+  capture_hint: string;
+}
+
+export interface StatsOverview {
+  reports: {
+    generated_at_utc: string;
+    generated_at_ist: string;
+    total_screens: number;
+    verdicts: Record<string, number>;
+    risk_buckets: Record<string, number>;
+    by_doc_type: Record<string, { count: number; flagged: number; avg_risk: number }>;
+    by_checkpoint: Record<string, { count: number; flagged: number }>;
+    by_officer: Record<string, { count: number; flagged: number }>;
+    modules: Record<string, Record<string, number>>;
+    ai_detector?: { ran: number; suspected: number; score_sum: number };
+    latency_ms: { min: number | null; max: number; sum: number; p50: number | null; p95: number | null };
+    hourly_ist: Record<number, number>;
+    daily?: Record<string, number>;
+    flagged_count: number;
+  };
+  sessions: {
+    total_sessions: number;
+    by_status: Record<string, number>;
+    by_verdict: Record<string, number>;
+    avg_docs_per_session?: number;
+  };
+  throughput: {
+    window_minutes: number;
+    screenings_count: number;
+    per_minute: number;
+  };
+}
+
+export interface LiveExtractResult {
+  ok: boolean;
+  medium: string;
+  fields: Record<string, any>;
+  masked_fields: Record<string, string>;
+  ocr: any;
+  mrz: any;
+  doc_type: string;
+  has_face_frame: boolean;
+  guidance: any;
+}
+
 /** Open a new border session for the person now at the desk. */
-export function createSession(checkpoint: string) {
+export function createSession(
+  checkpointOrParams:
+    | string
+    | { checkpoint?: string; nationality?: string; purpose?: string; mode?: string },
+) {
+  const params =
+    typeof checkpointOrParams === "string"
+      ? { checkpoint: checkpointOrParams }
+      : checkpointOrParams;
   return request<ScreeningSession>("/api/sessions", {
     method: "POST",
-    body: form({ checkpoint }),
+    body: form({
+      checkpoint: params.checkpoint || "",
+      nationality: params.nationality || "",
+      purpose: params.purpose || "",
+      mode: params.mode || "",
+    }),
+  });
+}
+
+/** Soft-remove a document from an open session while preserving the immutable audit ledger. */
+export function removeSessionDocument(sessionId: string, reportId: string) {
+  return request<{
+    ok: boolean;
+    already_removed: boolean;
+    report_id: string;
+    removed_at?: string;
+    removed_at_ist?: string;
+    removed_by?: string;
+  }>(`/api/sessions/${encodeURIComponent(sessionId)}/documents/${encodeURIComponent(reportId)}/remove`, {
+    method: "POST",
+  });
+}
+
+/** Undo soft-removal while the session is still open. */
+export function restoreSessionDocument(sessionId: string, reportId: string) {
+  return request<{ ok: boolean; restored: boolean; report_id: string }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/documents/${encodeURIComponent(reportId)}/restore`,
+    { method: "POST" },
+  );
+}
+
+/** Get checkpoint clusters, document catalog, and nationalities. */
+export function getCheckpoints() {
+  return request<CheckpointCatalog>("/api/checkpoints");
+}
+
+/** Get guided officer & traveller protocol for a specific checkpoint/doc/nationality. */
+export function getGuide(checkpoint = "", docType = "other", nationality = "UNKNOWN") {
+  const q = new URLSearchParams({
+    checkpoint,
+    doc_type: docType,
+    nationality,
+  });
+  return request<GuidedFlow>(`/api/guide?${q.toString()}`);
+}
+
+/** Get border-wide screening statistics and operational health in IST. */
+export function getStatsOverview() {
+  return request<StatsOverview>("/api/stats/overview");
+}
+
+/** In-memory extraction of live document image (zero-storage). */
+export function extractLiveImage(file: File, docType = "other", liveFrame?: File | null) {
+  return request<LiveExtractResult>("/api/extract", {
+    method: "POST",
+    body: form({
+      file,
+      doc_type: docType,
+      live_frame: liveFrame || undefined,
+    }),
   });
 }
 
@@ -834,4 +993,5 @@ export function getSessionLedger() {
 export function verifySessionLedger() {
   return request<SessionLedgerVerify>("/api/sessions/ledger/verify");
 }
+
 

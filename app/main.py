@@ -53,6 +53,13 @@ from screening import run_screening
 # Border SESSION orchestration: cross-document comparison + signed session
 # ledger blocks (SIH26188). Pure hash-based; imports screening's norm/mask.
 from session import build_comparison, session_payload, chain_hash
+# Central configuration: IST display timezone, checkpoint clusters (every
+# Indian border post SSB screens at), document catalog, guided-flow protocol.
+# IST display timezone + UTC<->IST helpers + stats aggregation.
+from config import to_ist, utc_to_epoch, ist_hour_of_day, MAX_UPLOAD_BYTES, DOCUMENT_CATALOG
+from guide import (flow_for, checkpoint_catalog, document_catalog,
+                   nationality_catalog)
+from stats import report_stats, session_stats, throughput
 # Passport/Visa MRZ / Driving-Licence / PAN / Voter-ID validation lives in
 # identity.py and feeds the screening desk's Module 2 (document validation)
 # through app/validation.py. Emits explainable checks, stores zero raw bytes.
@@ -1112,6 +1119,10 @@ class ScreeningReport(Base):
     session_id = Column(String, index=True, nullable=True)   # owning border session (SIH26188)
     field_hashes = Column(Text, nullable=True)               # per-field sha256 digests for cross-doc compare
     ephemeral_raw_fields = Column(Text, nullable=True)       # TEMPORARY raw JSON, wiped when session closes
+    removed_at = Column(String, nullable=True)               # soft-remove from a session (audit trail kept)
+    removed_by = Column(String, nullable=True)               # officer who removed the document from the session
+    nationality = Column(String, nullable=True)              # traveller nationality at capture time (guide context)
+    purpose = Column(String, nullable=True)                  # declared purpose of travel at capture time
 
 class WatchlistEntry(Base):
     """Privacy-preserving watchlist for the screening desk: stores ONLY the
@@ -1152,6 +1163,9 @@ class ScreeningSession(Base):
     closed_at = Column(String, nullable=True)
     adjudicator = Column(String, nullable=True)               # supervisor who settled a flagged session
     adjudicated_at = Column(String, nullable=True)
+    nationality = Column(String, nullable=True)               # traveller nationality (international guide flow)
+    purpose = Column(String, nullable=True)                   # purpose of travel
+    mode = Column(String, nullable=True)                      # land | air | sea | rail (checkpoint cluster)
 
 
 class NoticeBroadcast(Base):
@@ -1207,6 +1221,17 @@ _MIGRATIONS = [
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS field_hashes TEXT;",
     "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS ephemeral_raw_fields TEXT;",
     "CREATE INDEX IF NOT EXISTS ix_screening_reports_session ON screening_reports(session_id);",
+    # Soft-remove of a document from an open session: audit row is KEPT (hash
+    # chain + ledger stay intact), only the session linkage is dropped.
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS removed_at VARCHAR;",
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS removed_by VARCHAR;",
+    # Traveller context for the international guided flow (nationality-driven
+    # document expectations at every checkpoint).
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS nationality VARCHAR;",
+    "ALTER TABLE screening_reports ADD COLUMN IF NOT EXISTS purpose VARCHAR;",
+    "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS nationality VARCHAR;",
+    "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS purpose VARCHAR;",
+    "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS mode VARCHAR;",
     "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS previous_hash VARCHAR;",
     "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS ledger_hash VARCHAR;",
     "ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS comparison TEXT;",
@@ -2031,6 +2056,7 @@ def _screen_row(r):
         "confidence": r.confidence,
         "screener": r.screener,
         "created_at": r.created_at,
+        "created_at_ist": to_ist(r.created_at),
         "adjudication": r.adjudication,
         "adjudicator": r.adjudicator,
         "adjudication_note": r.adjudication_note,
@@ -2055,10 +2081,12 @@ async def screen_document(
     declared: str = Form(""),          # optional JSON map of officer-typed fields
     live_frame: UploadFile = Form(None),  # optional M4 webcam capture (image)
     session_id: str = Form(""),        # optional owning border session (SIH26188)
+    nationality: str = Form(""),       # traveller nationality (international flow)
+    purpose: str = Form(""),           # purpose of travel
     admin: str = Depends(get_current_admin_or_evaluator),
 ):
     data = await file.read()
-    if len(data) > 8 * 1024 * 1024:
+    if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
     ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
     if ext not in _SYNC_SCREENED_EXTS:
@@ -2072,8 +2100,10 @@ async def screen_document(
         except Exception:
             declared_map = {}
     live_bytes = await live_frame.read() if live_frame is not None else None
-    if live_bytes and len(live_bytes) > 8 * 1024 * 1024:
+    if live_bytes and len(live_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Live frame too large (8 MB cap).")
+    nat = (nationality or "").strip().upper()[:2] or None
+    purpose_txt = (purpose or "").strip()[:120] or None
     with get_db() as db:
         if admin != "evaluator@ssb.gov.in" and not is_super_admin(admin):
             identity = db.query(SignerIdentity).filter_by(email=admin).first()
@@ -2090,12 +2120,24 @@ async def screen_document(
                 raise HTTPException(status_code=403, detail="Not your screening session.")
             if sess.status != "open":
                 raise HTTPException(status_code=409, detail=f"Session is not open (status={sess.status}).")
-        report = run_screening(
-            db, data, file.filename or "upload",
+            if nat and not sess.nationality:
+                sess.nationality = nat
+            if purpose_txt and not sess.purpose:
+                sess.purpose = purpose_txt
+        # CPU-heavy screening runs OFF the event loop so concurrent requests
+        # (queue polling, health checks, other desks) stay responsive.
+        report = await run_in_threadpool(
+            run_screening, db, data, file.filename or "upload",
             (doc_type or "other").strip(), (checkpoint or "").strip(),
             declared_map, screener=admin, live_frame=live_bytes,
             session_id=session_id.strip() or None,
+            nationality=nat, purpose=purpose_txt,
         )
+        report["created_at_ist"] = to_ist(report.get("created_at"))
+        guide = flow_for(checkpoint=(checkpoint or "").strip(),
+                         doc_type=(doc_type or "other").strip(),
+                         nationality=nat or "UNKNOWN")
+        report["guide"] = guide
         return report
 
 @app.get("/api/screen/queue")
@@ -2174,8 +2216,14 @@ def _session_pub(s, doc_count=None):
         "checkpoint": s.checkpoint or "",
         "screener": s.screener,
         "created_at": s.created_at,
+        "created_at_ist": to_ist(s.created_at),
         "updated_at": s.updated_at,
+        "updated_at_ist": to_ist(s.updated_at),
         "closed_at": s.closed_at,
+        "closed_at_ist": to_ist(s.closed_at),
+        "nationality": getattr(s, "nationality", None),
+        "purpose": getattr(s, "purpose", None),
+        "mode": getattr(s, "mode", None),
         "comparison": _safe_json(s.comparison),
         "note": s.note or "",
         "adjudicator": s.adjudicator,
@@ -2200,18 +2248,24 @@ def _get_session_owned(db, session_id, admin, require_open=False):
     return s
 
 
-def _session_docs(db, session_id):
+def _session_docs(db, session_id, include_removed=False):
     """(docs, rows): documents screened into the session, oldest first. Each
-    doc carries its masked fields + per-field digests for cross-comparison."""
-    rows = (db.query(ScreeningReport)
-            .filter_by(session_id=session_id)
-            .order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc())
-            .all())
+    doc carries its masked fields + per-field digests for cross-comparison.
+    Soft-removed docs are excluded from comparison/close by default (their
+    audit rows + ledger block hashes are preserved; only the session linkage
+    is dropped) — pass include_removed=True to surface them (adjudication)."""
+    q = (db.query(ScreeningReport)
+         .filter_by(session_id=session_id)
+         .order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc()))
+    if not include_removed:
+        q = q.filter(ScreeningReport.removed_at.is_(None))
+    rows = q.all()
     docs = []
     for r in rows:
         base = _screen_row(r)
         base["field_hashes"] = _safe_json(getattr(r, "field_hashes", None)) or {}
         base["masked"] = _safe_json(r.extracted_fields) or {}
+        base["removed_at"] = getattr(r, "removed_at", None)
         docs.append(base)
     return docs, rows
 
@@ -2272,21 +2326,34 @@ def _settle_session(db, s, rows, comparison, decision, adjudicator=None, note=""
 @app.post("/api/sessions")
 @limiter.limit("60/minute")
 def create_session(request: Request, checkpoint: str = Form(""),
+                   nationality: str = Form(""), purpose: str = Form(""),
+                   mode: str = Form(""),
                    admin: str = Depends(get_current_admin_or_evaluator)):
-    """Open a border session for the person now at the desk."""
+    """Open a border session for the person now at the desk.
+
+    Records the traveller's nationality + purpose (guide context only — never
+    stored raw beyond an ISO code), picks the checkpoint cluster, and returns
+    the guided officer/traveller protocol for the first capture.
+    """
     with get_db() as db:
         now = now_utc()
+        nat = (nationality or "").strip().upper()[:2] or None
         s = ScreeningSession(
             id=uuid.uuid4().hex[:16],
             status="open", verdict="PENDING", risk_score=0,
             checkpoint=(checkpoint or "").strip(), screener=admin,
             comparison=json.dumps(build_comparison([])),
             note="", created_at=now, updated_at=now,
+            nationality=nat,
+            purpose=(purpose or "").strip()[:120] or None,
+            mode=(mode or "").strip().lower() or None,
         )
         db.add(s)
         db.commit()
         out = _session_pub(s, 0)
         out["comparison"] = build_comparison([])
+        out["guide"] = flow_for(checkpoint=(checkpoint or "").strip(),
+                                nationality=nat or "UNKNOWN")
         return out
 
 
@@ -2413,6 +2480,149 @@ def adjudicate_session(session_id: str, request: Request,
         pub["documents"] = docs
         pub["comparison"] = comparison
         return pub
+
+
+@app.post("/api/sessions/{session_id}/documents/{report_id}/remove")
+@limiter.limit("60/minute")
+def remove_session_document(session_id: str, report_id: str, request: Request,
+                            admin: str = Depends(get_current_admin_or_evaluator)):
+    """Soft-remove a document from an open session.
+
+    The ScreeningReport audit row (and its hash-chain block) is NEVER deleted —
+    immutability of the ledger is preserved. Instead `removed_at`/`removed_by`
+    are stamped so the document drops out of cross-document comparison, session
+    totals, and the signed session block. Supervisors see removed docs in the
+    session detail (include_removed) for full auditability.
+    """
+    with get_db() as db:
+        s = _get_session_owned(db, session_id, admin, require_open=True)
+        r = db.query(ScreeningReport).filter_by(id=report_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Screening report not found.")
+        if r.session_id != session_id:
+            raise HTTPException(status_code=400, detail="Document does not belong to this session.")
+        if getattr(r, "removed_at", None):
+            return {"ok": True, "already_removed": True, "report_id": report_id}
+        r.removed_at = now_utc()
+        r.removed_by = admin
+        r.session_id = None            # drop session linkage (ledger chain per-row stays)
+        s.updated_at = now_utc()
+        db.commit()
+        return {"ok": True, "already_removed": False, "report_id": report_id,
+                "removed_at": r.removed_at, "removed_at_ist": to_ist(r.removed_at),
+                "removed_by": admin}
+
+
+@app.post("/api/sessions/{session_id}/documents/{report_id}/restore")
+@limiter.limit("60/minute")
+def restore_session_document(session_id: str, report_id: str, request: Request,
+                             admin: str = Depends(get_current_admin_or_evaluator)):
+    """Undo a soft-remove while the session is still open (re-link + clear the
+    removal stamps). Ledger integrity is unaffected: the removed doc was not
+    part of any signed block yet."""
+    with get_db() as db:
+        s = _get_session_owned(db, session_id, admin, require_open=True)
+        r = db.query(ScreeningReport).filter_by(id=report_id).first()
+        if not r:
+            raise HTTPException(status_code=404, detail="Screening report not found.")
+        r.removed_at = None
+        r.removed_by = None
+        r.session_id = session_id
+        s.updated_at = now_utc()
+        db.commit()
+        return {"ok": True, "restored": True, "report_id": report_id}
+
+
+@app.get("/api/checkpoints")
+@limiter.limit("120/minute")
+def catalog_endpoint(request: Request, admin: str = Depends(get_current_admin_or_evaluator)):
+    """Checkpoint clusters (every Indian border post SSB screens at), the
+    identity/travel document catalog, and supported nationalities — powers the
+    guided-flow desk UI."""
+    return {
+        "checkpoints": checkpoint_catalog(),
+        "documents": document_catalog(),
+        "nationalities": nationality_catalog(),
+    }
+
+
+@app.get("/api/guide")
+@limiter.limit("120/minute")
+def guide_endpoint(request: Request, checkpoint: str = "", doc_type: str = "other",
+                   nationality: str = "UNKNOWN",
+                   admin: str = Depends(get_current_admin_or_evaluator)):
+    """Guided officer + traveller protocol for one checkpoint/doc/nationality."""
+    return flow_for(checkpoint=checkpoint.strip(),
+                    doc_type=(doc_type or "other").strip(),
+                    nationality=(nationality or "UNKNOWN").strip().upper()[:2] or "UNKNOWN")
+
+
+@app.get("/api/stats/overview")
+@limiter.limit("60/minute")
+def stats_overview(request: Request, admin: str = Depends(get_current_admin_or_evaluator)):
+    """Border-wide screening statistics (privacy-preserving: only masked rows)."""
+    with get_db() as db:
+        return {
+            "reports": report_stats(db),
+            "sessions": session_stats(db),
+            "throughput": throughput(db, minutes=60),
+        }
+
+
+@app.post("/api/extract")
+@limiter.limit("60/minute")
+async def extract_live_image(
+    request: Request,
+    file: UploadFile = Form(...),
+    doc_type: str = Form("other"),
+    live_frame: UploadFile = Form(None),
+    admin: str = Depends(get_current_admin_or_evaluator),
+):
+    """Extract structured fields from a LIVE image (webcam capture or upload)
+    WITHOUT persisting anything (zero-storage: fields returned in-memory).
+
+    This is the "extract data from a live image" path: the desk can photograph
+    a document with the webcam and immediately see the machine-read fields +
+    an OCR/MRZ status, before deciding to run a full screening.
+    """
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (8 MB cap).")
+    ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
+    if ext not in _SYNC_SCREENED_EXTS:
+        raise HTTPException(status_code=415, detail="Send a jpg/png/webp/bmp image.")
+    frame_bytes = await live_frame.read() if live_frame is not None else None
+    
+    # Auto-classify document type with local ONNX classifier
+    from doctype_cls import classify_document
+    classified = await run_in_threadpool(classify_document, data)
+    detected_type = classified.get("doc_type") if classified else None
+    detected_conf = classified.get("confidence", 0) if classified else 0
+    effective_doc_type = (doc_type or "other").strip()
+    if effective_doc_type in ("", "other", "unknown") and detected_type and detected_conf >= 0.6:
+        effective_doc_type = detected_type
+
+    from extraction import extract_document
+    res = await run_in_threadpool(
+        extract_document, data, file.filename or "live.jpg",
+        effective_doc_type, None,
+    )
+    fields = res.get("fields", {})
+    return {
+        "ok": True,
+        "medium": res.get("medium"),
+        "fields": fields,
+        "masked_fields": {k: (v[-4:] if isinstance(v, str) and len(v) > 4 else v)
+                          for k, v in fields.items()},
+        "ocr": res.get("ocr"),
+        "mrz": res.get("mrz"),
+        "doc_type": effective_doc_type,
+        "detected_doc_type": detected_type,
+        "detected_confidence": detected_conf,
+        "detected_scores": classified.get("scores") if classified else {},
+        "has_face_frame": frame_bytes is not None,
+        "guidance": DOCUMENT_CATALOG.get(effective_doc_type) or {},
+    }
 
 
 @app.get("/api/sessions/ledger/blocks")

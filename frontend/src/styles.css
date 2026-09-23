@@ -1694,8 +1694,312 @@ textarea::placeholder {
 }
 
 /* ---------------------------------------------------------------------------
+   11b. Sub-Tables, Protocol HUD, Live Extraction & Border Analytics
+   --------------------------------------------------------------------------- */
+.subtable-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.subtable-toggle:hover {
+  background: var(--panel-3);
+  border-color: var(--line-2);
+  color: var(--ink);
+}
+.subtable-toggle--active {
+  background: var(--seal-soft);
+  border-color: var(--seal-edge);
+  color: var(--seal);
+}
+
+.subtable-container {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: fadeIn 0.18s ease-out;
+}
+
+.subtable-nav {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  overflow-x: auto;
+}
+.subtable-nav__btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+.subtable-nav__btn:hover {
+  color: var(--ink);
+  background: var(--panel-2);
+}
+.subtable-nav__btn--active {
+  color: var(--seal);
+  background: var(--seal-soft);
+}
+
+.subtable-pane {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  overflow-x: auto;
+}
+
+.subtable-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.subtable-grid__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.subtable-grid__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.subtable-grid__val {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+/* Protocol guidance HUD --------------------------------------------------- */
+.protocol-hud {
+  background: linear-gradient(135deg, var(--panel) 0%, var(--panel-2) 100%);
+  border: 1px solid var(--line-2);
+  border-left: 4px solid var(--seal);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.protocol-hud__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.protocol-hud__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.protocol-hud__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 768px) {
+  .protocol-hud__grid {
+    grid-template-columns: 1fr;
+  }
+}
+.protocol-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.protocol-col__heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.protocol-step-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.protocol-step-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--seal-soft);
+  color: var(--seal);
+  font-weight: 700;
+  font-size: 10.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.protocol-brief-box {
+  background: var(--panel);
+  border: 1px dashed var(--line-2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+/* Live extraction preview in webcam/intake -------------------------------- */
+.extract-preview {
+  background: var(--panel);
+  border: 1px solid var(--seal-edge);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.extract-preview__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.extract-preview__badge {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--ok-soft);
+  color: var(--ok);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Border analytics stats overview ribbon ---------------------------------- */
+.stats-ribbon {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.stats-ribbon__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.stats-ribbon__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+.stats-kpi-card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stats-kpi-card__val {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+.stats-kpi-card__lbl {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.stats-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 48px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.stats-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  justify-content: flex-end;
+}
+.stats-bar-fill {
+  width: 100%;
+  background: var(--seal);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+  transition: height 0.3s ease;
+}
+.stats-bar-hr {
+  font-size: 9px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* Soft-removed audit drawer ---------------------------------------------- */
+.removed-drawer {
+  background: var(--bad-soft);
+  border: 1px dashed var(--bad-line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 14px;
+}
+.removed-drawer__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bad);
+  margin-bottom: 8px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
    12. Responsive
    --------------------------------------------------------------------------- */
+
 @media (max-width: 920px) {
   .ledger-head {
     grid-template-columns: 1fr 1fr;
