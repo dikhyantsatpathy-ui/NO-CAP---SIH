@@ -2741,10 +2741,57 @@ textarea::placeholder {
 }
 
 /* ---------------------------------------------------------------------------
-   Ashoka Chakra Watermark (Sovereign Seal Background) - Hidden to preserve clean white
+   Ashoka Chakra Watermark (Sovereign Seal Background)
    --------------------------------------------------------------------------- */
 .ashoka-watermark {
-  display: none !important;
+  position: fixed;
+  right: -50px;
+  bottom: -50px;
+  width: 460px;
+  height: 460px;
+  max-width: 48vw;
+  max-height: 48vw;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 0;
+  color: #0b2240;
+  opacity: 0.048;
+  overflow: hidden;
+  transition: opacity 0.3s ease;
+}
+
+[data-theme="dark"] .ashoka-watermark {
+  opacity: 0.055;
+  color: #0b2240;
+}
+
+.ashoka-watermark__svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  animation: ashokaSpin 220s linear infinite;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+}
+
+@keyframes ashokaSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .ashoka-watermark {
+    right: -30px;
+    bottom: -30px;
+    width: 260px;
+    height: 260px;
+    opacity: 0.035;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -2875,7 +2922,7 @@ textarea::placeholder {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: #ffffff;
   position: relative;
   z-index: 1;
 }
@@ -2891,14 +2938,14 @@ textarea::placeholder {
 }
 
 .gov-super-header {
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  background: #061528;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   padding: 7px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 11.5px;
-  color: var(--ink-soft);
+  color: #94a3b8;
   font-weight: 600;
   letter-spacing: 0.02em;
   position: relative;
@@ -2912,7 +2959,7 @@ textarea::placeholder {
 }
 
 .gov-super-header__pipe {
-  color: var(--line-2);
+  color: rgba(255, 255, 255, 0.2);
 }
 
 .gov-super-header__right {
@@ -2922,16 +2969,17 @@ textarea::placeholder {
 }
 
 .gov-super-header__link {
-  color: var(--seal);
+  color: #93c5fd;
   text-decoration: none;
   font-weight: 600;
 }
 .gov-super-header__link:hover {
   text-decoration: underline;
+  color: #ffffff;
 }
 
 .gov-super-header__badge {
-  background: #0b2240;
+  background: #1e3a5f;
   color: #ffffff;
   padding: 3px 9px;
   border-radius: 4px;
@@ -2939,18 +2987,20 @@ textarea::placeholder {
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .gov-portal-header {
-  background: var(--panel);
-  padding: 16px 32px;
-  border-bottom: 3px solid #d97706;
+  background: linear-gradient(135deg, #0b2240 0%, #0d2a52 100%);
+  padding: 18px 32px;
+  border-bottom: 3.5px solid #d97706;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 18px;
   position: relative;
   z-index: 20;
+  box-shadow: 0 4px 12px rgba(11, 34, 64, 0.15);
 }
 
 .gov-portal-header__brand {
@@ -2960,62 +3010,64 @@ textarea::placeholder {
 }
 
 .gov-portal-header__emblem {
-  height: 56px;
+  height: 58px;
   width: auto;
   object-fit: contain;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.08));
+  filter: brightness(0) invert(1) drop-shadow(0 2px 6px rgba(0,0,0,0.3));
 }
 
 .gov-portal-header__sub {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: #93c5fd;
   text-transform: uppercase;
   margin-bottom: 2px;
 }
 
 .gov-portal-header__title {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: -0.01em;
-  color: #0b2240;
+  color: #ffffff !important;
   margin: 0;
   line-height: 1.2;
 }
 
 [data-theme="dark"] .gov-portal-header__title {
-  color: #0b2240;
+  color: #ffffff !important;
 }
 
 .gov-portal-header__desc {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  margin: 2px 0 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #cbd5e1;
+  margin: 3px 0 0;
 }
 
 .officer-card {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: var(--bg);
-  border: 1px solid var(--line-2);
-  padding: 6px 14px;
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 8px 16px;
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
 }
 
 .officer-card__avatar {
-  background: #0b2240;
-  color: #ffffff;
-  font-weight: 700;
-  width: 36px;
-  height: 36px;
+  background: #ffffff;
+  color: #0b2240;
+  font-weight: 800;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: 6px;
+  font-size: 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
 }
 
 .officer-card__info {
@@ -3025,17 +3077,17 @@ textarea::placeholder {
 
 .officer-card__name {
   font-weight: 700;
-  color: var(--ink);
-  font-size: 13px;
+  color: #ffffff;
+  font-size: 13.5px;
 }
 
 .officer-card__role {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 11.5px;
+  color: #cbd5e1;
 }
 
 .command-strip {
-  background: #0b2240;
+  background: #061528;
   color: #ffffff;
   padding: 9px 32px;
   font-size: 11.5px;
@@ -3044,7 +3096,7 @@ textarea::placeholder {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #13335e;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   gap: 12px;
   flex-wrap: wrap;
   position: relative;
@@ -3105,9 +3157,9 @@ textarea::placeholder {
 }
 
 .gov-nav {
-  background: var(--panel);
+  background: #ffffff;
   border-bottom: 1px solid var(--line);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.04);
   padding: 0 32px;
   display: flex;
   gap: 8px;
@@ -3136,7 +3188,7 @@ textarea::placeholder {
 
 .gov-nav__tab:hover {
   color: #0b2240;
-  background: var(--bg);
+  background: #f8fafc;
 }
 
 .gov-nav__tab--active {
@@ -3153,8 +3205,8 @@ textarea::placeholder {
 
 .gov-footer {
   margin-top: auto;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
+  background: #061528;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding: 14px 32px;
   display: flex;
   justify-content: center;
@@ -3162,7 +3214,7 @@ textarea::placeholder {
   gap: 20px;
   font-size: 11.5px;
   font-weight: 700;
-  color: var(--muted);
+  color: #94a3b8;
   text-transform: uppercase;
   flex-wrap: wrap;
   position: relative;
@@ -3170,5 +3222,5 @@ textarea::placeholder {
 }
 
 .gov-footer__pipe {
-  color: var(--line-2);
+  color: rgba(255, 255, 255, 0.2);
 }

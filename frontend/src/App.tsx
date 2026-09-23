@@ -241,6 +241,7 @@ export function App() {
 
   return (
     <div className="console-layout">
+      <AshokaChakraWatermark />
       <SuperHeader />
       <PortalHeader />
       <CommandStatusStrip />
