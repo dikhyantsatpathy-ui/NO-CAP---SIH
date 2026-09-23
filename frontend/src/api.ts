@@ -32,9 +32,16 @@ export interface Me {
 
 export type ApiResult<T> = { ok: true; data: T; response: Response } | { ok: false; error: string };
 
-async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
+async function request<T>(url: string, init?: RequestInit, timeoutMs = 12000): Promise<ApiResult<T>> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { ...init, credentials: "include" });
+    const response = await fetch(url, {
+      ...init,
+      credentials: "include",
+      signal: init?.signal || controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (response.status === 429) throw new Error("Rate limit exceeded. Please wait.");
 
     let data: unknown = null;
@@ -46,6 +53,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>
     }
     return { ok: true, data: data as T, response };
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ok: false, error: "Request timed out" };
+    }
     return { ok: false, error: err instanceof Error ? err.message : "Network error" };
   }
 }
@@ -62,8 +73,8 @@ function form(fields: Record<string, string | Blob | File | undefined | null>): 
 // Auth endpoints
 // ----------------------------------------------------------------------------
 
-export function getMe() {
-  return request<Me>("/api/admin/me");
+export function getMe(timeoutMs = 3500) {
+  return request<Me>("/api/admin/me", undefined, timeoutMs);
 }
 
 export function googleLogin(credential: string) {
