@@ -265,3 +265,24 @@ def test_doctype_cls_direct():
     assert "doc_type" in res
     assert "confidence" in res
     assert "scores" in res
+
+
+def test_screen_auto_heals_missing_session(client):
+    img = _synth_image()
+    # Provide a session ID that doesn't exist in the database yet
+    ghost_session_id = "ghost_session_99"
+    r = client.post("/api/screen", files={
+        "file": ("pan_sample.jpg", img, "image/jpeg"),
+    }, data={
+        "doc_type": "pan",
+        "checkpoint": "Raxaul",
+        "session_id": ghost_session_id,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] == ghost_session_id
+    with main.SessionLocal() as db:
+        sess = db.query(ScreeningSession).filter_by(id=ghost_session_id).first()
+        assert sess is not None
+        assert sess.status == "open"
+        assert sess.label.startswith("Session ")

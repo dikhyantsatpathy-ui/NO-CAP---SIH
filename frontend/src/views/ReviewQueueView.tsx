@@ -410,7 +410,8 @@ export function ReviewQueueView() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // QoL Controls: Search, filters, sort, expand-all
+  // QoL Controls: View mode (All / Review / Passed), Search, filters, sort, expand-all
+  const [viewSection, setViewSection] = useState<"ALL" | "REVIEW" | "PASSED">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCheckpoint, setFilterCheckpoint] = useState("ALL");
   const [filterRisk, setFilterRisk] = useState("ALL");
@@ -505,15 +506,44 @@ export function ReviewQueueView() {
 
   return (
     <div className="view">
-      <section className="panel">
-        <div className="panel__row">
-          <div>
-            <h2 className="panel__title">Sessions sent for review</h2>
-            <p className="panel__body">
-              Sessions the desk could not clear are waiting for a supervisor. Expand one to see what
-              didn't match and the documents behind it.
-            </p>
-          </div>
+      {/* Section Mode Selector: All / Review Queue / Passed Records */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className={`btn ${viewSection === "ALL" ? "btn--primary" : ""}`}
+          onClick={() => setViewSection("ALL")}
+          style={{ fontWeight: viewSection === "ALL" ? 700 : 500 }}
+        >
+          All Records ({flagged.length + settled.length})
+        </button>
+        <button
+          type="button"
+          className={`btn ${viewSection === "REVIEW" ? "btn--primary" : ""}`}
+          onClick={() => setViewSection("REVIEW")}
+          style={{ fontWeight: viewSection === "REVIEW" ? 700 : 500 }}
+        >
+          ⚠️ Awaiting Review ({flagged.length})
+        </button>
+        <button
+          type="button"
+          className={`btn ${viewSection === "PASSED" ? "btn--primary" : ""}`}
+          onClick={() => setViewSection("PASSED")}
+          style={{ fontWeight: viewSection === "PASSED" ? 700 : 500 }}
+        >
+          ✅ Passed & Signed ({settled.length})
+        </button>
+      </div>
+
+      {(viewSection === "ALL" || viewSection === "REVIEW") && (
+        <section className="panel">
+          <div className="panel__row">
+            <div>
+              <h2 className="panel__title">Sessions sent for review</h2>
+              <p className="panel__body">
+                Sessions the desk could not clear are waiting for a supervisor. Expand one to see what
+                didn't match and the documents behind it.
+              </p>
+            </div>
           <button type="button" className="btn" onClick={() => void load()}>
             Refresh
           </button>
@@ -636,7 +666,9 @@ export function ReviewQueueView() {
           </div>
         )}
       </section>
+      )}
 
+      {(viewSection === "ALL" || viewSection === "PASSED") && (
       <section className="panel">
         <h2 className="panel__title">Signed sessions — the record</h2>
         <p className="panel__body" style={{ marginBottom: 12 }}>
@@ -671,6 +703,7 @@ export function ReviewQueueView() {
           </table>
         )}
       </section>
+      )}
     </div>
   );
 }

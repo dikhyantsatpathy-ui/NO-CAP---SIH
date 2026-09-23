@@ -548,6 +548,34 @@ function WebcamCapture({
   const [extracting, setExtracting] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const { toast } = useToast();
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      try {
+        streamRef.current.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+      } catch {}
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      try {
+        videoRef.current.srcObject = null;
+      } catch {}
+    }
+  }, []);
+
+  const handleClose = () => {
+    stopCamera();
+    if (previewBlob) {
+      URL.revokeObjectURL(previewBlob.url);
+      setPreviewBlob(null);
+    }
+    onCancel();
+  };
 
   // Enumerate cameras
   useEffect(() => {
@@ -562,21 +590,34 @@ function WebcamCapture({
 
   // Video stream
   useEffect(() => {
-    let stream: MediaStream | null = null;
+    let isCurrent = true;
     const constraints: MediaStreamConstraints = {
       video: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : { facingMode: "environment" },
     };
     navigator.mediaDevices?.getUserMedia(constraints).then((s) => {
-      stream = s;
+      if (!isCurrent) {
+        s.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+        return;
+      }
+      if (streamRef.current && streamRef.current !== s) {
+        streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+      }
+      streamRef.current = s;
       setStreamError(null);
-      if (videoRef.current) videoRef.current.srcObject = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        videoRef.current.play().catch(() => {});
+      }
     }).catch((err) => {
+      if (!isCurrent) return;
       setStreamError(err instanceof Error ? err.message : "Camera access denied or unavailable");
     });
+
     return () => {
-      stream?.getTracks().forEach((t) => t.stop());
+      isCurrent = false;
+      stopCamera();
     };
-  }, [selectedDeviceId]);
+  }, [selectedDeviceId, stopCamera]);
 
   const snapFrame = () => {
     const video = videoRef.current;
@@ -611,8 +652,11 @@ function WebcamCapture({
 
   const acceptCapture = () => {
     if (previewBlob) {
-      onCapture(previewBlob.file);
+      const fileToUse = previewBlob.file;
       URL.revokeObjectURL(previewBlob.url);
+      setPreviewBlob(null);
+      stopCamera();
+      onCapture(fileToUse);
     }
   };
 
@@ -620,6 +664,12 @@ function WebcamCapture({
     if (previewBlob) URL.revokeObjectURL(previewBlob.url);
     setPreviewBlob(null);
     setLiveExtract(null);
+    if (videoRef.current) {
+      if (!videoRef.current.srcObject && streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+      }
+      videoRef.current.play().catch(() => {});
+    }
   };
 
   return (
@@ -627,7 +677,7 @@ function WebcamCapture({
       <div className="modal" style={{ maxWidth: 640 }}>
         <header className="modal__head">
           <span className="modal__title">Webcam capture</span>
-          <button type="button" className="btn btn--small" onClick={onCancel}>
+          <button type="button" className="btn btn--small" onClick={handleClose}>
             Close
           </button>
         </header>
@@ -655,81 +705,94 @@ function WebcamCapture({
             <div className="banner banner--bad">{streamError}</div>
           )}
 
-          {!previewBlob ? (
-            <div>
-              <video ref={videoRef} autoPlay playsInline muted className="webcam" />
+          <div style={{ position: "relative" }}>
+            {/* Live Camera Feed: always kept mounted so retake has zero lag and video element is never destroyed */}
+            <div style={{ display: previewBlob ? "none" : "block" }}>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="webcam"
+                style={{ width: "100%", maxHeight: 360, objectFit: "cover", borderRadius: 8, background: "#000" }}
+              />
               <canvas ref={canvasRef} style={{ display: "none" }} />
               <p className="hint" style={{ marginTop: 6 }}>
                 Hold the document flat and steady, with the text and photo facing the camera.
               </p>
             </div>
-          ) : (
-            <div>
-              <img
-                src={previewBlob.url}
-                alt="Captured document preview"
-                style={{ width: "100%", maxHeight: 260, objectFit: "contain", borderRadius: 8, border: "1px solid var(--line)" }}
-              />
-              {/* Live Extraction Preview Panel */}
-              {liveExtract && (
-                <div className="extract-preview" style={{ marginTop: 10 }}>
-                  <div className="extract-preview__head">
-                    <span className="k">What the machine reads</span>
-                    <span className="extract-preview__badge">Nothing stored</span>
-                  </div>
-                  <div className="subtable-grid">
-                    <div className="subtable-grid__cell">
-                      <span className="subtable-grid__label">Document type</span>
-                      <span className="subtable-grid__val">{liveExtract.doc_type}</span>
+
+            {/* Captured Still Preview */}
+            {previewBlob && (
+              <div>
+                <img
+                  src={previewBlob.url}
+                  alt="Captured document preview"
+                  style={{ width: "100%", maxHeight: 320, objectFit: "contain", borderRadius: 8, border: "1px solid var(--line)" }}
+                />
+                {/* Live Extraction Preview Panel */}
+                {liveExtract && (
+                  <div className="extract-preview" style={{ marginTop: 10 }}>
+                    <div className="extract-preview__head">
+                      <span className="k">What the machine reads</span>
+                      <span className="extract-preview__badge">Nothing stored</span>
                     </div>
-                    {Object.entries(liveExtract.masked_fields || {}).map(([k, v]) => (
-                      <div key={k} className="subtable-grid__cell">
-                        <span className="subtable-grid__label">{k.replace(/_/g, " ")}</span>
-                        <span className="subtable-grid__val mono">{String(v)}</span>
+                    <div className="subtable-grid">
+                      <div className="subtable-grid__cell">
+                        <span className="subtable-grid__label">Document type</span>
+                        <span className="subtable-grid__val">{liveExtract.doc_type}</span>
                       </div>
-                    ))}
-                  </div>
-                  {liveExtract.mrz && (
-                    <div style={{ marginTop: 4, fontSize: 11 }} className="mono muted">
-                      Machine line: {liveExtract.mrz.valid ? "✓ checks out" : "no machine line found"}
+                      {Object.entries(liveExtract.masked_fields || {}).map(([k, v]) => (
+                        <div key={k} className="subtable-grid__cell">
+                          <span className="subtable-grid__label">{k.replace(/_/g, " ")}</span>
+                          <span className="subtable-grid__val mono">{String(v)}</span>
+                        </div>
+                      ))}
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                    {liveExtract.mrz && (
+                      <div style={{ marginTop: 4, fontSize: 11 }} className="mono muted">
+                        Machine line: {liveExtract.mrz.valid ? "✓ checks out" : "no machine line found"}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        <footer className="modal__foot">
-          {!previewBlob ? (
-            <>
+        <footer className="modal__foot" style={{ display: "flex", justifyContent: "space-between" }}>
+          <div>
+            <button type="button" className="btn" onClick={handleClose}>
+              Cancel
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {!previewBlob ? (
               <button type="button" className="btn btn--primary" onClick={snapFrame}>
-                Capture
+                Capture photo
               </button>
-              <button type="button" className="btn" onClick={onCancel}>
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              {!liveExtract && (
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={extracting}
-                  onClick={() => void runPreviewExtraction()}
-                >
-                  {extracting ? "Reading…" : "Preview what it reads"}
+            ) : (
+              <>
+                <button type="button" className="btn" onClick={retake}>
+                  Retake photo
                 </button>
-              )}
-              <button type="button" className="btn btn--primary" onClick={acceptCapture}>
-                Use this photo
-              </button>
-              <button type="button" className="btn" onClick={retake}>
-                Retake
-              </button>
-            </>
-          )}
+                {!liveExtract && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={extracting}
+                    onClick={() => void runPreviewExtraction()}
+                  >
+                    {extracting ? "Reading…" : "Preview what it reads"}
+                  </button>
+                )}
+                <button type="button" className="btn btn--primary" onClick={acceptCapture}>
+                  Use this photo
+                </button>
+              </>
+            )}
+          </div>
         </footer>
       </div>
     </div>
@@ -887,6 +950,7 @@ export function DeskView() {
       setModelHint(null);
       return true;
     }
+    setActive(null);
     toast(`Failed to load session ${id}: ${res.error}`, "error");
     return false;
   }, [toast]);
@@ -1038,6 +1102,9 @@ export function DeskView() {
       await loadDetail(active.id);
     } else {
       toast(res.error, "error");
+      if (res.error?.toLowerCase().includes("session not found")) {
+        await refreshOpen();
+      }
     }
   };
 

@@ -2202,60 +2202,91 @@ async def screen_document(
     purpose: str = Form(""),           # purpose of travel
     admin: str = Depends(get_current_admin_or_evaluator),
 ):
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
-    ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
-    if ext not in _SYNC_SCREENED_EXTS:
-        raise HTTPException(status_code=415, detail="Unsupported type — send a PDF or a jpg/png/webp/bmp image.")
-    declared_map = {}
-    if declared.strip():
-        try:
-            declared_map = json.loads(declared)
-            if not isinstance(declared_map, dict):
+    try:
+        data = await file.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
+        ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
+        if ext not in _SYNC_SCREENED_EXTS:
+            raise HTTPException(status_code=415, detail="Unsupported type — send a PDF or a jpg/png/webp/bmp image.")
+        declared_map = {}
+        if declared.strip():
+            try:
+                declared_map = json.loads(declared)
+                if not isinstance(declared_map, dict):
+                    declared_map = {}
+            except Exception:
                 declared_map = {}
+        live_bytes = await live_frame.read() if live_frame is not None else None
+        if live_bytes and len(live_bytes) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Live frame too large (8 MB cap).")
+        nat = (nationality or "").strip().upper()[:2] or None
+        purpose_txt = (purpose or "").strip()[:120] or None
+        with get_db() as db:
+            if admin != "evaluator@ssb.gov.in" and not is_super_admin(admin):
+                identity = db.query(SignerIdentity).filter_by(email=admin).first()
+                if not identity:
+                    raise HTTPException(403, "ACCESS DENIED.")
+                if not (identity.institution or "").strip() or not (identity.designation or "").strip():
+                    raise HTTPException(403, "Role pending: a super admin must approve your post & institution before screening.")
+            session_owner = session_id.strip() or None
+            if session_owner:
+                sess = db.query(ScreeningSession).filter_by(id=session_owner).first()
+                if not sess:
+                    # Auto-heal orphaned or client-cached session: auto-provision open session
+                    now = now_utc()
+                    sess = ScreeningSession(
+                        id=session_owner,
+                        status="open",
+                        verdict="PENDING",
+                        risk_score=0,
+                        checkpoint=(checkpoint or "").strip() or "Raxaul",
+                        screener=admin,
+                        comparison=json.dumps(build_comparison([])),
+                        note="",
+                        created_at=now,
+                        updated_at=now,
+                        nationality=nat,
+                        purpose=purpose_txt,
+                        label=_next_session_label(db, now),
+                    )
+                    db.add(sess)
+                    db.commit()
+                    db.refresh(sess)
+                elif not is_super_admin(admin) and sess.screener != admin and sess.status != "open":
+                    raise HTTPException(status_code=403, detail="Not your screening session.")
+                elif sess.status != "open":
+                    raise HTTPException(status_code=409, detail=f"Session is not open (status={sess.status}).")
+                else:
+                    if nat and not sess.nationality:
+                        sess.nationality = nat
+                    if purpose_txt and not sess.purpose:
+                        sess.purpose = purpose_txt
+            # CPU-heavy screening runs OFF the event loop so concurrent requests
+            # (queue polling, health checks, other desks) stay responsive.
+            report = await run_in_threadpool(
+                run_screening, db, data, file.filename or "upload",
+                (doc_type or "other").strip(), (checkpoint or "").strip(),
+                declared_map, screener=admin, live_frame=live_bytes,
+                session_id=session_id.strip() or None,
+                nationality=nat, purpose=purpose_txt,
+            )
+            report["created_at_ist"] = to_ist(report.get("created_at"))
+            guide = flow_for(checkpoint=(checkpoint or "").strip(),
+                             doc_type=(doc_type or "other").strip(),
+                             nationality=nat or "UNKNOWN")
+            report["guide"] = guide
+            return report
+    finally:
+        try:
+            await file.close()
         except Exception:
-            declared_map = {}
-    live_bytes = await live_frame.read() if live_frame is not None else None
-    if live_bytes and len(live_bytes) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Live frame too large (8 MB cap).")
-    nat = (nationality or "").strip().upper()[:2] or None
-    purpose_txt = (purpose or "").strip()[:120] or None
-    with get_db() as db:
-        if admin != "evaluator@ssb.gov.in" and not is_super_admin(admin):
-            identity = db.query(SignerIdentity).filter_by(email=admin).first()
-            if not identity:
-                raise HTTPException(403, "ACCESS DENIED.")
-            if not (identity.institution or "").strip() or not (identity.designation or "").strip():
-                raise HTTPException(403, "Role pending: a super admin must approve your post & institution before screening.")
-        session_owner = session_id.strip() or None
-        if session_owner:
-            sess = db.query(ScreeningSession).filter_by(id=session_owner).first()
-            if not sess:
-                raise HTTPException(status_code=404, detail="Screening session not found.")
-            if not is_super_admin(admin) and sess.screener != admin:
-                raise HTTPException(status_code=403, detail="Not your screening session.")
-            if sess.status != "open":
-                raise HTTPException(status_code=409, detail=f"Session is not open (status={sess.status}).")
-            if nat and not sess.nationality:
-                sess.nationality = nat
-            if purpose_txt and not sess.purpose:
-                sess.purpose = purpose_txt
-        # CPU-heavy screening runs OFF the event loop so concurrent requests
-        # (queue polling, health checks, other desks) stay responsive.
-        report = await run_in_threadpool(
-            run_screening, db, data, file.filename or "upload",
-            (doc_type or "other").strip(), (checkpoint or "").strip(),
-            declared_map, screener=admin, live_frame=live_bytes,
-            session_id=session_id.strip() or None,
-            nationality=nat, purpose=purpose_txt,
-        )
-        report["created_at_ist"] = to_ist(report.get("created_at"))
-        guide = flow_for(checkpoint=(checkpoint or "").strip(),
-                         doc_type=(doc_type or "other").strip(),
-                         nationality=nat or "UNKNOWN")
-        report["guide"] = guide
-        return report
+            pass
+        if live_frame is not None:
+            try:
+                await live_frame.close()
+            except Exception:
+                pass
 
 @app.get("/api/screen/queue")
 @limiter.limit("120/minute")
@@ -2702,44 +2733,55 @@ async def extract_live_image(
     a document with the webcam and immediately see the machine-read fields +
     an OCR/MRZ status, before deciding to run a full screening.
     """
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Image too large (8 MB cap).")
-    ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
-    if ext not in _SYNC_SCREENED_EXTS:
-        raise HTTPException(status_code=415, detail="Send a jpg/png/webp/bmp image.")
-    frame_bytes = await live_frame.read() if live_frame is not None else None
-    
-    # Auto-classify document type with local ONNX classifier
-    from doctype_cls import classify_document
-    classified = await run_in_threadpool(classify_document, data)
-    detected_type = classified.get("doc_type") if classified else None
-    detected_conf = classified.get("confidence", 0) if classified else 0
-    effective_doc_type = (doc_type or "other").strip()
-    if effective_doc_type in ("", "other", "unknown") and detected_type and detected_conf >= 0.6:
-        effective_doc_type = detected_type
+    try:
+        data = await file.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (8 MB cap).")
+        ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
+        if ext not in _SYNC_SCREENED_EXTS:
+            raise HTTPException(status_code=415, detail="Send a jpg/png/webp/bmp image.")
+        frame_bytes = await live_frame.read() if live_frame is not None else None
+        
+        # Auto-classify document type with local ONNX classifier
+        from doctype_cls import classify_document
+        classified = await run_in_threadpool(classify_document, data)
+        detected_type = classified.get("doc_type") if classified else None
+        detected_conf = classified.get("confidence", 0) if classified else 0
+        effective_doc_type = (doc_type or "other").strip()
+        if effective_doc_type in ("", "other", "unknown") and detected_type and detected_conf >= 0.6:
+            effective_doc_type = detected_type
 
-    from extraction import extract_document
-    res = await run_in_threadpool(
-        extract_document, data, file.filename or "live.jpg",
-        effective_doc_type, None,
-    )
-    fields = res.get("fields", {})
-    return {
-        "ok": True,
-        "medium": res.get("medium"),
-        "fields": fields,
-        "masked_fields": {k: (v[-4:] if isinstance(v, str) and len(v) > 4 else v)
-                          for k, v in fields.items()},
-        "ocr": res.get("ocr"),
-        "mrz": res.get("mrz"),
-        "doc_type": effective_doc_type,
-        "detected_doc_type": detected_type,
-        "detected_confidence": detected_conf,
-        "detected_scores": classified.get("scores") if classified else {},
-        "has_face_frame": frame_bytes is not None,
-        "guidance": DOCUMENT_CATALOG.get(effective_doc_type) or {},
-    }
+        from extraction import extract_document
+        res = await run_in_threadpool(
+            extract_document, data, file.filename or "live.jpg",
+            effective_doc_type, None,
+        )
+        fields = res.get("fields", {})
+        return {
+            "ok": True,
+            "medium": res.get("medium"),
+            "fields": fields,
+            "masked_fields": {k: (v[-4:] if isinstance(v, str) and len(v) > 4 else v)
+                              for k, v in fields.items()},
+            "ocr": res.get("ocr"),
+            "mrz": res.get("mrz"),
+            "doc_type": effective_doc_type,
+            "detected_doc_type": detected_type,
+            "detected_confidence": detected_conf,
+            "detected_scores": classified.get("scores") if classified else {},
+            "has_face_frame": frame_bytes is not None,
+            "guidance": DOCUMENT_CATALOG.get(effective_doc_type) or {},
+        }
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
+        if live_frame is not None:
+            try:
+                await live_frame.close()
+            except Exception:
+                pass
 
 
 @app.get("/api/sessions/ledger/blocks")
@@ -3618,20 +3660,26 @@ async def screen_aadhaar_fields(
 ):
     """Detect Aadhaar-card field bounding boxes using the trained 5-class YOLO model
     (classes: Aadhaar_No, DOB, Gender, Name, Photo)."""
-    data = await file.read()
-    if len(data) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
     try:
-        from yolo_roi import extract_aadhaar_fields
-        boxes = extract_aadhaar_fields(data)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Aadhaar field detection failed: {exc}")
-    return {
-        "ok": True,
-        "count": len(boxes),
-        "fields": boxes,
-        "model": "aadhaar_fields.onnx",
-    }
+        data = await file.read()
+        if len(data) > 8 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
+        try:
+            from yolo_roi import extract_aadhaar_fields
+            boxes = extract_aadhaar_fields(data)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Aadhaar field detection failed: {exc}")
+        return {
+            "ok": True,
+            "count": len(boxes),
+            "fields": boxes,
+            "model": "aadhaar_fields.onnx",
+        }
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
 
 
 @app.post("/api/screen/liveness")
@@ -3645,20 +3693,27 @@ async def verify_liveness(
 ):
     """Interactive challenge-response webcam liveness verification. Evaluates anti-virtual-camera
     injection, timestamp jitter, inter-frame physiological motion, and challenge satisfaction."""
-    raw_frames = []
-    for f in frames:
-        b = await f.read()
-        if b:
-            raw_frames.append(b)
-    meta = {}
-    if client_meta.strip():
-        try:
-            meta = json.loads(client_meta)
-        except Exception:
-            meta = {}
-    from forensics import verify_webcam_liveness
-    result = verify_webcam_liveness(raw_frames, challenge=challenge, client_meta=meta)
-    return result
+    try:
+        raw_frames = []
+        for f in frames:
+            b = await f.read()
+            if b:
+                raw_frames.append(b)
+        meta = {}
+        if client_meta.strip():
+            try:
+                meta = json.loads(client_meta)
+            except Exception:
+                meta = {}
+        from forensics import verify_webcam_liveness
+        result = verify_webcam_liveness(raw_frames, challenge=challenge, client_meta=meta)
+        return result
+    finally:
+        for f in frames:
+            try:
+                await f.close()
+            except Exception:
+                pass
 
 
 # ============================================================================
@@ -3736,50 +3791,57 @@ async def verify_digest(
     """Screening lookup: derive the SHA-256 of an uploaded sample / pasted text /
     caller-supplied digest and return the latest matching screening record
     (adjudication-aware verdict, reasons, masked fields — never raw bytes)."""
-    if file is not None and file.filename:
-        filename = file.filename
-    elif raw_text.strip():
-        filename = "text-excerpt.txt"
-    else:
-        filename = "digest-only"
-    digest = client_hash.strip().lower()
-    if not digest:
-        if raw_text.strip():
-            digest = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
-        elif file is not None:
-            data = await file.read()
-            if len(data) > 8 * 1024 * 1024:
-                raise HTTPException(status_code=413,
-                                    detail="File too large (8 MB cap) — hash it client-side and send the digest.")
-            digest = hashlib.sha256(data).hexdigest()
-    if len(digest) != 64 or not set(digest) <= set("0123456789abcdef"):
+    try:
+        if file is not None and file.filename:
+            filename = file.filename
+        elif raw_text.strip():
+            filename = "text-excerpt.txt"
+        else:
+            filename = "digest-only"
+        digest = client_hash.strip().lower()
+        if not digest:
+            if raw_text.strip():
+                digest = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+            elif file is not None:
+                data = await file.read()
+                if len(data) > 8 * 1024 * 1024:
+                    raise HTTPException(status_code=413,
+                                        detail="File too large (8 MB cap) — hash it client-side and send the digest.")
+                digest = hashlib.sha256(data).hexdigest()
+        if len(digest) != 64 or not set(digest) <= set("0123456789abcdef"):
+            return {
+                "verdict": "UNSIGNED",
+                "message": "A full 64-character hex SHA-256 digest is expected.",
+                "hash": digest,
+                "filename": filename,
+                "headline": "No valid digest supplied",
+                "guidance": "Drop the original file or paste its full SHA-256 hash.",
+                "reasons": [],
+                "screening": None,
+            }
+        with get_db() as db:
+            row = (db.query(ScreeningReport).filter_by(file_hash=digest)
+                   .order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc())
+                   .first())
+            if row:
+                return _screening_lookup(row)
         return {
             "verdict": "UNSIGNED",
-            "message": "A full 64-character hex SHA-256 digest is expected.",
+            "message": "No matching screening record for this digest.",
             "hash": digest,
             "filename": filename,
-            "headline": "No valid digest supplied",
-            "guidance": "Drop the original file or paste its full SHA-256 hash.",
+            "headline": "No screening record found",
+            "guidance": "This digest has not been screened at the border desk yet. Present the "
+                        "document at the nearest checkpoint for a screening run.",
             "reasons": [],
             "screening": None,
         }
-    with get_db() as db:
-        row = (db.query(ScreeningReport).filter_by(file_hash=digest)
-               .order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc())
-               .first())
-        if row:
-            return _screening_lookup(row)
-    return {
-        "verdict": "UNSIGNED",
-        "message": "No matching screening record for this digest.",
-        "hash": digest,
-        "filename": filename,
-        "headline": "No screening record found",
-        "guidance": "This digest has not been screened at the border desk yet. Present the "
-                    "document at the nearest checkpoint for a screening run.",
-        "reasons": [],
-        "screening": None,
-    }
+    finally:
+        if file is not None:
+            try:
+                await file.close()
+            except Exception:
+                pass
 
 
 def _optional_admin_email(request: Request):
