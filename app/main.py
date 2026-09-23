@@ -2318,6 +2318,7 @@ _SYNC_SCREENED_EXTS = ("pdf", "jpg", "jpeg", "png", "webp", "bmp")
 async def screen_document(
     request: Request,
     file: UploadFile = Form(...),
+    file_back: UploadFile = Form(None),   # optional back side (Passport Back / Aadhaar Back / DL Back)
     doc_type: str = Form("other"),
     checkpoint: str = Form(""),
     declared: str = Form(""),          # optional JSON map of officer-typed fields
@@ -2343,6 +2344,15 @@ async def screen_document(
                 ext = "pdf"
             else:
                 raise HTTPException(status_code=415, detail="Unsupported type — send a PDF or a jpg/png/webp/bmp image.")
+        
+        data_back = None
+        filename_back = None
+        if file_back is not None:
+            data_back = await file_back.read()
+            filename_back = file_back.filename or "back.jpg"
+            if len(data_back) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Back side document too large (8 MB cap).")
+
         declared_map = {}
         if declared.strip():
             try:
@@ -2404,6 +2414,7 @@ async def screen_document(
                 declared_map, screener=admin, live_frame=live_bytes,
                 session_id=session_id.strip() or None,
                 nationality=nat, purpose=purpose_txt,
+                data_back=data_back, filename_back=filename_back,
             )
             report["created_at_ist"] = to_ist(report.get("created_at"))
             guide = flow_for(checkpoint=(checkpoint or "").strip(),
@@ -2416,6 +2427,11 @@ async def screen_document(
             await file.close()
         except Exception:
             pass
+        if file_back is not None:
+            try:
+                await file_back.close()
+            except Exception:
+                pass
         if live_frame is not None:
             try:
                 await live_frame.close()

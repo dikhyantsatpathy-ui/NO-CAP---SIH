@@ -1050,6 +1050,11 @@ export function DeskView() {
   const [file, setFile] = useState<File | null>(null);
   const [fileKey, setFileKey] = useState(0);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [fileBack, setFileBack] = useState<File | null>(null);
+  const [fileKeyBack, setFileKeyBack] = useState(100);
+  const [thumbUrlBack, setThumbUrlBack] = useState<string | null>(null);
+  const [webcamTarget, setWebcamTarget] = useState<"front" | "back">("front");
+
   const [docType, setDocType] = useState<ScreenDocType>("passport");
   const [docNumber, setDocNumber] = useState("");
   const [declaredName, setDeclaredName] = useState("");
@@ -1066,6 +1071,15 @@ export function DeskView() {
     }
     setThumbUrl(null);
   }, [file]);
+
+  useEffect(() => {
+    if (fileBack && fileBack.type.startsWith("image/")) {
+      const url = URL.createObjectURL(fileBack);
+      setThumbUrlBack(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setThumbUrlBack(null);
+  }, [fileBack]);
 
   const [showWebcam, setShowWebcam] = useState(false);
   const [handover, setHandover] = useState<ShiftHandoverPacket | null>(null);
@@ -1145,7 +1159,9 @@ export function DeskView() {
       const detail = await getSession(res.data.id);
       if (detail.ok) setActive(detail.data);
       setFile(null);
+      setFileBack(null);
       setFileKey((k) => k + 1);
+      setFileKeyBack((k) => k + 1);
       setDocNumber("");
       setDeclaredName("");
       setDeclaredDob("");
@@ -1184,8 +1200,10 @@ export function DeskView() {
       setDeclaredDob(preset.declaredDob);
       const f = await generateSpecimenFile(preset);
       setFile(f);
+      setFileBack(null);
       setFileKey((k) => k + 1);
-      setModelHint(`${preset.title} loaded. Review, then SCREEN INTO SESSION.`);
+      setFileKeyBack((k) => k + 1);
+      setModelHint(`${preset.title} loaded. Review, then check document.`);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : "Failed to load specimen", "error");
     } finally {
@@ -1213,7 +1231,7 @@ export function DeskView() {
       return;
     }
     if (!file) {
-      toast("Attach an identity document.", "warn");
+      toast("Attach at least the front side of the identity document.", "warn");
       return;
     }
     setBusy(true);
@@ -1225,17 +1243,20 @@ export function DeskView() {
       Object.keys(decl).length ? decl : undefined,
       null,
       active.id,
+      fileBack,
     );
     setBusy(false);
     if (res.ok) {
       toast(
         res.data.verdict === "CLEAR"
-          ? `Document screened CLEAR (${res.data.risk_score}).`
-          : `Document screened ${res.data.verdict} (${res.data.risk_score}).`,
+          ? `Document screened CLEAR (Score: ${res.data.risk_score}).`
+          : `Document screened ${res.data.verdict} (Score: ${res.data.risk_score}).`,
         res.data.verdict === "CLEAR" ? "success" : res.data.verdict === "FLAGGED" ? "error" : "warn",
       );
       setFile(null);
+      setFileBack(null);
       setFileKey((k) => k + 1);
+      setFileKeyBack((k) => k + 1);
       setDocNumber("");
       setDeclaredName("");
       setDeclaredDob("");
@@ -1251,12 +1272,12 @@ export function DeskView() {
 
   const handleSoftRemove = async (reportId: string) => {
     if (!active) return;
-    if (!window.confirm("Soft-remove this document from current session comparison? (Audit ledger row is preserved)")) return;
+    if (!window.confirm("Remove this document from current session check? (The audit record is safely preserved)")) return;
     setBusy(true);
     const res = await removeSessionDocument(active.id, reportId);
     setBusy(false);
     if (res.ok) {
-      toast("Document soft-removed from session comparison (audit row preserved).", "info");
+      toast("Document removed from session check (audit log preserved).", "info");
       await loadDetail(active.id);
     } else {
       toast(res.error, "error");
@@ -1269,7 +1290,7 @@ export function DeskView() {
     const res = await restoreSessionDocument(active.id, reportId);
     setBusy(false);
     if (res.ok) {
-      toast("Document restored into session comparison.", "success");
+      toast("Document restored into session check.", "success");
       await loadDetail(active.id);
     } else {
       toast(res.error, "error");
@@ -1286,8 +1307,8 @@ export function DeskView() {
       setNote("");
       toast(
         action === "approve"
-          ? "Session approved and signed into the ledger."
-          : "Session flagged for supervisory review.",
+          ? "Session approved and logged."
+          : "Session flagged for supervisor review.",
         action === "approve" ? "success" : "warn",
       );
       await refreshOpen();
@@ -1308,7 +1329,9 @@ export function DeskView() {
   const resetDesk = async () => {
     setActive(null);
     setFile(null);
+    setFileBack(null);
     setFileKey((k) => k + 1);
+    setFileKeyBack((k) => k + 1);
     setNote("");
     setModelHint(null);
     const open = await refreshOpen();
@@ -1626,38 +1649,54 @@ export function DeskView() {
               >
                 <div className="intake-card__header">
                   <div>
-                    <h3 className="intake-card__title">Scan a document</h3>
+                    <h3 className="intake-card__title">Scan &amp; Check Identity Document</h3>
                     <p className="intake-card__subtitle">
-                      Add the traveller's document — upload a photo or use the webcam. The system
-                      reads it, checks it, scans for edits and compares the face, all at once.
+                      Upload the traveller's ID (front side required; back side recommended for Passports, Aadhaar &amp; Driving Licences).
+                      All checks run instantly in secure memory.
                     </p>
                   </div>
-                  {file && (
-                    <div className="intake-file-badge">
-                      <span className="dot dot--ok" />
-                      <span className="mono">{file.name} ({(file.size / 1024).toFixed(0)} KB)</span>
-                      <button
-                        type="button"
-                        className="btn btn--small btn--ghost"
-                        style={{ padding: "1px 6px", marginLeft: 6 }}
-                        onClick={() => { setFile(null); setFileKey((k) => k + 1); }}
-                        title="Remove attached file"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {file && (
+                      <div className="intake-file-badge">
+                        <span className="dot dot--ok" />
+                        <span>Front: {file.name} ({(file.size / 1024).toFixed(0)} KB)</span>
+                        <button
+                          type="button"
+                          className="btn btn--small btn--ghost"
+                          style={{ padding: "1px 6px", marginLeft: 4 }}
+                          onClick={() => { setFile(null); setFileKey((k) => k + 1); }}
+                          title="Remove front side file"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                    {fileBack && (
+                      <div className="intake-file-badge">
+                        <span className="dot dot--ok" />
+                        <span>Back: {fileBack.name} ({(fileBack.size / 1024).toFixed(0)} KB)</span>
+                        <button
+                          type="button"
+                          className="btn btn--small btn--ghost"
+                          style={{ padding: "1px 6px", marginLeft: 4 }}
+                          onClick={() => { setFileBack(null); setFileKeyBack((k) => k + 1); }}
+                          title="Remove back side file"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="intake-layout">
                   {/* Left Column: Metadata & Declared Values */}
                   <div className="intake-section">
                     <div className="intake-section__title">
-                      <span>1. What the document says</span>
+                      <span>1. Document Information</span>
                     </div>
                     <p className="intake-section__hint">
-                      Fill these only if you can read them — they help the system read the document.
-                      This is matched, never stored.
+                      Select document type. Optional fields help cross-verify the scan.
                     </p>
 
                     <label className="field">
@@ -1704,76 +1743,145 @@ export function DeskView() {
                     </label>
                   </div>
 
-                  {/* Right Column: Capture Source */}
+                  {/* Right Column: Dual Capture Source (Front & Back) */}
                   <div className="intake-section">
                     <div className="intake-section__title">
-                      <span>2. Add the document</span>
+                      <span>2. Upload or Take Photos</span>
                     </div>
                     <p className="intake-section__hint">
-                      A clear photo or scan works best. We never keep the photo — only a masked
-                      fingerprint and the check results.
+                      Provide clear photos or PDF scans. No raw files are ever kept on disk.
                     </p>
 
-                    <div className="intake-capture-zone">
-                      {file && (
-                        <div className="file-thumb-preview">
-                          {thumbUrl ? (
-                            <img src={thumbUrl} alt="Document preview" className="file-thumb-preview__img" />
-                          ) : (
-                            <div className="file-thumb-preview__icon">📄</div>
-                          )}
-                          <div className="file-thumb-preview__meta">
-                            <span className="file-thumb-preview__name">{file.name}</span>
-                            <span className="file-thumb-preview__size">
-                              {(file.size / 1024).toFixed(0)} KB · {file.type || "Document"}
-                            </span>
+                    <div className="dual-intake-grid">
+                      {/* FRONT SIDE (Required) */}
+                      <div className="side-card side-card--front">
+                        <div className="side-card__header">
+                          <span className="side-card__tag">SIDE 1 (FRONT / BIO PAGE) *</span>
+                          <span className="side-card__subtag">Photo &amp; Details</span>
+                        </div>
+
+                        {file ? (
+                          <div className="file-thumb-preview">
+                            {thumbUrl ? (
+                              <img src={thumbUrl} alt="Front preview" className="file-thumb-preview__img" />
+                            ) : (
+                              <div className="file-thumb-preview__icon">📄</div>
+                            )}
+                            <div className="file-thumb-preview__meta">
+                              <span className="file-thumb-preview__name">{file.name}</span>
+                              <span className="file-thumb-preview__size">
+                                {(file.size / 1024).toFixed(0)} KB · Front
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn--small btn--ghost"
+                              onClick={() => {
+                                setFile(null);
+                                setFileKey((k) => k + 1);
+                              }}
+                              title="Remove front file"
+                            >
+                              ✕
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            className="btn btn--small btn--ghost"
-                            onClick={() => {
-                              setFile(null);
-                              setFileKey((k) => k + 1);
-                            }}
-                            title="Remove attached file"
-                          >
-                            ✕ Remove
-                          </button>
-                        </div>
-                      )}
+                        ) : (
+                          <label className="dropzone">
+                            <input
+                              key={fileKey}
+                              type="file"
+                              accept="image/*,.pdf"
+                              onChange={(e) => setFile(e.target.files?.[0] || null)}
+                            />
+                            <div className="dropzone__icon">
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                              </svg>
+                            </div>
+                            <span className="dropzone__label">Upload Front Side</span>
+                            <span className="dropzone__hint">Required · JPEG/PNG/PDF</span>
+                          </label>
+                        )}
 
-                      <label className={`dropzone ${file ? "dropzone--has-file" : ""}`}>
-                        <input
-                          key={fileKey}
-                          type="file"
-                          accept="image/*,.pdf"
-                          onChange={(e) => setFile(e.target.files?.[0] || null)}
-                        />
-                        <div className="dropzone__icon">
-                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
-                          </svg>
-                        </div>
-                        <span className="dropzone__label">
-                          {file ? "Change attached photo or scan" : "Click to select a photo or scan"}
-                        </span>
-                        <span className="dropzone__hint">JPEG, PNG, WEBP or PDF up to 10 MB</span>
-                      </label>
+                        <button
+                          type="button"
+                          className="btn btn--small"
+                          style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                          onClick={() => {
+                            setWebcamTarget("front");
+                            setShowWebcam(true);
+                          }}
+                        >
+                          📸 Take Front Photo
+                        </button>
+                      </div>
 
-                      <button
-                        type="button"
-                        className="btn"
-                        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px" }}
-                        onClick={() => setShowWebcam(true)}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                          <circle cx="12" cy="13" r="4" />
-                        </svg>
-                        Use the webcam instead
-                      </button>
+                      {/* BACK SIDE (Optional / Recommended) */}
+                      <div className="side-card side-card--back">
+                        <div className="side-card__header">
+                          <span className="side-card__tag">SIDE 2 (BACK PAGE)</span>
+                          <span className="side-card__subtag">Address, QR &amp; Guardians</span>
+                        </div>
+
+                        {fileBack ? (
+                          <div className="file-thumb-preview">
+                            {thumbUrlBack ? (
+                              <img src={thumbUrlBack} alt="Back preview" className="file-thumb-preview__img" />
+                            ) : (
+                              <div className="file-thumb-preview__icon">📄</div>
+                            )}
+                            <div className="file-thumb-preview__meta">
+                              <span className="file-thumb-preview__name">{fileBack.name}</span>
+                              <span className="file-thumb-preview__size">
+                                {(fileBack.size / 1024).toFixed(0)} KB · Back
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn--small btn--ghost"
+                              onClick={() => {
+                                setFileBack(null);
+                                setFileKeyBack((k) => k + 1);
+                              }}
+                              title="Remove back file"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="dropzone dropzone--back">
+                            <input
+                              key={fileKeyBack}
+                              type="file"
+                              accept="image/*,.pdf"
+                              onChange={(e) => setFileBack(e.target.files?.[0] || null)}
+                            />
+                            <div className="dropzone__icon">
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="17 8 12 3 7 8" />
+                                <line x1="12" y1="3" x2="12" y2="15" />
+                              </svg>
+                            </div>
+                            <span className="dropzone__label">Upload Back Side</span>
+                            <span className="dropzone__hint">Optional · For Address &amp; QR</span>
+                          </label>
+                        )}
+
+                        <button
+                          type="button"
+                          className="btn btn--small"
+                          style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                          onClick={() => {
+                            setWebcamTarget("back");
+                            setShowWebcam(true);
+                          }}
+                        >
+                          📸 Take Back Photo
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1781,7 +1889,7 @@ export function DeskView() {
                 {/* Bottom Actions Bar */}
                 <div className="intake-actions-bar">
                   <div className="specimen-row">
-                    <span className="k" style={{ fontSize: "11px" }}>TRY WITH A SAMPLE:</span>
+                    <span className="k" style={{ fontSize: "11px" }}>TEST WITH PRESETS:</span>
                     {SPECIMEN_PRESETS.map((p) => (
                       <button
                         key={p.id}
@@ -1800,9 +1908,9 @@ export function DeskView() {
                     className="btn btn--primary btn--hero"
                     disabled={busy || !file}
                     onClick={() => void screenIntoSession()}
-                    title="Screen this document into current session (Ctrl+Enter)"
+                    title="Check this document into current session (Ctrl+Enter)"
                   >
-                    {busy ? "Checking…" : "Check this document"}
+                    {busy ? "Checking…" : "Run Verification Check"}
                     <span style={{ fontSize: 11, opacity: 0.85, marginLeft: 6 }}>[Ctrl + ↵]</span>
                   </button>
                 </div>
@@ -2060,8 +2168,13 @@ export function DeskView() {
         <WebcamCapture
           docType={docType}
           onCapture={(f) => {
-            setFile(f);
-            setFileKey((k) => k + 1);
+            if (webcamTarget === "back") {
+              setFileBack(f);
+              setFileKeyBack((k) => k + 1);
+            } else {
+              setFile(f);
+              setFileKey((k) => k + 1);
+            }
             setShowWebcam(false);
           }}
           onCancel={() => setShowWebcam(false)}

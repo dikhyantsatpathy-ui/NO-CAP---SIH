@@ -371,7 +371,7 @@ export interface ScreenTravelValidity {
 /** Run a screening pass on an uploaded identity document (officer only).
  *  When sessionId is given (SIH26188 session flow) the resulting audit row is
  *  attached to that border session and its per-field digests are persisted for
- *  cross-document comparison. */
+ *  cross-document comparison. Supports dual-sided upload (file + fileBack). */
 export function screenDocument(
   file: File,
   docType: string,
@@ -379,9 +379,11 @@ export function screenDocument(
   declared?: Record<string, string>,
   liveFrame?: Blob | null,
   sessionId?: string,
+  fileBack?: File | null,
 ) {
   const fd = form({ doc_type: docType, checkpoint });
   fd.append("file", file, file.name);
+  if (fileBack) fd.append("file_back", fileBack, fileBack.name);
   if (declared && Object.keys(declared).length > 0) {
     fd.append("declared", JSON.stringify(declared));
   }

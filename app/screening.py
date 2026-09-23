@@ -529,9 +529,14 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                   live_frame: bytes | None = None,
                   session_id: str | None = None,
                   nationality: str | None = None,
-                  purpose: str | None = None) -> dict:
+                  purpose: str | None = None,
+                  data_back: bytes | None = None,
+                  filename_back: str | None = None) -> dict:
     """Full Upload->Extract->Analyze->Verify->AssessRisk pass. Returns a
     report dict AND persists an immutable ScreeningReport row.
+
+    Supports both single-sided and two-sided (front bio page + back address/QR page)
+    document verification for Passports, Aadhaar, Voter ID, and Driving Licences.
 
     The problem statement's four modules run as thin, self-contained passes:
       M1 extraction -> app/extraction.py (OCR/MRZ field extraction)
@@ -556,6 +561,20 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     # ---- Module 1: Extract (OCR/MRZ + declared merge) --------------------------
     extract_res = extract_document(data, filename, doc_type or "", declared)
     fields = extract_res["fields"]
+
+    # If back side is provided (e.g. Passport address page, Aadhaar back, DL back)
+    if data_back and len(data_back) > 0:
+        extract_back = extract_document(data_back, filename_back or "back.jpg", doc_type or "", declared)
+        fields_back = extract_back.get("fields", {})
+        for k, v in fields_back.items():
+            if k not in fields or not fields[k]:
+                fields[k] = v
+            elif k in ("address", "pincode", "guardian", "father_name") and not fields.get(k):
+                fields[k] = v
+        extract_res["two_sided"] = True
+        extract_res["has_back_side"] = True
+        if extract_back.get("qr_data") and not extract_res.get("qr_data"):
+            extract_res["qr_data"] = extract_back["qr_data"]
 
     # AI-detection + document-awareness live inside app/main.py (single-file
     # backend). They are imported lazily here the same way, so main.py ->
@@ -612,6 +631,19 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                                      document_aware, doc_type or "")
     else:
         tamper_res = tamper_analysis(None, ai_det, document_aware, doc_type or "")
+
+    # Back side tamper check if back image is present
+    if data_back and len(data_back) > 0 and (data_back.startswith((b"\x89PNG", b"\xff\xd8", b"RIFF")) or "jpg" in (filename_back or "").lower() or "png" in (filename_back or "").lower()):
+        try:
+            tamper_back = tamper_analysis(data_back, ai_det, document_aware, doc_type or "")
+            if tamper_back.get("verdict") == "FAIL":
+                tamper_res["checks"].append({
+                    "label": "back-page-forensics",
+                    "ok": False,
+                    "detail": "Back page of document raised visual tampering or ELA anomalies.",
+                })
+        except Exception:
+            pass
 
     # ---- Module 4: Face (document portrait vs live capture) ----------------
     # Aadhaar ships its holder photo as a purpose-cropped b64 (domestic-ID

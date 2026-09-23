@@ -16,11 +16,11 @@ import { StaffView } from "./views/StaffView";
 type ViewKey = "desk" | "review" | "ledger" | "watchlist" | "staff";
 
 const NAV: { key: ViewKey; label: string; icon: string }[] = [
-  { key: "desk", label: "Desk", icon: "🖥️" },
-  { key: "review", label: "Review Queue", icon: "📋" },
-  { key: "ledger", label: "Record Log", icon: "⛓️" },
-  { key: "watchlist", label: "Watchlist", icon: "🛡️" },
-  { key: "staff", label: "Staff", icon: "👤" },
+  { key: "desk", label: "Scan & Verify", icon: "📸" },
+  { key: "review", label: "Needs Review", icon: "⚠️" },
+  { key: "ledger", label: "Log & History", icon: "📜" },
+  { key: "watchlist", label: "Alert List", icon: "🛡️" },
+  { key: "staff", label: "Officers", icon: "👥" },
 ];
 
 export function AshokaChakraWatermark() {
@@ -87,9 +87,9 @@ function SuperHeader() {
         <span>MINISTRY OF HOME AFFAIRS</span>
       </div>
       <div className="gov-super-header__right">
-        <a href="#home" className="gov-super-header__link">Home</a>
-        <a href="#services" className="gov-super-header__link">Citizen Services</a>
-        <span className="gov-super-header__badge">Staff Console</span>
+        <span>INTEGRATED CHECK POST (ICP)</span>
+        <span className="gov-super-header__pipe">|</span>
+        <span className="gov-super-header__badge">Officer Terminal</span>
       </div>
     </div>
   );
@@ -115,13 +115,13 @@ function PortalHeader() {
         />
         <div>
           <div className="gov-portal-header__sub">
-            GOVERNMENT OF INDIA, MINISTRY OF HOME AFFAIRS
+            GOVERNMENT OF INDIA · MINISTRY OF HOME AFFAIRS
           </div>
           <h1 className="gov-portal-header__title">
             VIBE CHECK-POINT
           </h1>
           <p className="gov-portal-header__desc">
-            AI Identity Verification &amp; Border Screening · Indo-Nepal / Indo-Bhutan Sector · SIH 26188
+            Smart Border Screening &amp; Fake ID Detection · Indo-Nepal / Indo-Bhutan Sector · SIH 26188
           </p>
         </div>
       </div>
@@ -169,18 +169,18 @@ function CommandStatusStrip() {
     <div className="command-strip">
       <div className="command-strip__left">
         <span className="command-strip__status">
-          <span className="command-strip__dot" /> OPERATIONAL
+          <span className="command-strip__dot" /> SYSTEM ONLINE
         </span>
         <span className="command-strip__sep">•</span>
         <span>Raxaul / Panitanki ICP</span>
         <span className="command-strip__sep">•</span>
-        <span className="command-strip__live">LIVE SSB SESSION</span>
+        <span className="command-strip__live">ACTIVE DUTY</span>
       </div>
 
       <div className="command-strip__right">
         <span className="command-strip__clock mono">{istTime}</span>
         <span className="command-strip__sep">|</span>
-        <span>ZERO-STORAGE AUDIT - SHA-256 DIGESTS ONLY</span>
+        <span>ZERO-STORAGE PRIVACY · NO RAW IDS STORED</span>
         <button
           type="button"
           className="command-strip__signout"
@@ -254,11 +254,11 @@ export function App() {
         {view === "staff" && <StaffView />}
       </main>
       <footer className="gov-footer">
-        <span>🔒 CRYPTOGRAPHIC HASHING [SHA-256]</span>
+        <span>🔒 SHA-256 HASH CHAIN</span>
         <span className="gov-footer__pipe">|</span>
-        <span>🌐 DECENTRALIZED IMMUTABLE LEDGER TECHNOLOGY</span>
+        <span>📜 IMMUTABLE AUDIT LOG</span>
         <span className="gov-footer__pipe">|</span>
-        <span>🛡️ SECURE AUDIT TRAIL</span>
+        <span>🛡️ ZERO-RAW-STORAGE PRIVACY</span>
       </footer>
     </div>
   );
