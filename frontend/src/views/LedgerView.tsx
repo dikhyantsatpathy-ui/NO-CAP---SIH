@@ -12,7 +12,7 @@
 //   - Direct Section 65B BSA court certificate links on every block.
 // ============================================================================
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getBsaCertificateUrl,
   getSessionLedger,
@@ -86,52 +86,54 @@ export function LedgerView() {
 
   const rawBlocks = payload?.blocks || [];
 
-  // Extract unique checkpoints for filtering
-  const checkpointsList = Array.from(
-    new Set(rawBlocks.map((b) => b.checkpoint).filter(Boolean)),
-  ).sort();
+  // Extract unique checkpoints for filtering (memoized)
+  const checkpointsList = useMemo(
+    () => Array.from(new Set(rawBlocks.map((b) => b.checkpoint).filter(Boolean))).sort(),
+    [rawBlocks],
+  );
 
-  // Filter pipeline
-  const filteredBlocks = rawBlocks.filter((b) => {
-    if (statusFilter !== "all" && b.status !== statusFilter) return false;
-    if (checkpointFilter !== "all" && b.checkpoint !== checkpointFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      const matchLabel = b.label && b.label.toLowerCase().includes(q);
-      const matchId = b.id && b.id.toLowerCase().includes(q);
-      const matchHash = b.block_hash && b.block_hash.toLowerCase().includes(q);
-      const matchPost = b.checkpoint && b.checkpoint.toLowerCase().includes(q);
-      const matchOfficer = b.screener && b.screener.toLowerCase().includes(q);
-      const matchNote = b.note && b.note.toLowerCase().includes(q);
-      if (!matchLabel && !matchId && !matchHash && !matchPost && !matchOfficer && !matchNote) {
-        return false;
+  // Filter and sort pipeline (memoized to prevent re-filtering on card expand/collapse)
+  const sortedBlocks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = rawBlocks.filter((b) => {
+      if (statusFilter !== "all" && b.status !== statusFilter) return false;
+      if (checkpointFilter !== "all" && b.checkpoint !== checkpointFilter) return false;
+      if (q) {
+        const matchLabel = b.label && b.label.toLowerCase().includes(q);
+        const matchId = b.id && b.id.toLowerCase().includes(q);
+        const matchHash = b.block_hash && b.block_hash.toLowerCase().includes(q);
+        const matchPost = b.checkpoint && b.checkpoint.toLowerCase().includes(q);
+        const matchOfficer = b.screener && b.screener.toLowerCase().includes(q);
+        const matchNote = b.note && b.note.toLowerCase().includes(q);
+        if (!matchLabel && !matchId && !matchHash && !matchPost && !matchOfficer && !matchNote) {
+          return false;
+        }
       }
-    }
-    return true;
-  });
+      return true;
+    });
 
-  // Sort pipeline
-  const sortedBlocks = [...filteredBlocks].sort((a, b) => {
-    if (sortBy === "time_desc") {
-      return parseUtc(b.closed_at || b.created_at) - parseUtc(a.closed_at || a.created_at);
-    }
-    if (sortBy === "time_asc") {
-      return parseUtc(a.closed_at || a.created_at) - parseUtc(b.closed_at || b.created_at);
-    }
-    if (sortBy === "risk_desc") {
-      return (b.risk_score || 0) - (a.risk_score || 0);
-    }
-    if (sortBy === "risk_asc") {
-      return (a.risk_score || 0) - (b.risk_score || 0);
-    }
-    if (sortBy === "label_asc") {
-      return (a.label || a.id).localeCompare(b.label || b.id, undefined, { numeric: true });
-    }
-    if (sortBy === "docs_desc") {
-      return (b.document_count || 0) - (a.document_count || 0);
-    }
-    return 0;
-  });
+    return filtered.sort((a, b) => {
+      if (sortBy === "time_desc") {
+        return parseUtc(b.closed_at || b.created_at) - parseUtc(a.closed_at || a.created_at);
+      }
+      if (sortBy === "time_asc") {
+        return parseUtc(a.closed_at || a.created_at) - parseUtc(b.closed_at || b.created_at);
+      }
+      if (sortBy === "risk_desc") {
+        return (b.risk_score || 0) - (a.risk_score || 0);
+      }
+      if (sortBy === "risk_asc") {
+        return (a.risk_score || 0) - (b.risk_score || 0);
+      }
+      if (sortBy === "label_asc") {
+        return (a.label || a.id).localeCompare(b.label || b.id, undefined, { numeric: true });
+      }
+      if (sortBy === "docs_desc") {
+        return (b.document_count || 0) - (a.document_count || 0);
+      }
+      return 0;
+    });
+  }, [rawBlocks, statusFilter, checkpointFilter, searchQuery, sortBy]);
 
   // Expand / collapse all
   const toggleExpandAll = () => {

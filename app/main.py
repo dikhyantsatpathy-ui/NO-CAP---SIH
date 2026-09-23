@@ -35,6 +35,7 @@ load_dotenv()
 
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import create_engine, Column, String, Integer, Text, Float, text, event, func
@@ -1023,6 +1024,16 @@ else:
     os.makedirs(_DATA_DIR, exist_ok=True)
     _FALLBACK_DB_PATH = os.path.join(_DATA_DIR, "nocap_fallback.db")
 fallback_engine = create_engine(f"sqlite:///{_FALLBACK_DB_PATH}", connect_args={"check_same_thread": False})
+@event.listens_for(fallback_engine, "connect")
+def _set_fallback_sqlite_pragmas(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA cache_size=-32000")
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    cursor.close()
+
 FallbackSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=fallback_engine)
 
 RAW_KEY = os.getenv("MASTER_VAULT_KEY", "").encode("utf-8")
@@ -1247,6 +1258,10 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_sessions_created ON screening_sessions(created_at);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_status ON screening_sessions(status);",
     "CREATE INDEX IF NOT EXISTS ix_sessions_screener ON screening_sessions(screener);",
+    "CREATE INDEX IF NOT EXISTS ix_sessions_checkpoint ON screening_sessions(checkpoint);",
+    "CREATE INDEX IF NOT EXISTS ix_reports_session_id ON screening_reports(session_id);",
+    "CREATE INDEX IF NOT EXISTS ix_reports_created ON screening_reports(created_at);",
+    "CREATE INDEX IF NOT EXISTS ix_reports_checkpoint ON screening_reports(checkpoint);",
     # Stale pre-refactor columns: signer_identities no longer carries the
     # crypto keypair era's pub_key/enc_priv_key/is_revoked/revoked_at/revoke_pin
     # (the hash-chain ledger replaced pub_key trust). Existing Postgres DBs still
@@ -1947,6 +1962,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.get("/")
 @limiter.limit("120/minute")

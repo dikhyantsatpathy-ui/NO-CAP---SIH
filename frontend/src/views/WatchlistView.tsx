@@ -9,7 +9,7 @@
 //   - Nested expandable sub-tables for cryptographic audit receipts.
 // ============================================================================
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   SCREEN_WATCHLIST_CATEGORIES,
   SCREEN_WATCHLIST_LABELS,
@@ -67,21 +67,23 @@ export function WatchlistView() {
     toast(`Exported ${filteredEntries.length} watchlist entries to CSV.`, "success");
   };
 
-  const filteredEntries = entries.filter((e) => {
-    if (filterCat !== "ALL" && e.category !== filterCat) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const rawCat = e.category || "passport";
-      const catLabel = (SCREEN_WATCHLIST_LABELS[rawCat as ScreenWatchlistCategory] || rawCat || "").toLowerCase();
-      const match =
-        catLabel.includes(q) ||
-        (e.mask && e.mask.toLowerCase().includes(q)) ||
-        (e.reason && e.reason.toLowerCase().includes(q)) ||
-        (e.added_by && e.added_by.toLowerCase().includes(q));
-      if (!match) return false;
-    }
-    return true;
-  });
+  const filteredEntries = useMemo(() => {
+    return entries.filter((e) => {
+      if (filterCat !== "ALL" && e.category !== filterCat) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const rawCat = e.category || "passport";
+        const catLabel = (SCREEN_WATCHLIST_LABELS[rawCat as ScreenWatchlistCategory] || rawCat || "").toLowerCase();
+        const match =
+          catLabel.includes(q) ||
+          (e.mask && e.mask.toLowerCase().includes(q)) ||
+          (e.reason && e.reason.toLowerCase().includes(q)) ||
+          (e.added_by && e.added_by.toLowerCase().includes(q));
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [entries, filterCat, searchQuery]);
 
   const add = async () => {
     if (!value.trim()) {

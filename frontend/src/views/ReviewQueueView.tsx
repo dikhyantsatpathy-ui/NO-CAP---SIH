@@ -8,7 +8,7 @@
 // No raw identifiers rendered.
 // ============================================================================
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   adjudicateSession,
   getBsaCertificateUrl,
@@ -440,48 +440,54 @@ export function ReviewQueueView() {
     }
   };
 
-  const checkpoints = Array.from(
-    new Set([...flagged, ...settled].map((s) => s.checkpoint).filter(Boolean)),
-  ).sort();
+  const checkpoints = useMemo(
+    () => Array.from(new Set([...flagged, ...settled].map((s) => s.checkpoint).filter(Boolean))).sort(),
+    [flagged, settled],
+  );
 
-  const filterFn = (s: ScreeningSession) => {
-    if (filterCheckpoint !== "ALL" && s.checkpoint !== filterCheckpoint) return false;
-    if (filterRisk === "HIGH" && (s.risk_score || 0) < 60) return false;
-    if (filterRisk === "MED" && ((s.risk_score || 0) < 30 || (s.risk_score || 0) >= 60)) return false;
-    if (filterRisk === "LOW" && (s.risk_score || 0) >= 30) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const match =
-        (s.label && s.label.toLowerCase().includes(q)) ||
-        s.id.toLowerCase().includes(q) ||
-        (s.screener && s.screener.toLowerCase().includes(q)) ||
-        (s.checkpoint && s.checkpoint.toLowerCase().includes(q)) ||
-        (s.note && s.note.toLowerCase().includes(q)) ||
-        (s.block_hash && s.block_hash.toLowerCase().includes(q));
-      if (!match) return false;
-    }
-    return true;
-  };
+  const { filteredFlagged, filteredSettled } = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
 
-  const sortFn = (a: ScreeningSession, b: ScreeningSession) => {
-    if (sortMode === "time_asc") {
+    const filterFn = (s: ScreeningSession) => {
+      if (filterCheckpoint !== "ALL" && s.checkpoint !== filterCheckpoint) return false;
+      if (filterRisk === "HIGH" && (s.risk_score || 0) < 60) return false;
+      if (filterRisk === "MED" && ((s.risk_score || 0) < 30 || (s.risk_score || 0) >= 60)) return false;
+      if (filterRisk === "LOW" && (s.risk_score || 0) >= 30) return false;
+      if (q) {
+        const match =
+          (s.label && s.label.toLowerCase().includes(q)) ||
+          s.id.toLowerCase().includes(q) ||
+          (s.screener && s.screener.toLowerCase().includes(q)) ||
+          (s.checkpoint && s.checkpoint.toLowerCase().includes(q)) ||
+          (s.note && s.note.toLowerCase().includes(q)) ||
+          (s.block_hash && s.block_hash.toLowerCase().includes(q));
+        if (!match) return false;
+      }
+      return true;
+    };
+
+    const sortFn = (a: ScreeningSession, b: ScreeningSession) => {
+      if (sortMode === "time_asc") {
+        return (
+          new Date(a.created_at || a.created_at_ist || "").getTime() -
+          new Date(b.created_at || b.created_at_ist || "").getTime()
+        );
+      }
+      if (sortMode === "risk_desc") {
+        return (b.risk_score || 0) - (a.risk_score || 0);
+      }
+      // Default time_desc
       return (
-        new Date(a.created_at || a.created_at_ist || "").getTime() -
-        new Date(b.created_at || b.created_at_ist || "").getTime()
+        new Date(b.created_at || b.created_at_ist || "").getTime() -
+        new Date(a.created_at || a.created_at_ist || "").getTime()
       );
-    }
-    if (sortMode === "risk_desc") {
-      return (b.risk_score || 0) - (a.risk_score || 0);
-    }
-    // Default time_desc
-    return (
-      new Date(b.created_at || b.created_at_ist || "").getTime() -
-      new Date(a.created_at || a.created_at_ist || "").getTime()
-    );
-  };
+    };
 
-  const filteredFlagged = flagged.filter(filterFn).sort(sortFn);
-  const filteredSettled = settled.filter(filterFn).sort(sortFn);
+    return {
+      filteredFlagged: flagged.filter(filterFn).sort(sortFn),
+      filteredSettled: settled.filter(filterFn).sort(sortFn),
+    };
+  }, [flagged, settled, filterCheckpoint, filterRisk, searchQuery, sortMode]);
 
   if (!isSuper) {
     return (
