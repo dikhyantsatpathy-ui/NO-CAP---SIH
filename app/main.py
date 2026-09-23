@@ -56,7 +56,7 @@ from session import build_comparison, session_payload, chain_hash
 # Central configuration: IST display timezone, checkpoint clusters (every
 # Indian border post SSB screens at), document catalog, guided-flow protocol.
 # IST display timezone + UTC<->IST helpers + stats aggregation.
-from config import to_ist, utc_to_epoch, ist_hour_of_day, MAX_UPLOAD_BYTES, DOCUMENT_CATALOG
+from config import to_ist, MAX_UPLOAD_BYTES, DOCUMENT_CATALOG
 from guide import (flow_for, checkpoint_catalog, document_catalog,
                    nationality_catalog)
 from stats import report_stats, session_stats, throughput

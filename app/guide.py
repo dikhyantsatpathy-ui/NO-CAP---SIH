@@ -22,7 +22,6 @@ and *expectations*; it never stores traveller data.
 
 from config import (
     CHECKPOINT_CLUSTERS,
-    CHECKPOINT_MODE,
     DOCUMENT_CATALOG,
     SUPPORTED_CHECKPOINTS,
     guided_steps,

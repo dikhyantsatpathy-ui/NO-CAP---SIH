@@ -73,7 +73,6 @@ def report_stats(db, limit: int = 5000) -> dict:
         return out
 
     latencies = []
-    total = len(rows)
     for r in rows:
         v = (r.verdict or "UNKNOWN").upper()
         out["verdicts"][v] = out["verdicts"].get(v, 0) + 1
