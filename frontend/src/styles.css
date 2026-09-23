@@ -15,8 +15,8 @@
    1. Tokens
    --------------------------------------------------------------------------- */
 :root {
-  --bg: #f8fafc;
-  --bg-2: #f1f5f9;
+  --bg: #ffffff;
+  --bg-2: #f8fafc;
   --panel: #ffffff;
   --panel-2: #f8fafc;
   --panel-3: #f1f5f9;
@@ -62,11 +62,11 @@
   --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
 }
 
-/* Crisp White Government Console Tokens */
+/* Crisp Pure White Government Console Tokens */
 [data-theme="dark"],
 [data-theme="light"] {
-  --bg: #f8fafc;
-  --bg-2: #f1f5f9;
+  --bg: #ffffff;
+  --bg-2: #f8fafc;
   --panel: #ffffff;
   --panel-2: #f8fafc;
   --panel-3: #f1f5f9;
@@ -120,11 +120,12 @@ html,
 body,
 #root {
   min-height: 100%;
+  background: #ffffff;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: #ffffff;
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 14px;
@@ -135,7 +136,7 @@ body {
 }
 
 [data-theme="dark"] {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 ::selection {
@@ -1008,21 +1009,24 @@ textarea::placeholder {
   flex-direction: column;
   gap: 16px;
   width: 100%;
-  max-width: 1180px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 24px 24px 48px;
+  padding: 24px 20px 48px;
+  background: #ffffff;
 }
 
 .panel {
-  background: var(--panel);
+  background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 20px 22px;
-  box-shadow: var(--shadow-sm);
+  padding: 22px 24px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 .panel--muted {
-  background: var(--bg-2);
-  box-shadow: none;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 
 .panel__row {
@@ -2737,57 +2741,10 @@ textarea::placeholder {
 }
 
 /* ---------------------------------------------------------------------------
-   Ashoka Chakra Watermark (Sovereign Seal Background)
+   Ashoka Chakra Watermark (Sovereign Seal Background) - Hidden to preserve clean white
    --------------------------------------------------------------------------- */
 .ashoka-watermark {
-  position: fixed;
-  right: -50px;
-  bottom: -50px;
-  width: 420px;
-  height: 420px;
-  max-width: 48vw;
-  max-height: 48vw;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-  z-index: 0;
-  color: #0b2240;
-  opacity: 0.015;
-  overflow: hidden;
-  transition: opacity 0.3s ease;
-}
-
-[data-theme="dark"] .ashoka-watermark {
-  opacity: 0.018;
-  color: #0b2240;
-}
-
-.ashoka-watermark__svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  animation: ashokaSpin 220s linear infinite;
-  will-change: transform;
-  transform: translate3d(0, 0, 0);
-}
-
-@keyframes ashokaSpin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 768px) {
-  .ashoka-watermark {
-    right: -30px;
-    bottom: -30px;
-    width: 260px;
-    height: 260px;
-    opacity: 0.012;
-  }
+  display: none !important;
 }
 
 /* ---------------------------------------------------------------------------
