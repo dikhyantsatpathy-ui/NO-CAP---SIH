@@ -198,4 +198,10 @@ def throughput(db, minutes: int = 60) -> dict:
         ts = utc_to_epoch(s.closed_at or s.updated_at)
         if ts is not None and ts >= cutoff:
             sessions += 1
-    return {"window_minutes": minutes, "screens": screens, "sessions_closed": sessions}
+    return {
+        "window_minutes": minutes,
+        "screens": screens,
+        "sessions_closed": sessions,
+        "screenings_count": screens,
+        "per_minute": round(screens / minutes, 3),
+    }
