@@ -2331,7 +2331,16 @@ async def screen_document(
             raise HTTPException(status_code=413, detail="Document too large (8 MB cap).")
         ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
         if ext not in _SYNC_SCREENED_EXTS:
-            raise HTTPException(status_code=415, detail="Unsupported type — send a PDF or a jpg/png/webp/bmp image.")
+            if data.startswith(b"%PDF"):
+                ext = "pdf"
+            elif data.startswith((b"\xff\xd8", b"\x89PNG", b"RIFF", b"BM")):
+                ext = "jpg"
+            elif (file.content_type or "").startswith("image/"):
+                ext = "jpg"
+            elif (file.content_type or "") == "application/pdf":
+                ext = "pdf"
+            else:
+                raise HTTPException(status_code=415, detail="Unsupported type — send a PDF or a jpg/png/webp/bmp image.")
         declared_map = {}
         if declared.strip():
             try:
@@ -2862,7 +2871,10 @@ async def extract_live_image(
             raise HTTPException(status_code=413, detail="Image too large (8 MB cap).")
         ext = (file.filename or "").lower().rsplit(".", 1)[-1] if "." in (file.filename or "") else ""
         if ext not in _SYNC_SCREENED_EXTS:
-            raise HTTPException(status_code=415, detail="Send a jpg/png/webp/bmp image.")
+            if data.startswith((b"\xff\xd8", b"\x89PNG", b"RIFF", b"BM")) or (file.content_type or "").startswith("image/"):
+                ext = "jpg"
+            else:
+                raise HTTPException(status_code=415, detail="Send a jpg/png/webp/bmp image.")
         frame_bytes = await live_frame.read() if live_frame is not None else None
         
         # Auto-classify document type with local ONNX classifier
