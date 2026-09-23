@@ -145,8 +145,9 @@ def _document_face_b64(document_bytes):
             return None
         import base64
         import io
-        from PIL import Image
-        img = Image.open(io.BytesIO(document_bytes)).convert("RGB")
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(document_bytes))
+        img = ImageOps.exif_transpose(img).convert("RGB")
         w, h = img.size
         x0 = int(face["x"] * w)
         y0 = int(face["y"] * h)

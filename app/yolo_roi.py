@@ -71,10 +71,12 @@ def _get_onnx_session():
 
 
 def _open_rgb(data: bytes) -> np.ndarray | None:
-    """Decode raw bytes to a uint8 (h, w, 3) RGB array.
+    """Decode raw bytes to a uint8 (h, w, 3) RGB array with EXIF orientation correction.
     Returns None when Pillow cannot read the data so callers degrade gracefully."""
     try:
+        from PIL import ImageOps
         img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
         img.load()
         return np.asarray(img.convert("RGB"), dtype=np.uint8)
     except Exception:

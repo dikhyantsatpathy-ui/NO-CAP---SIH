@@ -35,7 +35,9 @@ def _open_rgb(data: bytes):
     """Decode raw bytes to a uint8 (h, w, 3) RGB array. Raises ValueError when
     Pillow cannot read the data, so callers can degrade gracefully."""
     try:
+        from PIL import ImageOps
         img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
         img.load()
         img = img.convert("RGB")
     except Exception:

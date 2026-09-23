@@ -15,22 +15,10 @@ report says loudly when OCR was off.
 import re
 import shutil
 
-from screening import norm, extract_mrz
-
-
-def _pan_check_char(first9: str) -> str:
-    """The community PAN trailing-letter rule (used in several open-source
-    validators). It is NOT authoritative — NSDL never published the formula —
-    so callers treat it as a consistency hint, never a hard pass/fail."""
-    total = 0
-    for ch in first9:
-        total += int(ch) if ch.isdigit() else ord(ch) - 55
-    rem = total % 36
-    return str(rem) if rem < 10 else chr(rem + 55)
-
-# --------------------------------------------------------------------------- #
-# OCR probe — RapidOCR (ONNX) primary, pytesseract secondary
-# --------------------------------------------------------------------------- #
+try:
+    from app.screening import norm, extract_mrz, _match_identifiers
+except ImportError:
+    from screening import norm, extract_mrz, _match_identifiers
 
 _rapid_ocr_engine = None
 
@@ -59,11 +47,16 @@ def _ocr_available() -> bool:
     return False
 
 
-def ocr_extract(data: bytes):
+def ocr_extract(data: bytes, doc_type: str = ""):
     """Best-effort OCR of a document image -> (text, meta) or (None, meta).
 
-    Runs multi-pass enhancement for webcam and handheld camera captures
-    (raw, CLAHE contrast enhancement, grayscale, sharpening, and auto-orientation).
+    Runs multi-pass enhancement for phone camera, webcam, and handheld captures:
+    1. EXIF orientation correction (fixes rotated iPhone/Android camera photos)
+    2. Dynamic resolution normalization (scales 12MP+ phone photos to optimal OCR scale)
+    3. CLAHE (local contrast equalization for glossy lamination and flash glare)
+    4. Unsharp masking filter (crisp character edges)
+    5. Four-way rotation scan (0, 90, 180, 270 degrees) if no identifier is detected
+    6. Accumulative field extraction across passes.
     Zero-storage: text is used for identifier extraction and immediately discarded."""
     if data is None or not data:
         return None, {"ran": False, "reason": "no image"}
@@ -75,52 +68,97 @@ def ocr_extract(data: bytes):
     rapid = _get_rapid_ocr()
     if rapid is not None:
         try:
-            # Pass A: Raw image bytes
-            result, _ = rapid(data)
-            if result:
-                lines = [r[1] for r in result if len(r) >= 2 and r[1]]
-                text = "\n".join(lines).strip()
-                if text and len(text) >= 15:
-                    return text, {"ran": True, "engine": "rapidocr-onnx", "pass": "raw"}
-
-            # Pass B: Multi-pass preprocessing with OpenCV for difficult camera/webcam lighting
+            import io
             import cv2
             import numpy as np
-            nparr = np.frombuffer(data, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is not None:
-                # Enhance 1: CLAHE on luminance channel (fixes glossy card glare and uneven shadows)
-                lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-                l, a, b_ch = cv2.split(lab)
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-                cl = clahe.apply(l)
-                limg = cv2.merge((cl, a, b_ch))
-                enhanced_bgr = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-                
-                result_clahe, _ = rapid(enhanced_bgr)
-                if result_clahe:
-                    lines = [r[1] for r in result_clahe if len(r) >= 2 and r[1]]
-                    text_clahe = "\n".join(lines).strip()
-                    if text_clahe and len(text_clahe) > (len(text) if 'text' in locals() and text else 0):
-                        return text_clahe, {"ran": True, "engine": "rapidocr-onnx", "pass": "clahe"}
+            from PIL import Image, ImageOps
 
-                # Enhance 2: Grayscale + Sharpening kernel
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                gray_clahe = clahe.apply(gray)
-                kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
-                sharpened = cv2.filter2D(gray_clahe, -1, kernel)
-                sharpened_bgr = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
+            try:
+                pil_img = Image.open(io.BytesIO(data))
+                pil_img = ImageOps.exif_transpose(pil_img)
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+            except Exception:
+                pil_img = None
 
-                result_sharp, _ = rapid(sharpened_bgr)
-                if result_sharp:
-                    lines = [r[1] for r in result_sharp if len(r) >= 2 and r[1]]
-                    text_sharp = "\n".join(lines).strip()
-                    if text_sharp:
-                        return text_sharp, {"ran": True, "engine": "rapidocr-onnx", "pass": "sharpened"}
+            if pil_img is not None:
+                max_dim = 1920
+                if max(pil_img.size) > max_dim:
+                    scale = max_dim / max(pil_img.size)
+                    pil_img = pil_img.resize(
+                        (int(pil_img.width * scale), int(pil_img.height * scale)),
+                        Image.Resampling.LANCZOS,
+                    )
+                bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            else:
+                nparr = np.frombuffer(data, np.uint8)
+                bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-                # Return whatever partial text was read from pass A if any
-                if 'text' in locals() and text:
-                    return text, {"ran": True, "engine": "rapidocr-onnx", "pass": "partial"}
+            if bgr is not None:
+                def _get_variants(img_mat):
+                    variants = [img_mat]
+                    try:
+                        lab = cv2.cvtColor(img_mat, cv2.COLOR_BGR2LAB)
+                        l, a, b_ch = cv2.split(lab)
+                        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                        cl = clahe.apply(l)
+                        limg = cv2.merge((cl, a, b_ch))
+                        variants.append(cv2.cvtColor(limg, cv2.COLOR_LAB2BGR))
+                    except Exception:
+                        pass
+                    try:
+                        gray = cv2.cvtColor(img_mat, cv2.COLOR_BGR2GRAY)
+                        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                        gray_clahe = clahe.apply(gray)
+                        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+                        sharpened = cv2.filter2D(gray_clahe, -1, kernel)
+                        variants.append(cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR))
+                    except Exception:
+                        pass
+                    return variants
+
+                collected_lines = []
+                seen_lines = set()
+                found_id = False
+
+                for rot_angle in (0, 90, 180, 270):
+                    if rot_angle == 0:
+                        cur_bgr = bgr
+                    elif rot_angle == 90:
+                        cur_bgr = cv2.rotate(bgr, cv2.ROTATE_90_CLOCKWISE)
+                    elif rot_angle == 180:
+                        cur_bgr = cv2.rotate(bgr, cv2.ROTATE_180)
+                    else:
+                        cur_bgr = cv2.rotate(bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+                    for var in _get_variants(cur_bgr):
+                        res, _ = rapid(var)
+                        if res:
+                            pass_lines = [r[1].strip() for r in res if len(r) >= 2 and r[1] and r[1].strip()]
+                            pass_text = "\n".join(pass_lines)
+                            try:
+                                ids = _match_identifiers(pass_text)
+                                if any(ids.values()):
+                                    found_id = True
+                            except Exception:
+                                pass
+                            for ln in pass_lines:
+                                if ln not in seen_lines:
+                                    seen_lines.add(ln)
+                                    collected_lines.append(ln)
+                        if found_id:
+                            break
+                    if found_id:
+                        break
+
+                if collected_lines:
+                    full_text = "\n".join(collected_lines).strip()
+                    return full_text, {
+                        "ran": True,
+                        "engine": "rapidocr-onnx",
+                        "lines_count": len(collected_lines),
+                        "rotation": rot_angle if found_id else 0,
+                    }
         except Exception:
             pass
 
@@ -130,9 +168,10 @@ def ocr_extract(data: bytes):
             import pytesseract
             from PIL import Image, ImageOps
             import io
-            img = Image.open(io.BytesIO(data)).convert("L")
+            img = Image.open(io.BytesIO(data))
+            img = ImageOps.exif_transpose(img).convert("L")
             img = ImageOps.autocontrast(img)
-            img = img.resize((img.width * 2, img.height * 2), Image.LANCZOS)
+            img = img.resize((img.width * 2, img.height * 2), Image.Resampling.LANCZOS)
             text = pytesseract.image_to_string(img, config="--psm 6")
             if text and text.strip():
                 return text.strip(), {"ran": True, "engine": "tesseract"}
@@ -163,6 +202,17 @@ def verify_aadhaar(number: str) -> list:
     valid_start = valid_len and n[0] not in ("0", "1")
     return [{"label": "structure", "ok": valid_len and valid_start,
              "detail": "12-digit UIDAI format (first digit 2-9)" if (valid_len and valid_start) else "Invalid Aadhaar structure"}]
+
+
+def _pan_check_char(first9: str) -> str:
+    """The community PAN trailing-letter rule (used in several open-source
+    validators). It is NOT authoritative — NSDL never published the formula —
+    so callers treat it as a consistency hint, never a hard pass/fail."""
+    total = 0
+    for ch in first9:
+        total += int(ch) if ch.isdigit() else ord(ch) - 55
+    rem = total % 36
+    return str(rem) if rem < 10 else chr(rem + 55)
 
 
 def verify_pan(pan: str) -> list:

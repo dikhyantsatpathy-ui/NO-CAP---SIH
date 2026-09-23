@@ -120,12 +120,19 @@ def _first_date(text: str) -> str | None:
     the past (a pure future-date scan), fall back to the first date so the
     future-DOB signal can still fire."""
     picks = []
-    for m in _DOB_RE.finditer(text):
-        g = m.groups()
-        if g[0] is not None:  # DMY
-            d, mo, y = int(g[0]), int(g[1]), int(g[2])
-        else:                   # YMD
-            y, mo, d = int(g[3]), int(g[4]), int(g[5])
+    # 1. Standard separated dates: 15/08/1990, 15-08-1990, 15.08.1990, 15 08 1990
+    for m in re.finditer(r"\b([0-3]?[0-9])[\s\-_./]+([0-1]?[0-9])[\s\-_./]+((?:19|20)\d{2})\b", text):
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if _valid_date(y, mo, d):
+            picks.append((y, mo, d))
+    # 2. ISO format: 1990-08-15
+    for m in re.finditer(r"\b((?:19|20)\d{2})[\s\-_./]+([0-1]?[0-9])[\s\-_./]+([0-3]?[0-9])\b", text):
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if _valid_date(y, mo, d):
+            picks.append((y, mo, d))
+    # 3. OCR glued format: 1508/1990 or 15/081990
+    for m in re.finditer(r"\b([0-3][0-9])([0-1][0-9])[\s\-_./]+((?:19|20)\d{2})\b", text):
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if _valid_date(y, mo, d):
             picks.append((y, mo, d))
     if not picks:
@@ -287,27 +294,33 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
             found["state"] = st
             break
 
-    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...") or layout heuristics
+    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...", "lame: ...") or layout heuristics
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for ln in lines:
-        m = re.search(r"(?i)(?:Name|नाम|Holder(?:'s)?\s*Name|Applicant)[:\s]+([A-Za-z ]{3,40})", ln)
+        m = re.search(r"(?i)(?:(?:[NnLlM][a-z]{2,3}|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक))[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
         if m:
             cand = re.sub(r"\s+", " ", m.group(1)).strip()
-            if cand and not any(cand.upper().startswith(bad) for bad in ("FATHER", "INCOME", "GOVT", "INDIA", "DEPARTMENT", "DIRECTOR")):
-                found["name"] = cand[:80]
-                break
+            up = cand.upper()
+            if not any(bad in up for bad in ("FATHER", "INCOME", "GOVT", "INDIA", "DEPARTMENT", "DIRECTOR", "PERMANENT", "ACCOUNT")):
+                words = [w for w in cand.split() if w.isalpha()]
+                if 1 <= len(words) <= 5:
+                    found["name"] = " ".join(words).title()[:80]
+                    break
 
     # If name not found by explicit label, apply document layout heuristics
     if not found.get("name"):
         doc_clean = (doc_type or "").lower()
         if "pan" in doc_clean:
+            bad_keywords = {"INCOME", "TAX", "GOVT", "INDIA", "DEPARTMENT", "PERMANENT", "ACCOUNT", "CARD", "SIGNATURE", "DATE", "FATHER", "BIRTH", "DOB", "MALE", "FEMALE", "NUMBER", "AYAKAR", "BHARAT", "GOVERNMENT"}
             for ln in lines:
-                up = ln.upper()
-                if any(bad in up for bad in ("INCOME", "TAX", "GOVT", "INDIA", "DEPARTMENT", "PERMANENT", "ACCOUNT", "FATHER", "SIGNATURE", "DATE")):
+                cleaned = re.sub(r"[^A-Za-z ]", " ", ln).strip()
+                cleaned = re.sub(r"\s+", " ", cleaned)
+                up = cleaned.upper()
+                if any(bad in up for bad in bad_keywords):
                     continue
-                words = ln.split()
-                if 1 <= len(words) <= 4 and all(w.isalpha() for w in words) and len(ln) >= 3:
-                    found["name"] = ln.title()[:80]
+                words = cleaned.split()
+                if 2 <= len(words) <= 4 and all(len(w) >= 2 for w in words):
+                    found["name"] = cleaned.title()[:80]
                     break
         elif "aadhaar" in doc_clean:
             for i, ln in enumerate(lines):
