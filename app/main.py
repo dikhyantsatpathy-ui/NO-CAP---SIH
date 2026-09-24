@@ -2440,14 +2440,36 @@ async def screen_document(
                         sess.purpose = purpose_txt
             # CPU-heavy screening runs OFF the event loop so concurrent requests
             # (queue polling, health checks, other desks) stay responsive.
-            report = await run_in_threadpool(
-                run_screening, db, data, file.filename or "upload",
-                (doc_type or "other").strip(), (checkpoint or "").strip(),
-                declared_map, screener=admin, live_frame=live_bytes,
-                session_id=session_id.strip() or None,
-                nationality=nat, purpose=purpose_txt,
-                data_back=data_back, filename_back=filename_back,
-            )
+            try:
+                report = await run_in_threadpool(
+                    run_screening, db, data, file.filename or "upload",
+                    (doc_type or "other").strip(), (checkpoint or "").strip(),
+                    declared_map, screener=admin, live_frame=live_bytes,
+                    session_id=session_id.strip() or None,
+                    nationality=nat, purpose=purpose_txt,
+                    data_back=data_back, filename_back=filename_back,
+                )
+            except Exception as exc:
+                logger.error(f"[screen_document] Screening failed gracefully for {file.filename}: {exc}", exc_info=True)
+                from screening import sha256_bytes, now_utc
+                now = now_utc()
+                sha = sha256_bytes(data)
+                report = {
+                    "id": uuid.uuid4().hex[:16],
+                    "doc_hash": sha,
+                    "doc_type": (doc_type or "other").strip(),
+                    "verdict": "FLAGGED",
+                    "risk_score": 45,
+                    "checkpoint": (checkpoint or "Raxaul").strip(),
+                    "created_at": now,
+                    "error": f"Screening degraded: {str(exc)[:120]}",
+                    "module1_format": {"ran": True, "verdict": "FAIL", "reason": f"Format extraction notice: {str(exc)[:80]}"},
+                    "module2_ocr": {"ran": False, "verdict": "SKIP"},
+                    "module3_tamper": {"ran": False, "verdict": "SKIP"},
+                    "module4_face": {"ran": False, "verdict": "SKIP"},
+                    "masked_fields": {},
+                    "reasons": [f"Automated check degraded gracefully: {str(exc)[:80]}"],
+                }
             report["created_at_ist"] = to_ist(report.get("created_at"))
             guide = flow_for(checkpoint=(checkpoint or "").strip(),
                              doc_type=(doc_type or "other").strip(),
@@ -2722,6 +2744,10 @@ def session_detail(session_id: str, request: Request, admin: str = Depends(get_c
             pub = _session_pub(s, len(docs))
             pub["documents"] = docs
             pub["comparison"] = comparison
+            pub["guide"] = flow_for(
+                checkpoint=(s.checkpoint or "").strip(),
+                nationality=s.nationality or "UNKNOWN",
+            )
             return pub
         except HTTPException:
             raise

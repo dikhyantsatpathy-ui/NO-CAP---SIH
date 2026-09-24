@@ -143,6 +143,64 @@ function GuideStepper({
 // Guided Protocol & Traveller Briefing Bar
 // ----------------------------------------------------------------------------
 
+function buildDefaultGuide(checkpoint: string, nationality?: string | null): GuidedFlow {
+  const post = checkpoint || "Raxaul Checkpoint";
+  const nat = (nationality || "IN").toUpperCase();
+  const isNepal = nat === "NP";
+  const isBhutan = nat === "BT";
+  const isIndia = nat === "IN";
+
+  return {
+    checkpoint: post,
+    cluster: isNepal ? "indo_nepal" : isBhutan ? "indo_bhutan" : "integrated_icp",
+    cluster_label: `${post} (Border Verification Post)`,
+    mode: "land",
+    doc_type: "pan",
+    doc_label: "Identity Document",
+    nationality: nat,
+    nationality_label: isNepal ? "Nepal (1950 Friendship Treaty)" : isBhutan ? "Bhutan (1949 Treaty)" : isIndia ? "India (Domestic / Outbound)" : `International (${nat})`,
+    expected_documents: isNepal ? ["citizenship", "passport", "voter_id"] : isBhutan ? ["citizenship", "passport", "voter_id"] : ["aadhaar", "pan", "passport", "voter_id", "dl"],
+    officer_steps: [
+      {
+        order: 1,
+        phase: "Intake",
+        text: "Physical inspection of document edges, holographic foil, and print clarity under ambient light.",
+        detail: "Check for lamination bubbling, altered text fonts, or photo re-sticking.",
+      },
+      {
+        order: 2,
+        phase: "Scan & OCR",
+        text: "Upload front and back images for sub-second memory extraction and tamper detection.",
+        detail: "Ensure all 4 corners and identifier fields (PAN, Aadhaar, MRZ) are visible without heavy glare.",
+      },
+      {
+        order: 3,
+        phase: "Forensics",
+        text: "Review automated ELA compression, 2D-FFT spectral, and PRNU sensor noise indicators.",
+        detail: "Low tampering risk (<25) qualifies for expedited clearance.",
+      },
+      {
+        order: 4,
+        phase: "Biometrics",
+        text: "Verify live traveller face match against document portrait.",
+        detail: "Ensure anti-spoofing challenge passes before clearing traveller.",
+      },
+      {
+        order: 5,
+        phase: "Seal & Log",
+        text: "Approve session to anchor SHA-256 hash-chain receipt and issue BSA 65B legal certificate.",
+      },
+    ],
+    traveller_steps: [
+      { order: 1, text: "Please present your physical identity document (Passport, Aadhaar, PAN, Voter ID, or Citizenship Certificate)." },
+      { order: 2, text: "Place the document flat on the scanner or hold steady in front of the capture lens." },
+      { order: 3, text: "Look directly at the desk camera for a quick biometric match." },
+      { order: 4, text: "Verification complete. Thank you for your cooperation." },
+    ],
+    capture_hint: "Avoid direct flash reflections on plastic lamination. Ensure card number, photo, and date of birth are sharp and legible.",
+  };
+}
+
 function GuidedProtocolBar({
   guide,
   checkpoint,
@@ -153,7 +211,7 @@ function GuidedProtocolBar({
   nationality?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  if (!guide && !checkpoint) return null;
+  const effectiveGuide = guide || buildDefaultGuide(checkpoint, nationality);
 
   return (
     <div className="protocol-hud">
@@ -162,12 +220,13 @@ function GuidedProtocolBar({
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>
-          <span>What to do at {guide?.cluster_label || checkpoint}</span>
+          <span>What to do at {effectiveGuide.cluster_label || checkpoint || "Border Checkpoint"}</span>
         </div>
         <button
           type="button"
           className="subtable-toggle"
           onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
         >
           {open ? "▼ Hide the steps" : "▶ Show the steps"}
         </button>
@@ -175,26 +234,26 @@ function GuidedProtocolBar({
 
       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
         <span className="chip chip--seal">
-          {guide?.mode ? `${guide.mode.toUpperCase()} BORDER` : "LAND BORDER"}
+          {effectiveGuide.mode ? `${effectiveGuide.mode.toUpperCase()} BORDER` : "LAND BORDER"}
         </span>
-        <span className="chip chip--mute">Post: {checkpoint}</span>
+        <span className="chip chip--mute">Post: {checkpoint || "Active Post"}</span>
         {nationality && (
           <span className="chip chip--info">
-            Nationality: {guide?.nationality_label || nationality}
+            Nationality: {effectiveGuide.nationality_label || nationality}
           </span>
         )}
-        {guide?.expected_documents && guide.expected_documents.length > 0 && (
+        {effectiveGuide.expected_documents && effectiveGuide.expected_documents.length > 0 && (
           <span className="muted" style={{ fontSize: "11.5px" }}>
-            Expected documents: {guide.expected_documents.map((d) => SCREEN_DOC_LABELS[d as ScreenDocType] || d).join(" / ")}
+            Expected documents: {effectiveGuide.expected_documents.map((d) => SCREEN_DOC_LABELS[d as ScreenDocType] || d).join(" / ")}
           </span>
         )}
       </div>
 
-      {open && guide && (
+      {open && (
         <div className="protocol-hud__grid">
           <div className="protocol-col">
             <span className="protocol-col__heading">Officer — what to check</span>
-            {guide.officer_steps?.map((st) => (
+            {effectiveGuide.officer_steps?.map((st) => (
               <div key={st.order} className="protocol-step-item">
                 <span className="protocol-step-num">{st.order}</span>
                 <div>
@@ -207,15 +266,15 @@ function GuidedProtocolBar({
           <div className="protocol-col">
             <span className="protocol-col__heading">Traveller — what to say</span>
             <div className="protocol-brief-box">
-              {guide.traveller_steps?.map((ts) => (
+              {effectiveGuide.traveller_steps?.map((ts) => (
                 <div key={ts.order} style={{ marginBottom: "6px" }}>
                   <span>{ts.order}. {ts.text}</span>
                 </div>
               ))}
             </div>
-            {guide.capture_hint && (
+            {effectiveGuide.capture_hint && (
               <div className="muted" style={{ fontSize: "11px", marginTop: "4px" }}>
-                <strong>Capture tip:</strong> {guide.capture_hint}
+                <strong>Capture tip:</strong> {effectiveGuide.capture_hint}
               </div>
             )}
           </div>
