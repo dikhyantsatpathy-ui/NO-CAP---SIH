@@ -261,18 +261,29 @@ def _architecture_blueprint() -> str:
 
 
 def codebase_context(question: str) -> str:
-    """Build the complete CODE CONTEXT block containing the entire project codebase database."""
+    """Build the CODE CONTEXT block containing the project blueprint, file manifest, and relevant source files."""
     files = _load_index()
     if not files:
         return ""
+
+    q_clean = (question or "").strip().lower()
+    is_greeting = len(q_clean) < 15 and any(g in q_clean for g in ("hi", "hello", "hey", "who", "help", "start", "oracle"))
+
+    blueprint = _architecture_blueprint()
+    
+    if is_greeting:
+        return (
+            "Below is the SYSTEM BLUEPRINT of the entire project repository. "
+            "Use it to welcome the user, introduce the console, and explain how you can assist them.\n\n"
+            f"{blueprint}"
+        )
 
     ranked = _rank_files(question)
     ranked_set = {f["rel"] for f in ranked}
     remaining = [f for f in files if f["rel"] not in ranked_set]
     ordered_files = ranked + remaining
 
-    blueprint = _architecture_blueprint()
-    manifest = "### COMPLETE PROJECT FILES MANIFEST:\n" + "\n".join(f["manifest_entry"] for f in ordered_files)
+    manifest = "### COMPLETE PROJECT FILES MANIFEST:\n" + "\n".join(f["manifest_entry"] for f in ordered_files[:30])
 
     parts: list[str] = [blueprint, manifest]
     used = len(blueprint) + len(manifest) + 10
@@ -285,12 +296,11 @@ def codebase_context(question: str) -> str:
         used += len(block) + 4
 
     return (
-        "Below is the ACTUAL SOURCE CODE DATABASE of the entire project repository. "
-        "The entire codebase across backend, frontend, database schemas, cryptographic vaults, "
+        "Below is the ACTUAL SOURCE CODE DATABASE of the project repository. "
+        "The codebase across backend, frontend, database schemas, cryptographic vaults, "
         "identity screening algorithms, verification pipelines, configuration, and documentation "
-        "guides is included in full below with 1-based line numbers. "
-        "Every single file is accessible to you. When answering, search and cite exact file paths "
-        "and line numbers (e.g. `app/main.py:1124-1140` or `frontend/src/views/DeskView.tsx:35`). "
-        "Be technically rigorous, precise, and directly quote code snippets when explaining logic.\n\n"
+        "is provided with 1-based line numbers. "
+        "Cite exact file paths and line numbers (e.g. `app/main.py:1124`, `frontend/src/views/DeskView.tsx:35`) "
+        "when answering questions, while explaining everything in clear layman terms.\n\n"
         + "\n\n".join(parts)
     )

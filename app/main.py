@@ -4248,9 +4248,17 @@ def _chat_history_turns(message, history):
 
 def _gemini_reply(message, history):
     api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or GEMINI_KEY).strip()
-    primary_model = (os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-2.5-flash").strip()
+    if not api_key:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or "").strip()
+        except Exception:
+            pass
     if not api_key:
         return {"ok": False, "reason": "unconfigured"}
+
+    primary_model = (os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-3.5-flash-lite").strip()
 
     prompt = GEMINI_SYSTEM_PROMPT
     try:
@@ -4271,7 +4279,7 @@ def _gemini_reply(message, history):
     headers = {"Content-Type": "application/json"}
 
     candidate_models = [primary_model]
-    for m in ("gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"):
+    for m in ("gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-flash-latest"):
         if m not in candidate_models:
             candidate_models.append(m)
 

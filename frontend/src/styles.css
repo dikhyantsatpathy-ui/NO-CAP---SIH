@@ -2931,61 +2931,6 @@ textarea::placeholder {
 }
 
 /* ---------------------------------------------------------------------------
-   Ashoka Chakra Watermark (Sovereign Seal Background)
-   Positioned behind header and tab bar so rotation dips beneath tab layer
-   --------------------------------------------------------------------------- */
-.ashoka-watermark {
-  position: fixed;
-  right: -60px;
-  top: 110px;
-  width: 480px;
-  height: 480px;
-  max-width: 50vw;
-  max-height: 50vw;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-  z-index: 1;
-  color: #0b2240;
-  opacity: 0.052;
-  overflow: hidden;
-  transition: opacity 0.3s ease;
-}
-
-[data-theme="dark"] .ashoka-watermark {
-  opacity: 0.058;
-  color: #0b2240;
-}
-
-.ashoka-watermark__svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  animation: ashokaSpin 220s linear infinite;
-  will-change: transform;
-  transform: translate3d(0, 0, 0);
-}
-
-@keyframes ashokaSpin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 768px) {
-  .ashoka-watermark {
-    right: -40px;
-    top: 140px;
-    width: 280px;
-    height: 280px;
-    opacity: 0.038;
-  }
-}
-
-/* ---------------------------------------------------------------------------
    Webcam Modal Alignment Guides & Auto-Trigger Styles
    --------------------------------------------------------------------------- */
 .camera-viewport {
@@ -3120,22 +3065,32 @@ textarea::placeholder {
 
 .ashoka-watermark {
   position: fixed;
-  top: 48%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(650px, 85vw);
-  height: min(650px, 85vw);
+  right: -30px;
+  top: 95px;
+  width: 520px;
+  height: 520px;
+  max-width: 45vw;
+  max-height: 45vw;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.088;
-  color: #1d4ed8;
+  opacity: 0.115;
+  color: #1e3a8a;
   user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.3s ease;
+}
+
+[data-theme="dark"] .ashoka-watermark {
+  opacity: 0.12;
+  color: #3b82f6;
 }
 
 .ashoka-watermark__svg {
   width: 100%;
   height: 100%;
-  animation: ashokaSpin 120s linear infinite;
+  display: block;
+  animation: ashokaSpin 160s linear infinite;
+  will-change: transform;
 }
 
 @keyframes ashokaSpin {
@@ -3144,6 +3099,16 @@ textarea::placeholder {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 768px) {
+  .ashoka-watermark {
+    right: -30px;
+    top: 130px;
+    width: 280px;
+    height: 280px;
+    opacity: 0.08;
   }
 }
 

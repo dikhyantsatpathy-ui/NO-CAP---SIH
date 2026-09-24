@@ -10,6 +10,20 @@ type Entry = { id: string; tags: string[]; q: string; a: string; s?: string };
 
 const ENTRIES: Entry[] = [
   {
+    id: "greetings",
+    tags: ["hi", "hello", "hey", "who", "are", "you", "greetings", "oracle", "assistant", "start", "help", "sup", "yo"],
+    q: "Hello! Who are you and how can you help me?",
+    a: "👋 **Hello! I am your AI Technical Assistant & Architecture Oracle for the SSB Border Screening Console (SIH26188).**\n\nI have 100% full-stack knowledge of the entire system—including:\n- **Frontend UI**: Where every button, dropzone, tab, and card is located.\n- **4-Module Pipeline**: M1 Optical OCR, M2 Mathematical Checksums, M3 Tampering Forensics (ELA/FFT/PRNU), and M4 Biometric Face Verification.\n- **Zero-Storage Privacy**: DPDP Act 2023 compliance with zero raw persistence.\n- **Court Evidence**: BSA 2023 Section 65B immutable hash-chain certificates.\n- **Checkpoint Operations**: Indo-Nepal and Indo-Bhutan border protocols.\n\nFeel free to ask me anything in plain simple words—from *'Where is the upload button?'* to *'How does 2D-FFT tampering work?'*!",
+    s: "frontend/src/App.tsx · app/main.py",
+  },
+  {
+    id: "where-upload-ui",
+    tags: ["where", "upload", "button", "dropzone", "screen", "how", "to", "intake", "card", "click", "file", "front", "back", "use", "website", "ui"],
+    q: "Where is the document upload section on the screen and how do I use it?",
+    a: "Here is where to find the upload section and how to screen a document:\n\n1. **Go to the `Desk` Tab**: At the top navigation bar, click the **`Desk`** tab (the first tab on the left).\n2. **Step 1 — Traveller Intake**: Enter the traveller's Name, Nationality, and Purpose of Travel (e.g. Tourism, Trade), then click **Start Traveller Session**.\n3. **Step 2 — Document Intake (Upload Section)**:\n   - Located right in the middle under **`Step 2: Document Intake & Optical Scan`**.\n   - Select the **Document Type** (Passport, Aadhaar, PAN, Driving Licence, Voter ID, Nepali Citizenship).\n   - Drop your files into the **`Side A (Front / Bio Page)`** and optional **`Side B (Back / Address Page)`** boxes, or click **Browse Files**.\n   - Alternatively, click any button in the **Specimen Quick-Picker** on the right (e.g., *Genuine Passport*, *Forged PAN*) to test with instant samples without uploading files!\n4. **Inspect & Decide**: The system instantly runs the 4 modules in under 800ms. Click the green **`Approve & Sign to Ledger`** button to finalize or the amber **`Flag for Supervisor Review`** button if suspicious.",
+    s: "frontend/src/views/DeskView.tsx:80-260",
+  },
+  {
     id: "what",
     tags: ["what", "is", "nocap", "project", "about", "sih", "genesis", "ssb", "border", "purpose", "overview", "introduction"],
     q: "What is this project and what problem does it solve?",
@@ -83,7 +97,7 @@ const ENTRIES: Entry[] = [
     id: "tech-stack",
     tags: ["tech", "stack", "fastapi", "react", "vite", "neon", "postgres", "sqlite", "onnx", "rapidocr", "python", "typescript"],
     q: "What is the complete technology stack?",
-    a: "**Backend Architecture**:\n- **Language & Framework**: Python 3.12, FastAPI (async/await throughout), Starlette.\n- **Database**: PostgreSQL on Neon Serverless with automatic background keep-alive ping; local high-availability SQLite fallback with WAL mode.\n- **ML & Forensics**: RapidOCR (ONNX Runtime), OpenCV, NumPy, SciPy, PyPDF.\n- **Security & Rate Limiting**: SlowAPI, Google OAuth 2.0 OpenID Connect.\n\n**Frontend Architecture**:\n- **Core**: React 18, TypeScript, Vite.\n- **Styling**: Vanilla CSS Design System with curated Navy & Off-White tokens, glassmorphism, responsive data grids, and zero third-party bloated CSS frameworks.\n- **AI Assistant**: Dual-engine chatbot with instant offline RAG knowledge base + Gemini 1.5/2.0 API codebase RAG.",
+    a: "**Backend Architecture**:\n- **Language & Framework**: Python 3.12, FastAPI (async/await throughout), Starlette.\n- **Database**: PostgreSQL on Neon Serverless with automatic background keep-alive ping; local high-availability SQLite fallback with WAL mode.\n- **ML & Forensics**: RapidOCR (ONNX Runtime), OpenCV, NumPy, SciPy, PyPDF.\n- **Security & Rate Limiting**: SlowAPI, Google OAuth 2.0 OpenID Connect.\n\n**Frontend Architecture**:\n- **Core**: React 18, TypeScript, Vite.\n- **Styling**: Vanilla CSS Design System with curated Navy & Off-White tokens, glassmorphism, responsive data grids, and zero third-party bloated CSS frameworks.\n- **AI Assistant**: Direct Google Gemini Chat (`gemini-3.5-flash` / `gemini-3.5-flash-lite`) with full codebase database ingestion.",
     s: "pyproject.toml · package.json · app/main.py · frontend/src/styles.css",
   },
   {
@@ -100,23 +114,16 @@ const ENTRIES: Entry[] = [
     a: "Identity documents like Aadhaar cards and Driving Licences carry crucial data on both sides (Front: Name, DOB, Photo, ID Number; Back: Permanent Address, Father/Husband Guardian details, UIDAI QR Code). The desk UI provides an optional 'Upload Back Side' dropzone. When supplied, Module 1 performs optical extraction on both surfaces and non-destructively merges the verified back address and QR payload into the primary report.",
     s: "frontend/src/views/DeskView.tsx · app/extraction.py · app/screening.py",
   },
-  {
-    id: "how-to-run",
-    tags: ["run", "start", "install", "how to", "setup", "local", "commands", "port 8000"],
-    q: "How do I run and test the application locally?",
-    a: "1. **Windows Quick-Start**: Double-click `START.bat` in the repository root. It auto-installs Python dependencies (`uv` / `pip`), builds the frontend bundle, and launches Uvicorn on `http://localhost:8000`.\n2. **Manual Backend**: `python -m pip install -r requirements.txt` then `python -m uvicorn app.main:app --port 8000 --reload`.\n3. **Manual Frontend**: In `frontend/`, run `npm install && npm run build` (or `npm run dev` on port 5173).\n4. **Run Tests**: `pytest` in the project root to run comprehensive unit and integration suites.",
-    s: "START.bat · pyproject.toml · tests/",
-  },
 ];
 
 export const SUGGESTED_QUESTIONS: string[] = [
+  "Where is the upload section on the screen and how to use it?",
   "What is this project and what problem does it solve?",
   "Explain the Four-Module Forensic Screening Pipeline.",
   "How does Module 3 (Forensic Tamper Detection) detect forged IDs?",
   "How does Module 4 (Biometrics & Live Face Matching) work?",
   "How does the system ensure Zero-Raw-Storage & DPDP Act compliance?",
   "How does the Immutable Hash-Chain Ledger & BSA 2023 evidence work?",
-  "What border checkpoint sectors & treaties are supported?",
   "How is Neon DB kept lightning-fast without sleeping?",
 ];
 
@@ -132,11 +139,11 @@ export function searchKnowledge(query: string, limit = 2): Entry[] {
     const aText = normify(e.a);
     let score = 0;
     for (const t of tokens) {
-      if (tagText.includes(t)) score += 5;
-      if (qText.includes(t)) score += 3;
+      if (tagText.includes(t)) score += 6;
+      if (qText.includes(t)) score += 4;
       if (aText.includes(t)) score += 1;
     }
-    if (tokens.every((t) => tagText.includes(t) || qText.includes(t))) score += 8;
+    if (tokens.every((t) => tagText.includes(t) || qText.includes(t))) score += 10;
     return { e, score };
   })
     .filter((s) => s.score > 0)
@@ -146,20 +153,22 @@ export function searchKnowledge(query: string, limit = 2): Entry[] {
 
 export function answerFor(query: string): string {
   const hits = searchKnowledge(query, 2);
-  if (!hits.length) return fallbackAnswer(query);
-  return hits.map((h) => h.a + (h.s ? `\n\n📌 *Reference Source: ${h.s}*` : "")).join("\n\n---\n\n");
+  if (hits.length > 0) {
+    return hits.map((h) => h.a + (h.s ? `\n\n📌 *Reference Source: ${h.s}*` : "")).join("\n\n---\n\n");
+  }
+  return fallbackAnswer(query);
 }
 
 export function fallbackAnswer(query: string): string {
   const q = query.trim();
   return (
-    `**I am your dedicated technical oracle for the SSB Border Screening Console (SIH26188).**\n\n` +
-    `I can answer anything about:\n` +
-    `• **The 4-Module Pipeline**: M1 OCR, M2 Checksums, M3 Tamper Forensics (ELA/FFT/PRNU), M4 Biometrics\n` +
-    `• **Privacy & Compliance**: Zero-Raw-Storage DPDP Act 2023, BSA 2023 Section 65B court evidence\n` +
-    `• **Checkpoint Operations**: Indo-Nepal 1950 Treaty, Panitanki, Raxaul, Sonauli, Jaigaon\n` +
-    `• **Architecture & Code**: FastAPI, Neon PostgreSQL keep-alive, RapidOCR, React frontend\n\n` +
-    `Try asking one of the suggested questions above, or ask specifically about any module or feature!` +
+    `👋 **SSB Border Screening & Identity Oracle (SIH26188)**\n\n` +
+    `I am your technical assistant for this project. Here is how the system works:\n\n` +
+    `• **To Test a Document**: Go to the **\`Desk\`** tab at the top left. In Step 1 start a session, in Step 2 drop a file or click any **Specimen** card to test in 1 click.\n` +
+    `• **4-Module Pipeline**: M1 OCR, M2 Checksum Rules (ICAO 9303 / Verhoeff), M3 Tamper Forensics (ELA/2D-FFT/PRNU), and M4 Facial Biometrics.\n` +
+    `• **Privacy & Compliance**: Zero-Raw-Storage under DPDP Act 2023 + BSA 2023 Section 65B Electronic Court Evidence certificates.\n` +
+    `• **Other Tabs**: \`Review Queue\` for supervisor adjudication, \`Crypto Ledger\` for immutable audit blocks, and \`Watchlist\` for hashed alerts.\n\n` +
+    `Ask me any specific question about any module, algorithm, or file!` +
     (q ? `\n\n*(Your query: "${q.slice(0, 80)}")*` : "")
   );
 }
