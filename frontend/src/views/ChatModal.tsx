@@ -2,6 +2,103 @@ import React, { useState, useRef, useEffect } from "react";
 import { BotMessage, answerFor, SUGGESTED_QUESTIONS } from "../knowledge";
 import { chatWithAssistant } from "../api";
 
+function renderInline(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.substring(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith("**") && token.endsWith("**")) {
+      parts.push(<strong key={`b-${match.index}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      parts.push(<code key={`c-${match.index}`} className="chat-inline-code">{token.slice(1, -1)}</code>);
+    }
+    lastIndex = match.index + token.length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.substring(lastIndex));
+  }
+  return parts.length > 0 ? parts : [text];
+}
+
+function renderFormattedText(text: string) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let inCodeBlock = false;
+  let codeBlockLines: string[] = [];
+
+  lines.forEach((line, i) => {
+    if (line.trim().startsWith("```")) {
+      if (inCodeBlock) {
+        elements.push(
+          <pre key={`code-${i}`} className="chat-code-block">
+            <code>{codeBlockLines.join("\n")}</code>
+          </pre>
+        );
+        codeBlockLines = [];
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+      }
+      return;
+    }
+
+    if (inCodeBlock) {
+      codeBlockLines.push(line);
+      return;
+    }
+
+    if (line.startsWith("### ")) {
+      elements.push(<h4 key={`h3-${i}`} className="chat-heading chat-heading--3">{renderInline(line.slice(4))}</h4>);
+    } else if (line.startsWith("#### ")) {
+      elements.push(<h5 key={`h4-${i}`} className="chat-heading chat-heading--4">{renderInline(line.slice(5))}</h5>);
+    } else if (line.startsWith("## ")) {
+      elements.push(<h3 key={`h2-${i}`} className="chat-heading chat-heading--2">{renderInline(line.slice(3))}</h3>);
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      elements.push(
+        <div key={`li-${i}`} className="chat-list-item">
+          <span className="chat-list-bullet">•</span>
+          <span>{renderInline(line.slice(2))}</span>
+        </div>
+      );
+    } else if (/^\d+\.\s/.test(line)) {
+      const match = line.match(/^(\d+\.)\s(.*)$/);
+      if (match) {
+        elements.push(
+          <div key={`nli-${i}`} className="chat-list-item">
+            <span className="chat-list-number">{match[1]}</span>
+            <span>{renderInline(match[2])}</span>
+          </div>
+        );
+      } else {
+        elements.push(<p key={`p-${i}`} className="chat-paragraph">{renderInline(line)}</p>);
+      }
+    } else if (line.trim() === "---") {
+      elements.push(<hr key={`hr-${i}`} className="chat-divider" />);
+    } else if (line.trim() === "") {
+      elements.push(<div key={`sp-${i}`} style={{ height: "6px" }} />);
+    } else {
+      elements.push(<p key={`p-${i}`} className="chat-paragraph">{renderInline(line)}</p>);
+    }
+  });
+
+  if (inCodeBlock && codeBlockLines.length > 0) {
+    elements.push(
+      <pre key="code-end" className="chat-code-block">
+        <code>{codeBlockLines.join("\n")}</code>
+      </pre>
+    );
+  }
+
+  return elements;
+}
+
 interface ChatModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -90,8 +187,8 @@ export function ChatModal({ isOpen, onClose }: ChatModalProps) {
             <div key={idx} className={`chat-bubble chat-bubble--${m.role}`}>
               <div className="chat-bubble__avatar">{m.role === "bot" ? "🤖" : "👤"}</div>
               <div className="chat-bubble__content">
-                <div className="chat-bubble__text" style={{ whiteSpace: "pre-wrap" }}>
-                  {m.text}
+                <div className="chat-bubble__text">
+                  {renderFormattedText(m.text)}
                 </div>
               </div>
             </div>

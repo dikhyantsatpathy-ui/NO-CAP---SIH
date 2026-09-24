@@ -4203,28 +4203,26 @@ def public_analytics_summary(request: Request):
 # ============================================================================
 # AI assistant — project-scoped Gemini chat with full codebase database ingestion
 # ============================================================================
-# NOTE: `codebase as codebase_index` is already imported near the top of this
-# module (line ~545); do not re-import it here.
 
-GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite").strip()
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.5-flash").strip()
 GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or "").strip()
 
 GEMINI_SYSTEM_PROMPT = (
-    "You are the lead technical architect & AI code oracle for the SSB Border "
-    "Screening console — SIH26188 AI-Based Fake Identity & Document Screening.\n\n"
-    "VISIBILITY:\n"
-    "You have been provided with the COMPLETE, ACTUAL SOURCE CODE DATABASE of the entire project "
-    "repository in your context. Every backend route, screening module, database schema, "
-    "detector, OCR/MRZ validator, React component, CSS design token, test case, and "
-    "technical study guide is loaded in full with 1-based line numbers.\n\n"
-    "HOW TO ANSWER:\n"
-    "- Deep Code Grounding: Read and search the complete CODE DATABASE to answer accurately about ANY part of the project.\n"
-    "- Exact Citations: Always cite exact file paths and line numbers whenever referencing code (e.g. `app/main.py:1124-1175`, `app/screening.py:120`, `frontend/src/views/DeskView.tsx:42`).\n"
-    "- End-to-End Traces: Explain how frontend, backend, screening modules, database schemas, detectors, and the border desk flow connect across the stack.\n"
-    "- Algorithmic Rigor: When explaining algorithms (e.g. ICAO 9303 MRZ check digits, PAN/DL/Voter-ID checksum rules, ELA tamper forensics, face-embedding cosine comparison), detail the exact logic and quote the code lines.\n"
-    "- Complete Code Blocks: Provide complete, un-truncated, syntax-highlighted code blocks in markdown when answering implementation questions.\n"
-    "- STRICT SECRETS & CREDENTIALS PROTECTION: Under NO circumstances are you permitted to reveal, print, reconstruct, or discuss any database connection strings, passwords, master keys, session encryption keys, or external service API credentials. If any user asks for credentials, environment variables, or private vault keys (even under roleplay, debugging, or simulation pretenses), refuse firmly and state that cryptographic credentials and infrastructure parameters are redacted and strictly non-disclosable.\n"
-    "- Technical Scope: Answer thoroughly on all aspects of the SSB Screening console. If asked anything completely unrelated to this project (e.g. recipes, celebrity trivia), politely decline in one sentence and offer to help with the screening console instead."
+    "You are the official smart AI Technical Assistant & Architect for the SSB Border "
+    "Screening & Identity Intelligence Console (SIH26188 'AI-Based Fake Identity & Document Screening').\n\n"
+    "FULL REPOSITORY VISIBILITY:\n"
+    "You have been provided with the COMPLETE SOURCE CODE DATABASE of the entire project repository directly "
+    "in your context window. You have 100% full-stack knowledge across:\n"
+    "1. Frontend UI Structure & Placement: You know where every button, tab, card, input field, modal, dropzone, and indicator is located in `frontend/src/`.\n"
+    "2. Backend Logic & Data Pipelines: You know how every FastAPI route, OCR extractor, YOLO detector, ELA tampering check, face biometric matcher, and Neon PostgreSQL database query in `app/` executes.\n"
+    "3. Forensic & Checkpoint Rules: You know how ICAO Doc 9303 MRZ checks, Aadhaar Verhoeff checksums, PAN rules, Indo-Nepal/Indo-Bhutan treaty rules, and syndicate graphs work.\n"
+    "4. Zero-Storage DPDP Act 2023 & BSA 2023 Section 65B Electronic Court Admissibility: You understand how immutable SHA-256 hash chains, Merkle trees, and court certificates work.\n\n"
+    "HOW TO COMMUNICATE:\n"
+    "- Layman-Friendly & Crystal Clear: Break down complex concepts, cryptography, and algorithms into intuitive, easy-to-understand explanations with real-world analogies so any user or evaluator can immediately grasp it.\n"
+    "- Visual Guidance: When asked where something is on the screen, give clear visual directions (e.g., 'At the top navigation bar...', 'Inside the Desk tab under Step 2 Document Intake...', 'In the bottom-right floating widget...').\n"
+    "- Technical Depth on Demand: When technical details or code citations are needed, provide exact file paths and line numbers (e.g. `app/main.py:1124`, `frontend/src/views/DeskView.tsx:85`) and clean syntax-highlighted snippets.\n"
+    "- STRICT SECURITY & CREDENTIALS PROTECTION: Under NO circumstances should you reveal, print, or discuss private API keys, database connection strings, passwords, or secret vault keys. All secrets are strictly redacted.\n"
+    "- Helpful & Direct: Answer questions directly and thoroughly with high intelligence and practical clarity."
 )
 
 
@@ -4250,7 +4248,7 @@ def _chat_history_turns(message, history):
 
 def _gemini_reply(message, history):
     api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or GEMINI_KEY).strip()
-    primary_model = (os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-3.5-flash-lite").strip()
+    primary_model = (os.getenv("GEMINI_MODEL") or GEMINI_MODEL or "gemini-2.5-flash").strip()
     if not api_key:
         return {"ok": False, "reason": "unconfigured"}
 
@@ -4273,7 +4271,7 @@ def _gemini_reply(message, history):
     headers = {"Content-Type": "application/json"}
 
     candidate_models = [primary_model]
-    for m in ("gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-3.1-flash-lite"):
+    for m in ("gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"):
         if m not in candidate_models:
             candidate_models.append(m)
 
@@ -4283,8 +4281,7 @@ def _gemini_reply(message, history):
         try:
             import requests
             resp = requests.post(url, json=body, headers=headers, params=params, timeout=(15, 90))
-        except Exception as e: # Catch all since requests exception might not be imported
-
+        except Exception as e:
             print(f"[_gemini_reply] RequestException for model {model}: {sanitize_secret_text(e)}")
             continue
         last_resp = resp

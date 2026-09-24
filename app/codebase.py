@@ -50,8 +50,8 @@ _STOPWORDS = {
     "to", "what", "when", "where", "which", "who", "why", "with", "you", "your",
 }
 
-_MAX_FILE_CHARS = 350_000
-_MAX_CONTEXT_CHARS = 2_500_000  # Comfortably holds 100% of the entire codebase and docs
+_MAX_FILE_CHARS = 40_000
+_MAX_CONTEXT_CHARS = 160_000  # High-density, fast-loading codebase context within Gemini TPM limits
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 _CAMEL_RE = re.compile(r"([a-z])([A-Z])")
@@ -210,28 +210,53 @@ def _snippets(f: dict, question: str = "") -> str:
 
 
 def _architecture_blueprint() -> str:
-    """Return a high-level system architectural blueprint summarizing the repository layout."""
+    """Return a high-level system architectural blueprint summarizing the repository layout,
+    frontend visual map (where every button/tab/modal is located), and backend logic pipelines."""
     return (
-        "### SYSTEM ARCHITECTURE BLUEPRINT & REPOSITORY MAP:\n"
-        "The project is structured into clear architectural layers:\n\n"
-        "1. **Core Backend (`app/main.py`)**: Built with FastAPI & SQLAlchemy, organized into strict Columns:\n"
-        "   - Env & DB Config: DB engines (PostgreSQL / SQLite fallback), pooling, secrets, OAuth sign-in gate.\n"
-        "   - Database Models: `SignerIdentity` (officer profile + post/institution role), `ScreeningReport` (immutable screening pass), `WatchlistEntry` (hash-only identifier watchlist).\n"
-        "   - AI-content detection layer: heuristic + cloud + self-hosted ONNX detectors folded into `detect_image()` with a document-page pre-check.\n"
-        "   - FastAPI Base Routes: CORS, security headers, rate limiting, static file serving, Google login/logout/me, super-admin role assignment.\n"
-        "   - Forensic metadata engine: reads EXIF/ID3/PDF metadata to name the editing app or AI generator that produced a file.\n"
-        "   - Screening Desk (MHA SIH26188): `/api/screen`, `/api/screen/queue`, `/api/screen/reports/{id}`, adjudication, watchlist add/remove, shift export, syndicate alerts, evidentiary dossier (printable HTML).\n"
-        "   - AI Chatbot: `/api/chat` backed by full-codebase Gemini ingestion with line-numbered citations.\n\n"
-        "2. **Forensic Identity Screening Desk (`app/screening.py`)**:\n"
-        "   - Four explainable modules per pass: M1 OCR extraction (`extraction.py`), M2 document validation incl. ICAO 9303 MRZ check digits / PAN-DL-Voter-ID rules (`validation.py`, `identity.py`, `mrz.py`), M3 tampering & AI forensics (`tampering.py`, `forensics.py`, `detectors/`), M4 face comparison against the live-frame capture (`face.py`, `face_match.py`).\n"
-        "   - Multi-provider AI & heuristic content detection (Sightengine, local ONNX, frequency heuristics).\n"
-        "   - Privacy-preserving watchlist matching using SHA-256 digests over normalized identifiers (no raw IDs stored).\n\n"
-        "3. **Frontend Application (`frontend/src/`)**:\n"
-        "   - `App.tsx`: Main 5-tab console shell (Desk / Review Queue / Crypto Ledger / Watchlist / Staff) with Google sign-in gate.\n"
-        "   - Views: `DeskView.tsx` (session flow — one traveller per session, documents screened one by one, cross-compared, then approved or flagged), `ReviewQueueView.tsx` (supervisory adjudication of flagged sessions), `LedgerView.tsx` (chained SHA-256 session ledger + tamper verify), `WatchlistView.tsx` (hash-only watchlist), `StaffView.tsx` (officer roster / role assignment), `GoogleSignIn.tsx`.\n"
-        "   - Utilities: `api.ts` (API client incl. session + ledger endpoints), `app/state.tsx` (auth session + toasts), `app/util.ts` (hash/time formatting), `specimens.ts` (sample documents for demo passes), `knowledge.ts` (curated offline fallback).\n\n"
-        "4. **Documentation & Study Guides (`scripts/`, `README.md`)**:\n"
-        "   - Comprehensive deep-dives: `THE_COMPLETE_GUIDE.md`, `BACKEND_STUDY_GUIDE.md`, `CODE_WALKTHROUGH.md`, `SIH_PRESENTATION.md`, `MHA_SCREENING.md`.\n"
+        "### COMPLETE SYSTEM ARCHITECTURE BLUEPRINT & VISUAL REPOSITORY MAP:\n\n"
+        "#### 1. FRONTEND ARCHITECTURE & VISUAL UI MAP (`frontend/src/`):\n"
+        "- **Main Application Frame (`frontend/src/App.tsx`)**:\n"
+        "  - **Super Header**: Displays the Government of India Ashoka Lion Emblem, official SSB (Sashastra Seema Bal) seal, current Indian Standard Time (IST) clock, and current user profile.\n"
+        "  - **Ashoka Chakra Watermark**: High-resolution 24-spoke Navy Blue Ashoka Chakra rotating smoothly behind the main content area with soft opacity.\n"
+        "  - **Navigation Bar**: 5 main tabs with real-time badges:\n"
+        "    1. `Desk` (Active screening intake)\n"
+        "    2. `Review Queue` (Supervisory review of flagged travellers)\n"
+        "    3. `Crypto Ledger` (SHA-256 immutable audit chain & Section 65B certificates)\n"
+        "    4. `Watchlist` (Salted hash-only fugitive & red-notice directory)\n"
+        "    5. `Staff` (Officer directory & role assignments)\n"
+        "  - **Floating AI Assistant (`frontend/src/views/ChatModal.tsx`)**: Bottom-right floating button (`💬 AI Assistant`), opens the conversational Oracle modal with quick-topic chips.\n\n"
+        "- **Desk View (`frontend/src/views/DeskView.tsx`)**:\n"
+        "  - **Checkpoint & Treaty Protocol HUD**: Top banner showing active Border Post (Panitanki, Raxaul, Sonauli, Jaigaon, Petrapole) and Indo-Nepal / Indo-Bhutan treaty rules.\n"
+        "  - **Step 1 — Traveller Session Intake**: Name input, nationality dropdown, purpose of travel (Tourism, Trade, Transit), and session start button.\n"
+        "  - **Step 2 — Document Upload & Optical Scan**: Document type selector (Passport, Aadhaar, PAN, Driving Licence, Voter ID, Nepali Citizenship), Side A & Side B dual-dropzones, sample specimen picker.\n"
+        "  - **Step 3 — Optical Extraction HUD**: Displays parsed holder name, masked identifier (e.g. `TFPPS****G`, `XXXX-XXXX-4014`), DOB, and physical address with validation checkmarks.\n"
+        "  - **Step 4 — 4-Module Forensic Breakdown**:\n"
+        "    - *Module 1 (Extraction)*: OCR engine status (RapidOCR, Tesseract, pypdf, Gemini multimodal) and parsed fields.\n"
+        "    - *Module 2 (Validation)*: ICAO 9303 MRZ check-digit verification, Verhoeff checksum calculation, and hash-only watchlist matching.\n"
+        "    - *Module 3 (Tampering Forensics)*: ELA compression noise, 2D-FFT spectral PAPR, PRNU camera sensor pattern, and Laplacian blur analysis.\n"
+        "    - *Module 4 (Facial Biometrics)*: Document photo extraction vs live webcam holder capture with cosine similarity score and challenge-response liveness.\n"
+        "  - **Step 5 — Officer Decision Bar**: Two prominent buttons — green 'Approve & Sign to Ledger' or amber 'Flag for Review'.\n\n"
+        "- **Review Queue View (`frontend/src/views/ReviewQueueView.tsx`)**:\n"
+        "  - Displays all flagged crossings awaiting senior officer adjudication.\n"
+        "  - Side-by-side evidence dossier with one-click verdicts: `CLEARED`, `CONFIRMED_FRAUD`, or `INCONCLUSIVE`.\n\n"
+        "- **Cryptographic Ledger View (`frontend/src/views/LedgerView.tsx`)**:\n"
+        "  - Live hash-chain block explorer showing `prev_hash`, `block_hash`, `timestamp_ist`, and digital signatures.\n"
+        "  - 'Verify Whole Ledger' cryptographic Merkle audit button.\n"
+        "  - One-click BSA 2023 Section 65B Electronic Court Certificate generation and printable PDF/HTML export.\n\n"
+        "- **Watchlist View (`frontend/src/views/WatchlistView.tsx`)**:\n"
+        "  - Searchable hash-only repository of Interpol and SSB watchlist records with salted SHA-256 matching.\n\n"
+        "- **Staff View (`frontend/src/views/StaffView.tsx`)**:\n"
+        "  - Roster of screening officers, active duty stations, designations, and cryptographic signing profiles.\n\n"
+        "#### 2. BACKEND ARCHITECTURE & DATA FLOW (`app/`):\n"
+        "- `app/main.py`: FastAPI server, Neon serverless PostgreSQL connection pooling with background keep-alive loop (`SELECT 1` every 210s), OAuth authentication gate, rate limiting, and `/api/chat` conversational endpoint.\n"
+        "- `app/extraction.py`: Module 1 optical data extraction orchestrating RapidOCR, ICAO 9303 MRZ parsing, QR byte decompression, and multimodal Gemini fallback.\n"
+        "- `app/screening.py`: Master screening desk engine executing all 4 forensic modules, risk-scoring matrix (`CLEAR`, `REVIEW`, `FLAGGED`), and ledger block creation.\n"
+        "- `app/validation.py` & `app/mrz.py`: Mathematical checksum validators (ICAO Doc 9303 7-3-1 weights, Aadhaar Verhoeff D5 algorithm, PAN 4th-character category rules).\n"
+        "- `app/forensics.py` & `app/tampering.py`: Computer vision forensic detectors (JPEG Error Level Analysis, 2D-FFT spectral PAPR, PRNU sensor noise, blur detection).\n"
+        "- `app/face_match.py` & `app/face.py`: Face detection, portrait isolation, cosine embedding similarity, age-aware adaptive thresholding, and blink/nod liveness.\n"
+        "- `app/syndicate.py`: Graph-based cross-border human trafficking and fake document syndicate detection.\n"
+        "- `app/session.py`: Multi-document traveller session tracker comparing names, DOBs, and identifiers across all presented IDs.\n"
+        "- `app/config.py`: Environment configuration, Zero-Storage privacy settings, and cryptographic salt generation.\n"
     )
 
 
