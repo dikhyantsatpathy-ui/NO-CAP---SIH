@@ -415,13 +415,13 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                 if found.get("name"):
                     break
 
-    # 3. Label on same line or immediate next line below Name / नाम
+    # 3. Label on same line or immediate next line below Name / नाम (with strict word boundaries)
     if not found.get("name"):
         for i, ln in enumerate(lines):
             up = ln.upper()
             # Same-line match: Name: ...
-            m_same = re.search(r"(?i)(?:(?:[NnLlM][a-z]{2,3}|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक))[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
-            if m_same and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
+            m_same = re.search(r"(?i)\b(?:Name|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक)\b[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
+            if m_same and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX", "CARD")):
                 cand = re.sub(r"\s+", " ", m_same.group(1)).strip()
                 cand_up = cand.upper()
                 if not any(bad in cand_up for bad in bad_roots):
@@ -432,7 +432,7 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                         break
 
             # Next line check after Name / नाम
-            if any(k in up for k in ("NAME", "नाम", "/NAME")) and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
+            if re.search(r"(?i)\b(?:NAME|नाम|HOLDER)\b", ln) and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX", "CARD")):
                 for offset in (1, 2):
                     if i + offset < len(lines):
                         next_ln = lines[i + offset].strip()
@@ -449,8 +449,29 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                 if found.get("name"):
                     break
 
-    # 4. Scored candidate extraction for PAN and ID cards
-    if not found.get("name"):
+    # 4. PAN Card Specific Layout Scan (below PAN or below Permanent Account Number)
+    if not found.get("name") and (doc_norm == "pan" or any("INCOME" in ln.upper() or "PERMANENT" in ln.upper() for ln in lines)):
+        for i, ln in enumerate(lines):
+            up = ln.upper()
+            if any(k in up for k in ("PERMANENT", "ACCOUNT", "INCOME", "TFPPS", "PAN")) or re.search(r"\b[A-Za-z]{5}\s*[0-9]{4}\s*[A-Za-z]\b", ln):
+                for offset in (1, 2, 3):
+                    if i + offset < len(lines):
+                        cand_ln = lines[i + offset].strip()
+                        cand_up = cand_ln.upper()
+                        if len(cand_ln) >= 4 and not any(bad in cand_up for bad in bad_roots):
+                            cand = re.sub(r"[^A-Za-z ]", " ", cand_ln).strip()
+                            cand = re.sub(r"\s+", " ", cand)
+                            if cand and len(cand) >= 4 and not any(bad in cand.upper() for bad in bad_roots):
+                                fmt = _format_glued_name(cand)
+                                words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                                if 1 <= len(words) <= 4 and any(fmt.upper().endswith(sur) or sur in fmt.upper() for sur in _COMMON_SURNAMES):
+                                    found["name"] = fmt[:80]
+                                    break
+                if found.get("name"):
+                    break
+
+    # 5. Scored candidate extraction for PAN and ID cards across all lines
+    if not found.get("name") or any(found.get("name", "").upper().endswith(sur) for sur in _COMMON_SURNAMES) is False:
         scored_cands = []
         for ln in lines:
             raw_clean = re.sub(r"[^A-Za-z ]", " ", ln).strip()
@@ -468,12 +489,15 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                 continue
 
             score = 0
-            if any(fmt.upper().endswith(sur) for sur in _COMMON_SURNAMES):
-                score += 50
+            if any(fmt.upper().endswith(sur) or sur in fmt.upper() for sur in _COMMON_SURNAMES):
+                score += 60
             if len(words) in (2, 3):
                 score += 30
             if all(len(w) >= 3 for w in words):
                 score += 15
+            # All caps on official document
+            if raw_clean.isupper():
+                score += 10
             # Non-father preferred
             if fmt.upper() in father_cands:
                 score -= 40
@@ -1034,7 +1058,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         hard_flag = True
         can_clear = False
     elif (ai_det.get("ai_suspected") or _ai_score >= 65):
-        if is_physical_camera and val_passed and tamper_passed:
+        if is_physical_camera and (val_passed or tamper_passed or pan or aadhaar_no):
             reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% spectral variation).")
             risk += 5
         else:
@@ -1044,7 +1068,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             hard_flag = True
             can_clear = False
     elif _ai_score >= 55 and document_aware is not True:
-        if not (is_physical_camera and val_passed):
+        if not (is_physical_camera and (val_passed or pan or aadhaar_no)):
             score_val = _ai_score
             reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
             risk = max(risk + 12, 48)
