@@ -4283,12 +4283,17 @@ def _gemini_reply(message, history):
         if m not in candidate_models:
             candidate_models.append(m)
 
+    # Use persistent session for rapid TLS reuse and low latency
+    global _gemini_http_session
+    if "_gemini_http_session" not in globals() or _gemini_http_session is None:
+        import requests
+        _gemini_http_session = requests.Session()
+
     last_resp = None
     for model in candidate_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         try:
-            import requests
-            resp = requests.post(url, json=body, headers=headers, params=params, timeout=(15, 90))
+            resp = _gemini_http_session.post(url, json=body, headers=headers, params=params, timeout=(6, 25))
         except Exception as e:
             print(f"[_gemini_reply] RequestException for model {model}: {sanitize_secret_text(e)}")
             continue

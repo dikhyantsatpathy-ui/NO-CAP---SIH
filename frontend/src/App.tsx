@@ -211,11 +211,78 @@ function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => 
   );
 }
 
+const PALETTE_DRAFTS = [
+  { id: "draft-1", label: "Draft 1: Warm Ivory & Heritage Slate", hint: "Ivory + Slate Blue" },
+  { id: "draft-2", label: "Draft 2: Nordic Linen & Marine", hint: "Linen + Deep Marine" },
+  { id: "draft-3", label: "Draft 3: Royal Pearl & Indigo", hint: "Pearl + Sovereign Indigo" },
+  { id: "draft-4", label: "Draft 4: Sandstone & Cobalt", hint: "Sandstone + Precision Cobalt" },
+] as const;
+
+function PaletteDraftBar({
+  currentDraft,
+  onSelectDraft,
+}: {
+  currentDraft: string;
+  onSelectDraft: (id: string) => void;
+}) {
+  return (
+    <aside className="palette-draft-bar" aria-label="Palette theme selection">
+      <div className="palette-draft-bar__title">
+        <span>🎨 HARMONIC PALETTE DRAFTS:</span>
+      </div>
+      <div className="palette-draft-bar__options">
+        {PALETTE_DRAFTS.map((d) => {
+          const isActive = currentDraft === d.id;
+          return (
+            <button
+              key={d.id}
+              type="button"
+              className={`palette-draft-pill ${isActive ? "palette-draft-pill--active" : ""}`}
+              onClick={() => onSelectDraft(d.id)}
+              title={d.hint}
+            >
+              {isActive ? "✓ " : ""}{d.label}
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
 export function App() {
   const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
   const [chatOpen, setChatOpen] = useState(false);
   const prevView = useRef<ViewKey>("desk");
+
+  const [paletteDraft, setPaletteDraft] = useState<string>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const qDraft = urlParams.get("draft");
+      if (qDraft === "1" || qDraft === "draft-1") return "draft-1";
+      if (qDraft === "2" || qDraft === "draft-2") return "draft-2";
+      if (qDraft === "3" || qDraft === "draft-3") return "draft-3";
+      if (qDraft === "4" || qDraft === "draft-4") return "draft-4";
+
+      const port = window.location.port;
+      if (port === "8001") return "draft-2";
+      if (port === "8002") return "draft-3";
+      if (port === "8003") return "draft-4";
+      if (port === "8000") return "draft-1";
+
+      return localStorage.getItem("nocap_palette_draft") || "draft-1";
+    } catch {
+      return "draft-1";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-palette-draft", paletteDraft);
+    try {
+      localStorage.setItem("nocap_palette_draft", paletteDraft);
+    } catch {}
+  }, [paletteDraft]);
 
   useEffect(() => {
     if (prevView.current !== view) {
@@ -233,6 +300,7 @@ export function App() {
   if (!signedIn) {
     return (
       <>
+        <PaletteDraftBar currentDraft={paletteDraft} onSelectDraft={setPaletteDraft} />
         <AshokaChakraWatermark />
         <SignInGate />
         <FloatingChatTrigger onClick={() => setChatOpen(true)} />
@@ -243,6 +311,7 @@ export function App() {
 
   return (
     <div className="console-layout">
+      <PaletteDraftBar currentDraft={paletteDraft} onSelectDraft={setPaletteDraft} />
       <AshokaChakraWatermark />
       <SuperHeader />
       <PortalHeader />

@@ -12,29 +12,48 @@
    ========================================================================== */
 
 /* ---------------------------------------------------------------------------
-   1. Tokens
+   1. Tokens & 4 Harmonious Palette Drafts (SIH26188 Harmonies)
    --------------------------------------------------------------------------- */
-:root {
-  --bg: #f8fafc;
-  --bg-2: #f1f5f9;
-  --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --panel-3: #f1f5f9;
 
-  --line: #e2e8f0;
-  --line-2: #cbd5e1;
-  --line-3: #94a3b8;
-
-  --ink: #0f172a;
+/* Base & Draft 1: Warm Sovereign Ivory & Heritage Slate Blue */
+:root,
+[data-palette-draft="draft-1"] {
+  --palette-name: "Draft 1: Warm Ivory & Heritage Slate";
+  --bg: #faf7f2;               /* Rich Warm Ivory canvas */
+  --bg-2: #f2eee3;             /* Soft Ivory tone */
+  --panel: #ffffff;            /* Crisp elevated card surface */
+  --panel-2: #f3f6fa;          /* Harmonious soft slate-blue interior box */
+  --panel-3: #e8eef6;          /* Secondary interior / hover */
+  
+  --line: #e6e2d8;             /* Warm ivory hairline border */
+  --line-2: #d6d0c4;           /* Structured boundary */
+  --line-3: #9ca3af;
+  
+  --ink: #0f172a;              /* Crisp readable text */
   --ink-soft: #334155;
   --muted: #64748b;
-  --faint: #94a3b8;
+  --faint: #9ca3af;
 
-  --seal: #0b2240;
+  --seal: #0b2240;             /* Authoritative Sovereign Header Navy (Permanent) */
   --seal-deep: #061528;
   --seal-edge: #1d4ed8;
-  --seal-soft: #f0f4f8;
+  --seal-soft: #eef4fb;        /* Harmonious slate blue tint */
   --ink-on-seal: #ffffff;
+
+  --accent-box-bg: #f1f5fb;    /* Harmonious interior box fill */
+  --accent-box-border: #cadcf5;/* Refined slate blue border */
+  --accent-box-text: #1e40af;  /* Heritage navy accent */
+
+  --stepper-now-bg: #eef4fc;
+  --stepper-now-border: #1d4ed8;
+  --stepper-now-dot: #1d4ed8;
+
+  --cue-bg: #fcfbf5;
+  --cue-border: #e8e2cf;
+
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #f1f5fb 100%);
+  --hud-border: #cadcf5;
+  --hud-left-border: #1d4ed8;
 
   --security: #059669;
   --security-deep: #047857;
@@ -62,17 +81,17 @@
   --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
 }
 
-/* Crisp Off-White Government Console Tokens */
-[data-theme="dark"],
-[data-theme="light"] {
-  --bg: #f8fafc;
-  --bg-2: #f1f5f9;
-  --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --panel-3: #f1f5f9;
+/* Draft 2: Nordic Linen Off-White & Deep Marine */
+[data-palette-draft="draft-2"] {
+  --palette-name: "Draft 2: Nordic Linen & Deep Marine";
+  --bg: #f6f7f4;               /* Crisp Linen Off-White canvas */
+  --bg-2: #eceee8;             /* Linen tone */
+  --panel: #ffffff;            /* Pure white card surface */
+  --panel-2: #edf5f9;          /* Harmonious ocean marine interior box */
+  --panel-3: #e0edf5;          /* Secondary marine hover */
 
-  --line: #e2e8f0;
-  --line-2: #cbd5e1;
+  --line: #e0ded6;             /* Linen hairline border */
+  --line-2: #cbc7bd;
   --line-3: #94a3b8;
 
   --ink: #0f172a;
@@ -82,9 +101,24 @@
 
   --seal: #0b2240;
   --seal-deep: #061528;
-  --seal-edge: #1d4ed8;
-  --seal-soft: #f0f4f8;
+  --seal-edge: #0284c7;
+  --seal-soft: #edf6fb;
   --ink-on-seal: #ffffff;
+
+  --accent-box-bg: #ecf6fb;
+  --accent-box-border: #bee0f2;
+  --accent-box-text: #0284c7;
+
+  --stepper-now-bg: #edf6fc;
+  --stepper-now-border: #0284c7;
+  --stepper-now-dot: #0284c7;
+
+  --cue-bg: #fbf9f2;
+  --cue-border: #ded8c6;
+
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #edf6fb 100%);
+  --hud-border: #bee0f2;
+  --hud-left-border: #0284c7;
 
   --security: #059669;
   --security-deep: #047857;
@@ -100,13 +134,125 @@
   --warn: #d97706;
   --warn-soft: #fffbeb;
   --warn-line: #fde68a;
-  --info: #2563eb;
+  --info: #0284c7;
+  --info-soft: #f0f9ff;
+  --info-line: #bae6fd;
+}
+
+/* Draft 3: Royal Pearl & Sovereign Indigo */
+[data-palette-draft="draft-3"] {
+  --palette-name: "Draft 3: Royal Pearl & Sovereign Indigo";
+  --bg: #faf9f6;               /* Royal Pearl Off-White canvas */
+  --bg-2: #f0ede6;             /* Pearl tone */
+  --panel: #ffffff;            /* Pure white card surface */
+  --panel-2: #f2f4fe;          /* Harmonious indigo interior box */
+  --panel-3: #e5e9fc;
+
+  --line: #e4e2da;             /* Pearl hairline border */
+  --line-2: #cfcbc0;
+  --line-3: #94a3b8;
+
+  --ink: #0f172a;
+  --ink-soft: #334155;
+  --muted: #64748b;
+  --faint: #94a3b8;
+
+  --seal: #0b2240;
+  --seal-deep: #061528;
+  --seal-edge: #4338ca;
+  --seal-soft: #f0f3ff;
+  --ink-on-seal: #ffffff;
+
+  --accent-box-bg: #f1f3fe;
+  --accent-box-border: #c7d2fe;
+  --accent-box-text: #3730a3;
+
+  --stepper-now-bg: #eef2ff;
+  --stepper-now-border: #4338ca;
+  --stepper-now-dot: #4338ca;
+
+  --cue-bg: #fdfbf4;
+  --cue-border: #e6dfcb;
+
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #f1f3fe 100%);
+  --hud-border: #c7d2fe;
+  --hud-left-border: #4338ca;
+
+  --security: #059669;
+  --security-deep: #047857;
+  --security-soft: #ecfdf5;
+  --security-line: #a7f3d0;
+
+  --ok: #059669;
+  --ok-soft: #ecfdf5;
+  --ok-line: #a7f3d0;
+  --bad: #dc2626;
+  --bad-soft: #fef2f2;
+  --bad-line: #fecaca;
+  --warn: #d97706;
+  --warn-soft: #fffbeb;
+  --warn-line: #fde68a;
+  --info: #4f46e5;
+  --info-soft: #eef2ff;
+  --info-line: #c7d2fe;
+}
+
+/* Draft 4: Sandstone Alabaster & Precision Cobalt */
+[data-palette-draft="draft-4"] {
+  --palette-name: "Draft 4: Sandstone Alabaster & Precision Cobalt";
+  --bg: #f8f6f0;               /* Calming Sandstone Alabaster canvas */
+  --bg-2: #eeeae0;             /* Sandstone tone */
+  --panel: #ffffff;            /* Pure white card surface */
+  --panel-2: #eef4fa;          /* Harmonious precision cobalt interior box */
+  --panel-3: #e1ecf6;
+
+  --line: #e2ded4;             /* Sandstone hairline border */
+  --line-2: #ccc6b8;
+  --line-3: #94a3b8;
+
+  --ink: #0f172a;
+  --ink-soft: #334155;
+  --muted: #64748b;
+  --faint: #94a3b8;
+
+  --seal: #0b2240;
+  --seal-deep: #061528;
+  --seal-edge: #1e3a8a;
+  --seal-soft: #edf4fc;
+  --ink-on-seal: #ffffff;
+
+  --accent-box-bg: #eff5fa;
+  --accent-box-border: #bad4ee;
+  --accent-box-text: #1e3a8a;
+
+  --stepper-now-bg: #edf4fc;
+  --stepper-now-border: #1e3a8a;
+  --stepper-now-dot: #1e3a8a;
+
+  --cue-bg: #faf7ee;
+  --cue-border: #ded8c4;
+
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #eff5fa 100%);
+  --hud-border: #bad4ee;
+  --hud-left-border: #1e3a8a;
+
+  --security: #059669;
+  --security-deep: #047857;
+  --security-soft: #ecfdf5;
+  --security-line: #a7f3d0;
+
+  --ok: #059669;
+  --ok-soft: #ecfdf5;
+  --ok-line: #a7f3d0;
+  --bad: #dc2626;
+  --bad-soft: #fef2f2;
+  --bad-line: #fecaca;
+  --warn: #d97706;
+  --warn-soft: #fffbeb;
+  --warn-line: #fde68a;
+  --info: #1d4ed8;
   --info-soft: #eff6ff;
   --info-line: #bfdbfe;
-
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.02);
-  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.03);
-  --shadow-lg: 0 16px 36px -8px rgba(15, 23, 42, 0.12);
 }
 
 /* ---------------------------------------------------------------------------
@@ -120,12 +266,12 @@ html,
 body,
 #root {
   min-height: 100%;
-  background: #ffffff;
+  background: var(--bg);
 }
 
 body {
   margin: 0;
-  background: #ffffff;
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 14px;
@@ -134,6 +280,90 @@ body {
   text-rendering: optimizeLegibility;
   color-scheme: light;
 }
+
+/* Interactive Palette Draft Switcher Top Bar */
+.palette-draft-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #061528;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 6px 18px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 100;
+}
+.palette-draft-bar__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #93c5fd;
+  letter-spacing: 0.03em;
+}
+.palette-draft-bar__options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.palette-draft-pill {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #e2e8f0;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.palette-draft-pill:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: #93c5fd;
+  color: #ffffff;
+}
+.palette-draft-pill--active {
+  background: #1d4ed8 !important;
+  border-color: #60a5fa !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 10px rgba(29, 78, 216, 0.6);
+}
+
+/* Discrepancy & Flag Callout */
+.doc-discrepancy-callout {
+  background: #fff8f8;
+  border: 1.5px solid #fca5a5;
+  border-left: 4px solid #dc2626;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  margin-bottom: 6px;
+  animation: fadeIn 0.25s ease;
+}
+.doc-discrepancy-callout__title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #991b1b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.doc-discrepancy-callout__list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b91c1c;
+  font-weight: 500;
+}
+
 
 [data-theme="dark"] {
   color-scheme: light;
@@ -2315,9 +2545,9 @@ textarea::placeholder {
 }
 
 .stepper__item--now {
-  border-color: var(--seal);
-  background: var(--seal-soft);
-  box-shadow: 0 0 0 1px var(--seal);
+  border-color: var(--stepper-now-border);
+  background: var(--stepper-now-bg);
+  box-shadow: 0 0 0 1px var(--stepper-now-border);
 }
 
 .stepper__item--done {
@@ -2344,7 +2574,7 @@ textarea::placeholder {
 }
 
 .stepper__item--now .stepper__dot {
-  background: var(--seal);
+  background: var(--stepper-now-dot);
   color: #ffffff;
 }
 
@@ -2381,8 +2611,8 @@ textarea::placeholder {
   gap: 12px;
   padding: 11px 16px;
   border-radius: 8px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  background: var(--cue-bg);
+  border: 1px solid var(--cue-border);
   margin-top: 10px;
   animation: fadeIn 0.2s ease;
 }

@@ -903,13 +903,87 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         except (ValueError, OverflowError):
             pass
 
-    # Cross-Border Nationality & Visa Mismatch
+    # Cross-Border Nationality & Document Appropriateness Checks
     if nationality:
-        nat_clean = str(nationality).strip().upper()
-        # If declared nationality is Nepal or Bhutan, but visa is issued by/for UK / USA / Schengen
+        nat_raw = str(nationality).strip().upper()
+        # Normalization map to standard ISO codes and human labels
+        nat_map = {
+            "IN": ("IND", "Indian"), "IND": ("IND", "Indian"), "INDIA": ("IND", "Indian"),
+            "NP": ("NPL", "Nepali"), "NPL": ("NPL", "Nepali"), "NEPAL": ("NPL", "Nepali"),
+            "BT": ("BTN", "Bhutanese"), "BTN": ("BTN", "Bhutanese"), "BHUTAN": ("BTN", "Bhutanese"),
+            "BD": ("BGD", "Bangladeshi"), "BGD": ("BGD", "Bangladeshi"), "BANGLADESH": ("BGD", "Bangladeshi"),
+            "PK": ("PAK", "Pakistani"), "PAK": ("PAK", "Pakistani"), "PAKISTAN": ("PAK", "Pakistani"),
+            "CN": ("CHN", "Chinese"), "CHN": ("CHN", "Chinese"), "CHINA": ("CHN", "Chinese"),
+            "US": ("USA", "United States"), "USA": ("USA", "United States"),
+            "GB": ("GBR", "British"), "UK": ("GBR", "British"), "GBR": ("GBR", "British"),
+        }
+        iso3, nat_label = nat_map.get(nat_raw, (nat_raw[:3], nat_raw))
         text_upper = (extract_res.get("text") or "").upper()
-        if nat_clean in ("NP", "NEPAL") and any(foreign in text_upper for foreign in ("UNITED KINGDOM", "GREAT BRITAIN", "UK VISA", "SCHENGEN", "UNITED STATES")):
-            reasons.append("CRITICAL NATIONALITY / VISA MISMATCH: Traveller declared Nepali nationality but travel document/visa indicates UK/foreign issuance without transit authorization.")
+        mrz_data = extract_res.get("mrz") or {}
+        mrz_issuing = (mrz_data.get("issuing_country") or "").upper()
+        mrz_nat = (mrz_data.get("nationality") or "").upper()
+
+        # 1. Indian Domestic Documents presented by Foreign Nationals
+        if doc_type_clean in ("aadhaar", "pan", "voter_id", "driving_licence"):
+            if iso3 not in ("IND", "UNKNOWN", ""):
+                reasons.append(
+                    f"CRITICAL NATIONALITY / DOCUMENT MISMATCH: Traveller declared {nat_label} nationality ({iso3}), "
+                    f"but presented an Indian domestic identity document ({doc_type_clean.upper().replace('_', ' ')}). "
+                    f"Indian domestic IDs are restricted to Indian citizens/residents and cannot serve as proof of identity for {nat_label} nationals."
+                )
+                risk = max(risk + 55, 85)
+                hard_flag = True
+                can_clear = False
+
+        # 2. Nepali Citizenship presented by Non-Nepali Nationals
+        elif doc_type_clean == "nepal_citizenship":
+            if iso3 not in ("NPL", "UNKNOWN", ""):
+                reasons.append(
+                    f"CRITICAL CITIZENSHIP MISMATCH: Traveller declared {nat_label} nationality ({iso3}), "
+                    f"but presented a Nepali Citizenship Certificate. Citizenship certificates are strictly issued to Nepali nationals."
+                )
+                risk = max(risk + 55, 85)
+                hard_flag = True
+                can_clear = False
+
+        # 3. Bhutanese Citizenship presented by Non-Bhutanese Nationals
+        elif doc_type_clean == "bhutan_citizenship":
+            if iso3 not in ("BTN", "UNKNOWN", ""):
+                reasons.append(
+                    f"CRITICAL CITIZENSHIP MISMATCH: Traveller declared {nat_label} nationality ({iso3}), "
+                    f"but presented a Bhutanese Citizenship Identity. Valid only for Bhutanese nationals."
+                )
+                risk = max(risk + 55, 85)
+                hard_flag = True
+                can_clear = False
+
+        # 4. Third-Country Nationals Crossing Land Border (Non-Treaty Nationals)
+        elif iso3 not in ("IND", "NPL", "BTN", "UNKNOWN", ""):
+            # Third-country nationals MUST present a valid passport + visa
+            if doc_type_clean not in ("passport", "visa"):
+                reasons.append(
+                    f"CRITICAL BORDER COMPLIANCE VIOLATION: Third-country nationals ({nat_label}) crossing international land borders "
+                    f"require a valid International Passport with a verified Indian Visa / e-Visa. Domestic ID cards ({doc_type_clean}) are strictly invalid."
+                )
+                risk = max(risk + 60, 88)
+                hard_flag = True
+                can_clear = False
+
+        # 5. Passport MRZ Nationality vs Declared Nationality Conflict
+        if doc_type_clean == "passport" and (mrz_issuing or mrz_nat):
+            doc_country = mrz_nat or mrz_issuing
+            if iso3 not in ("UNKNOWN", "") and doc_country and doc_country != iso3:
+                reasons.append(
+                    f"CRITICAL MRZ NATIONALITY CONFLICT: Machine Readable Zone (MRZ) encodes nationality as {doc_country}, "
+                    f"which contradicts the declared traveller nationality ({iso3} - {nat_label})."
+                )
+                risk = max(risk + 55, 85)
+                hard_flag = True
+                can_clear = False
+
+        # 6. Foreign Visa / Transit Mismatch for Nepali/Bhutanese citizens
+        if iso3 in ("NPL", "BTN") and any(foreign in text_upper for foreign in ("UNITED KINGDOM", "GREAT BRITAIN", "UK VISA", "SCHENGEN", "UNITED STATES")):
+            reasons.append("CRITICAL NATIONALITY / VISA MISMATCH: Traveller declared Nepali/Bhutanese nationality but travel document/visa indicates third-country issuance without transit authorization.")
             risk = max(risk + 50, 85)
             hard_flag = True
             can_clear = False

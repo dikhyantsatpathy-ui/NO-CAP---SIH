@@ -282,6 +282,22 @@ function DocCard({
         </div>
       </header>
 
+      {/* Critical Nationality, Visa & Forgery Discrepancy Alert Callout */}
+      {doc.reasons && doc.reasons.some((r) => r.includes("CRITICAL") || r.includes("MISMATCH") || r.includes("VIOLATION") || r.includes("EXPIRED") || r.includes("AI-ALERT")) && (
+        <div className="doc-discrepancy-callout">
+          <div className="doc-discrepancy-callout__title">
+            <span>⚠️ CRITICAL NATIONALITY / VISA / TAMPER ALERT</span>
+          </div>
+          <ul className="doc-discrepancy-callout__list">
+            {doc.reasons
+              .filter((r) => r.includes("CRITICAL") || r.includes("MISMATCH") || r.includes("VIOLATION") || r.includes("EXPIRED") || r.includes("AI-ALERT"))
+              .map((r, ri) => (
+                <li key={ri}>{r}</li>
+              ))}
+          </ul>
+        </div>
+      )}
+
       {/* Main summary attribute matrix */}
       <div className="doc-card__matrix">
         {entries.length === 0 ? (

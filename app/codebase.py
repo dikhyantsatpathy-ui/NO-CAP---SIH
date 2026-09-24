@@ -50,7 +50,7 @@ _STOPWORDS = {
     "to", "what", "when", "where", "which", "who", "why", "with", "you", "your",
 }
 
-_MAX_FILE_CHARS = 40_000
+_MAX_FILE_CHARS = 25_000
 _MAX_CONTEXT_CHARS = 160_000  # High-density, fast-loading codebase context within Gemini TPM limits
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
@@ -213,7 +213,7 @@ def _architecture_blueprint() -> str:
     """Return a high-level system architectural blueprint summarizing the repository layout,
     frontend visual map (where every button/tab/modal is located), and backend logic pipelines."""
     return (
-        "### COMPLETE SYSTEM ARCHITECTURE BLUEPRINT & VISUAL REPOSITORY MAP:\n\n"
+        "### SYSTEM ARCHITECTURE BLUEPRINT & REPOSITORY MAP:\n\n"
         "#### 1. FRONTEND ARCHITECTURE & VISUAL UI MAP (`frontend/src/`):\n"
         "- **Main Application Frame (`frontend/src/App.tsx`)**:\n"
         "  - **Super Header**: Displays the Government of India Ashoka Lion Emblem, official SSB (Sashastra Seema Bal) seal, current Indian Standard Time (IST) clock, and current user profile.\n"
@@ -278,10 +278,15 @@ def codebase_context(question: str) -> str:
             f"{blueprint}"
         )
 
+    core_landmark_rels = ("app/main.py", "app/screening.py", "frontend/src/views/DeskView.tsx", "app/validation.py")
+    landmarks = [f for f in files if f["rel"] in core_landmark_rels]
+    landmark_set = {f["rel"] for f in landmarks}
+
     ranked = _rank_files(question)
-    ranked_set = {f["rel"] for f in ranked}
-    remaining = [f for f in files if f["rel"] not in ranked_set]
-    ordered_files = ranked + remaining
+    ranked_filtered = [f for f in ranked if f["rel"] not in landmark_set]
+    ranked_set = {f["rel"] for f in ranked_filtered}
+    remaining = [f for f in files if f["rel"] not in landmark_set and f["rel"] not in ranked_set]
+    ordered_files = landmarks + ranked_filtered + remaining
 
     manifest = "### COMPLETE PROJECT FILES MANIFEST:\n" + "\n".join(f["manifest_entry"] for f in ordered_files[:30])
 
