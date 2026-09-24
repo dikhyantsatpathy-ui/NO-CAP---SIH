@@ -344,7 +344,7 @@ def noise_consistency(data: bytes | np.ndarray, rois: list[dict] | None = None) 
         gray[:-2, 1:-1] + gray[2:, 1:-1] + gray[1:-1, :-2] + gray[1:-1, 2:]
     )
 
-    # Locate portrait ROI if provided, else heuristic top-left/center-left
+    # Locate portrait ROI if provided
     face_box = next((r for r in (rois or []) if r.get("label") == "face"), None)
     if face_box:
         fx = int(face_box["x"] * (w - 2))
@@ -358,11 +358,7 @@ def noise_consistency(data: bytes | np.ndarray, rois: list[dict] | None = None) 
     # Substrate patch: bottom right quadrant away from photos/stamps
     substrate_patch = residual[int(h * 0.6) :, int(w * 0.5) :]
 
-    # Robust noise estimate: median of 16x16 sub-block variances. Whole-patch
-    # variance is dominated by localized content (a portrait silhouette vs a
-    # blank margin) and falsely explodes the ratio on honest cards; a spliced
-    # photo raises the noise *floor* across a wide area, which the median
-    # captures without being hijacked by a few busy blocks.
+    # Robust noise estimate: median of 16x16 sub-block variances.
     def _noise_var(patch: np.ndarray) -> float:
         if patch.size < 256:
             return 1.0
@@ -378,17 +374,16 @@ def noise_consistency(data: bytes | np.ndarray, rois: list[dict] | None = None) 
     var_substrate = _noise_var(substrate_patch)
     noise_ratio = var_portrait / (var_substrate + 1e-6)
 
-    # A real noise floor must exist in BOTH zones before a ratio is meaningful:
-    # flat / digital cards carry no capture noise to compare, so they read
-    # INCONCLUSIVE rather than as a splice (a genuinely spliced photo has noise
-    # on both sides of the seam — the takeover zone and the rest of the scan).
-    if var_portrait < 1.5 or var_substrate < 1.5:
+    # A real noise floor must exist in BOTH zones before a ratio is meaningful.
+    # If no verified face ROI was provided, quadrant comparison across a card on paper/desk
+    # is inconclusive.
+    if face_box is None or var_portrait < 3.0 or var_substrate < 3.0:
         is_disparity = False
         status = "INCONCLUSIVE"
         noise_ratio = 1.0
     else:
-        # Physical bounds for natural scanning: 0.25 <= noise_ratio <= 3.5
-        is_disparity = bool(noise_ratio > 3.5 or noise_ratio < 0.25)
+        # Physical bounds for natural scanning: 0.20 <= noise_ratio <= 4.5
+        is_disparity = bool(noise_ratio > 4.5 or noise_ratio < 0.20)
         status = "SUSPECT_PHOTO_SPLICE" if is_disparity else "CONSISTENT"
 
     return {
@@ -419,11 +414,7 @@ def copy_move_detection(data: bytes | np.ndarray, block_size: int = 16, max_dim:
     else:
         return {"detected": False, "status": "INVALID", "clones_found": 0}
 
-    # Scan at native resolution whenever feasible. A duplicate region is only
-    # pixel-identical to its source at the exact full-res offset: bilinear
-    # downsampling shifts pixel phases and even an 8px block grid can skip the
-    # twin window. Pathological captures are shrunk with NEAREST integer
-    # halving, which preserves pixel identity and offset alignment.
+    # Scan at native resolution whenever feasible.
     h, w = rgb.shape[:2]
     if h < 32 or w < 32:
         return {"detected": False, "status": "LOW_RESOLUTION", "clones_found": 0}
@@ -450,8 +441,8 @@ def copy_move_detection(data: bytes | np.ndarray, block_size: int = 16, max_dim:
         for x in range(0, gw - bs + 1, step):
             patch = gray[y : y + bs, x : x + bs]
             var = float(patch.var())
-            # Skip plain uniform / blank background areas (white paper / flat black)
-            if var < 18.0:
+            # Skip plain uniform / blank background areas (white paper / flat substrate / desk gradient)
+            if var < 45.0:
                 continue
             mean = float(patch.mean())
             dx = float(np.abs(patch[:, 1:] - patch[:, :-1]).mean())
@@ -473,13 +464,6 @@ def copy_move_detection(data: bytes | np.ndarray, block_size: int = 16, max_dim:
     vector_counts = defaultdict(int)
     matches = 0
 
-    # Adaptive fidelity gate: a "clone" means *statistically identical* pixels,
-    # not merely similar shapes. Genuine cards repeat styled elements (MRZ
-    # glyphs, stamp borders, QR finders); identical-looking but differently
-    # noised blocks sit near the image's own inter-block noise floor. Estimate
-    # that floor from random pairs of feature-DISTINCT blocks, then require a
-    # candidate duplicate to sit far below it. Pixel-exact clone stamps land at
-    # ~0; repeated-but-grainy content lands at the floor.
     keys = list(buckets.keys())
     floor_maes = []
     rng = random.Random(11)
@@ -501,26 +485,13 @@ def copy_move_detection(data: bytes | np.ndarray, block_size: int = 16, max_dim:
         noise_floor = float(floor_maes[len(floor_maes) // 2])
     else:
         noise_floor = 1.0
-    # A clone stamp is *statistically identical*: PNG-lossless twins sit at
-    # MAE ~0. Genuinely distinct blocks — even the most similar repeated glyphs
-    # or stamp borders — always differ by at least the capture-grain amplitude
-    # (measured ~2+ grey here, which also dominates "feature" similarity).
-    # A tight fixed gate cleanly separates true duplicates from look-alike
-    # repeats; no document scanner produces two regions with pixel-identical
-    # but unrelated content.
+
     fidelity = 2.0
 
     for key, indices in buckets.items():
         n_bucket = len(indices)
         if n_bucket < 2:
             continue
-        # A clone stamp duplicates whole regions, so the duplicate blocks all
-        # collapse into the SAME feature bucket (often a large one after sensor
-        # grain dominates dx/dy/var). Hard-capping bucket size would silently
-        # discard the very pairs we are hunting — instead sample a bounded
-        # number of pairs per bucket (uniform stride); pixel-identical pairs
-        # from a clone stamp all share ONE displacement vector, which the
-        # parallel-clone gate below catches even in a small sample.
         pairs = [(indices[a], indices[b])
                  for a in range(n_bucket) for b in range(a + 1, n_bucket)]
         if len(pairs) > 40:
@@ -541,7 +512,7 @@ def copy_move_detection(data: bytes | np.ndarray, block_size: int = 16, max_dim:
                     matches += 1
 
     max_parallel_clones = max(vector_counts.values()) if vector_counts else 0
-    clone_detected = max_parallel_clones >= 4 or matches >= 8
+    clone_detected = max_parallel_clones >= 8 or matches >= 16
     status = "CLONE_DETECTED" if clone_detected else "CLEAN"
 
     return {

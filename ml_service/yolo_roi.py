@@ -410,3 +410,36 @@ def crop_region_to_bytes(image_bytes: bytes, box: Dict[str, Any],
         return out.getvalue()
     except Exception:
         return None
+
+
+def isolate_document_card(image_bytes: bytes) -> tuple[bytes, dict | None]:
+    """Isolate and crop the ID card boundary from an arbitrary background photo
+    (e.g., card placed on white paper, table, or handheld).
+
+    Returns (cropped_card_bytes, crop_meta) if a valid document card sub-rectangle
+    is detected, or (image_bytes, None) if the card already fills the entire frame
+    or could not be cleanly segmented.
+    """
+    if not image_bytes:
+        return image_bytes, None
+    try:
+        boxes = extract_roi_boxes(image_bytes)
+        doc_box = next((b for b in boxes if b.get("label") in ("document", "card")), None)
+        if doc_box:
+            bw = float(doc_box.get("w", 1.0))
+            bh = float(doc_box.get("h", 1.0))
+            area_ratio = bw * bh
+            # If the card occupies a sub-region (between 12% and 94% of the image)
+            if 0.12 <= area_ratio <= 0.94 and (bw < 0.96 or bh < 0.96):
+                cropped = crop_region_to_bytes(image_bytes, doc_box, padding=0.03, fmt="JPEG")
+                if cropped and len(cropped) > 2048:
+                    return cropped, {
+                        "cropped": True,
+                        "box": doc_box,
+                        "area_ratio": round(area_ratio, 3),
+                        "confidence": doc_box.get("confidence", 0.9),
+                    }
+    except Exception:
+        pass
+    return image_bytes, None
+

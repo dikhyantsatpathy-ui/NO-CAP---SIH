@@ -208,3 +208,12 @@ async def api_doctype(file: UploadFile = File(...)):
     result = classify_document(data)
     return result or {"doc_type": "other", "confidence": 0.0, "scores": {}, "engine": "none"}
 
+
+from doc_forgery import analyze_doc_forgery
+@app.post("/api/ml/doc_forgery")
+async def api_doc_forgery(file: UploadFile = File(...)):
+    data = await file.read()
+    result = analyze_doc_forgery(data)
+    return result
+
+

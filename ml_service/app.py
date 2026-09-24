@@ -45,6 +45,7 @@ def get_status():
             "/api/ml/face_match",
             "/api/ml/detect_image",
             "/api/ml/doctype",
+            "/api/ml/doc_forgery",
         ],
     }
 

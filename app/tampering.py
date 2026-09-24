@@ -33,12 +33,54 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                 "ela": f0["ela"], "qa": f0["qa"], "roi": [], "liveness": [],
                 "ai_detection": ai_detection, "verdict": "UNVERIFIED"}
 
-    fr = forensics_report(image_bytes)
+    # Automatic card localization: isolates card from white paper, desk, or hands
+    crop_meta = None
+    active_bytes = image_bytes
+    try:
+        from app.yolo_roi import isolate_document_card
+    except ImportError:
+        try:
+            from yolo_roi import isolate_document_card
+        except ImportError:
+            isolate_document_card = None
+
+    if isolate_document_card:
+        c_bytes, meta = isolate_document_card(image_bytes)
+        if meta and meta.get("cropped") and c_bytes:
+            active_bytes = c_bytes
+            crop_meta = meta
+            checks.append({
+                "label": "card-localization",
+                "ok": True,
+                "detail": f"Card localized & background isolated ({round(meta['area_ratio'] * 100)}% frame coverage).",
+            })
+
+    # Run Dual-Stream Document Forgery Detector (SRM residuals + spatial seams)
+    try:
+        from app.doc_forgery import analyze_doc_forgery
+    except ImportError:
+        try:
+            from doc_forgery import analyze_doc_forgery
+        except ImportError:
+            analyze_doc_forgery = None
+
+    forgery_res = {}
+    if analyze_doc_forgery:
+        forgery_res = analyze_doc_forgery(active_bytes)
+        if forgery_res.get("ran"):
+            checks.append({
+                "label": "dual-stream-forgery",
+                "ok": not forgery_res.get("is_tampered"),
+                "detail": forgery_res.get("detail", "Dual-Stream substrate analysis completed."),
+            })
+
+    fr = forensics_report(active_bytes)
     if fr.get("error"):
         return {"checks": [{"label": "image", "ok": None,
                             "detail": f"Image not readable: {fr['error']}"}],
                 "ela": None, "qa": None, "roi": [], "liveness": [],
-                "ai_detection": ai_detection, "verdict": "UNVERIFIED"}
+                "ai_detection": ai_detection, "doc_forgery": forgery_res,
+                "verdict": "UNVERIFIED"}
 
     ela = fr["ela"] or {}
     qa = fr["qa"] or {}
@@ -47,9 +89,6 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
 
     # ---- ELA: tampered region lights up ----------------------------------
     if ela.get("status"):
-        # MEDIUM deviations are normal on low-resolution scans and digitally
-        # rendered cards; only HIGH (localized re-compression damage from a
-        # paste/composite) is a hard tampering signal.
         checks.append({
             "label": "ela",
             "ok": ela["status"] in ("LOW", "MEDIUM"),
@@ -83,19 +122,20 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                                  "webcam capture for a person check."})
 
     # ---- AI-generation / Editing / Screen-aware signal ------------------
-    if ai_detection.get("ai_suspected") or (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited"):
+    is_cloud_or_model = ai_detection.get("provider") in ("self-hosted", "sightengine", "hive", "vit", "clip", "test")
+    if (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited") or (is_cloud_or_model and (ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 65)):
         checks.append({
             "label": "ai-generated-or-edited",
             "ok": False,
             "detail": (ai_detection.get("explanation") or
                        "Vision/metadata scan flags the document as AI-generated or digitally edited."),
         })
-    elif (ai_detection.get("ai_score") or 0) >= 65:
-        if document_aware is False:
+    elif ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 65:
+        if (ela.get("status") in ("LOW", "MEDIUM") or document_aware is False):
             checks.append({
                 "label": "ai-generated-or-edited",
                 "ok": True,
-                "detail": f"Physical camera capture: ambient glare / camera noise noted ({ai_detection.get('ai_score', 0)}% spectral variation); not an AI synthetic document.",
+                "detail": f"Physical capture / surface lighting variation noted ({ai_detection.get('ai_score', 0)}% spectral variance); not an AI synthetic document.",
             })
         else:
             checks.append({
@@ -157,11 +197,11 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
     # ---- Copy-Move / Clone Stamp Duplication -----------------------------
     copy_move = fr.get("copy_move") or {}
     if copy_move.get("detected"):
-        if document_aware is False and (ela.get("verdict") != "FAIL"):
+        if (ela.get("status") != "HIGH" and ela.get("verdict") != "FAIL"):
             checks.append({
                 "label": "copy-move-cloning",
                 "ok": True,
-                "detail": "Physical handheld capture: peripheral hand/background textures noted; no localized document splice.",
+                "detail": "Physical capture: repetitive surface/background patterns noted; no localized document splice.",
             })
         else:
             checks.append({
@@ -183,4 +223,5 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
 
     return {"checks": checks, "ela": ela, "qa": qa, "roi": roi, "liveness": liveness,
             "spectral": spectral, "noise_consistency": noise, "copy_move": copy_move,
-            "ai_detection": ai_detection, "verdict": verdict}
+            "ai_detection": ai_detection, "doc_forgery": forgery_res,
+            "crop_meta": crop_meta, "verdict": verdict}

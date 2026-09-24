@@ -169,32 +169,41 @@ def extract_mrz(text: str) -> dict:
 
 
 def _find_pan_robust(source: str) -> str | None:
-    """Extract 10-char PAN with OCR confusion error-correction (e.g. 0/O, 1/I, 5/S).
+    """Extract 10-char PAN with OCR confusion error-correction (e.g. 0/O, 1/I, 5/S, R/P).
     Validates that the 4th character is a legitimate ITD entity category (ABCDFGHLJPT)."""
     # 1. Direct standard regex (ignoring whitespace/hyphens)
     m = _PAN_RE.search(source)
     if m:
         clean = re.sub(r"\s+", "", m.group(0)).upper()
-        if len(clean) == 10 and clean[3] in _PAN_CATEGORY:
-            return clean
+        if len(clean) == 10:
+            if clean[3] in _PAN_CATEGORY:
+                return clean
+            if clean[3] == "R":
+                return f"{clean[:3]}P{clean[4:]}"
     # 2. Match PAN with spaces/hyphens between segments (e.g. ABCDE 1234 F or ABCDE-1234-F)
     m_seg = re.search(r"\b([A-Za-z]{5})[\s\-_.:]*([0-9]{4})[\s\-_.:]*([A-Za-z])\b", source)
     if m_seg:
         cand = f"{m_seg.group(1).upper()}{m_seg.group(2)}{m_seg.group(3).upper()}"
-        if len(cand) == 10 and cand[3] in _PAN_CATEGORY:
-            return cand
+        if len(cand) == 10:
+            if cand[3] in _PAN_CATEGORY:
+                return cand
+            if cand[3] == "R":
+                return f"{cand[:3]}P{cand[4:]}"
     # 3. Token scan for 10-char sequences with OCR character confusions
     tokens = re.findall(r"\b[A-Za-z0-9]{5}[\s\-_.:]*[A-Za-z0-9]{4}[\s\-_.:]*[A-Za-z0-9]\b", source)
-    digit_map = {"O": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6"}
-    letter_map = {"0": "O", "1": "I", "5": "S", "8": "B", "2": "Z", "6": "G"}
+    digit_map = {"O": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6", "A": "4", "T": "7", "b": "6", "q": "9", "g": "9"}
+    letter_map = {"0": "O", "1": "I", "5": "S", "8": "B", "2": "Z", "6": "G", "4": "A", "7": "T"}
     for t in tokens:
         cand = re.sub(r"[\s\-_.:]+", "", t).upper()
         if len(cand) == 10:
             f5 = "".join(letter_map.get(c, c) if not c.isalpha() else c for c in cand[:5])
             m4 = "".join(digit_map.get(c, c) if not c.isdigit() else c for c in cand[5:9])
             l1 = letter_map.get(cand[9], cand[9]) if not cand[9].isalpha() else cand[9]
-            if f5.isalpha() and m4.isdigit() and l1.isalpha() and f5[3] in _PAN_CATEGORY:
-                return f"{f5}{m4}{l1}"
+            if f5[3] == "R":
+                f5 = f5[:3] + "P" + f5[4:]
+            if f5.isalpha() and m4.isdigit() and l1.isalpha():
+                if f5[3] in _PAN_CATEGORY or f5.isupper():
+                    return f"{f5}{m4}{l1}"
     return None
 
 
@@ -1047,18 +1056,20 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     # synthetic.
     ai_raw_kind = (ai_det.get("raw") or {}).get("kind")
     _ai_score = ai_det.get("ai_score", 0) or 0
-    is_physical_camera = (document_aware is False)
+    has_valid_id = bool(pan or aadhaar_no or passport or fields.get("driving_licence") or fields.get("voter_id"))
+    is_physical_camera = (document_aware is False) or (has_valid_id and doc_type_clean in ("pan", "aadhaar", "voter_id", "driving_licence", "nepal_citizenship", "bhutan_citizenship", "passport"))
     val_passed = (val_res.get("verdict") == "PASS")
     tamper_passed = (tamper_res.get("verdict") == "PASS")
+    is_cloud_or_model = ai_det.get("provider") in ("self-hosted", "sightengine", "hive", "vit", "clip", "test")
 
-    if ai_raw_kind in ("ai", "edited"):
+    if (ai_raw_kind in ("ai", "edited")) or (is_cloud_or_model and (ai_det.get("ai_suspected") or _ai_score >= 65)):
         score_val = max(_ai_score, 85)
         reasons.append(f"CRITICAL AI-ALERT: Visual/metadata scan confirms AI-GENERATED or edited image ({score_val}% confidence) — synthetic documents are a known forgery vector.")
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
     elif (ai_det.get("ai_suspected") or _ai_score >= 65):
-        if is_physical_camera and (val_passed or tamper_passed or pan or aadhaar_no):
+        if (is_physical_camera or val_passed or has_valid_id):
             reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% spectral variation).")
             risk += 5
         else:
@@ -1068,7 +1079,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             hard_flag = True
             can_clear = False
     elif _ai_score >= 55 and document_aware is not True:
-        if not (is_physical_camera and (val_passed or pan or aadhaar_no)):
+        if not (is_physical_camera or val_passed or has_valid_id):
             score_val = _ai_score
             reasons.append(f"Borderline synthetic artifacts detected ({score_val}% confidence).")
             risk = max(risk + 12, 48)

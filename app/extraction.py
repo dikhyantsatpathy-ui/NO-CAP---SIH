@@ -247,6 +247,31 @@ def _extract_image(data: bytes, doc_type: str = "") -> dict:
         except Exception:
             out["mrz"] = None
 
+    # Multi-crop enhancement pass: If key identity numbers are missing, crop the center card area
+    # to significantly boost OCR resolution and eliminate glare around outer borders
+    if not (out["fields"].get("pan") or out["fields"].get("aadhaar") or out["fields"].get("passport") or out["fields"].get("driving_licence") or out["fields"].get("voter_id")):
+        try:
+            import io
+            from PIL import Image, ImageOps
+            img = Image.open(io.BytesIO(data))
+            img = ImageOps.exif_transpose(img)
+            w_img, h_img = img.size
+            if w_img >= 200 and h_img >= 200:
+                crop_box = (int(w_img * 0.18), int(h_img * 0.18), int(w_img * 0.82), int(h_img * 0.82))
+                crop_im = img.crop(crop_box)
+                c_buf = io.BytesIO()
+                crop_im.save(c_buf, format="JPEG", quality=95)
+                c_bytes = c_buf.getvalue()
+                text_crop, _ = ocr_extract(c_bytes)
+                if text_crop:
+                    out["text"] = f"{out['text']}\n{text_crop}"
+                    extracted_crop = extract_fields(text_crop, doc_type=doc_type)
+                    for k, v in extracted_crop.items():
+                        if v and not out["fields"].get(k):
+                            out["fields"][k] = v
+        except Exception:
+            pass
+
     # LLM Structured Extraction pass
     llm_res = extract_document_data(data)
     out["llm_extraction"] = {"ran": llm_res.get("ran", False), "reason": llm_res.get("reason", "unknown")}
