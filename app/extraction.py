@@ -324,7 +324,7 @@ def _extract_aadhaar_image(data: bytes) -> dict:
     if not boxes:
         # Model absent (e.g. Vercel) or no zones found: degrade to the generic
         # image pass so Aadhaar still screens with whole-card OCR + LLM heuristics.
-        whole = _extract_image(data)
+        whole = _extract_image(data, doc_type="aadhaar")
         for k, v in whole.get("fields", {}).items():
             if v and not out["fields"].get(k):
                 out["fields"][k] = v
@@ -353,7 +353,7 @@ def _extract_aadhaar_image(data: bytes) -> dict:
 
     # Backfill with whole-image OCR if key fields are missing
     if not out["fields"].get("aadhaar") or not out["fields"].get("name"):
-        whole = _extract_image(data)
+        whole = _extract_image(data, doc_type="aadhaar")
         for k, v in whole.get("fields", {}).items():
             if v and not out["fields"].get(k):
                 out["fields"][k] = v

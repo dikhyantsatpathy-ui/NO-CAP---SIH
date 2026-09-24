@@ -12,6 +12,7 @@ import { ReviewQueueView } from "./views/ReviewQueueView";
 import { LedgerView } from "./views/LedgerView";
 import { WatchlistView } from "./views/WatchlistView";
 import { StaffView } from "./views/StaffView";
+import { ChatModal, FloatingChatTrigger } from "./views/ChatModal";
 
 type ViewKey = "desk" | "review" | "ledger" | "watchlist" | "staff";
 
@@ -88,8 +89,6 @@ function SuperHeader() {
       </div>
       <div className="gov-super-header__right">
         <span>INTEGRATED CHECK POST (ICP)</span>
-        <span className="gov-super-header__pipe">|</span>
-        <span className="gov-super-header__badge">Officer Terminal</span>
       </div>
     </div>
   );
@@ -215,6 +214,7 @@ function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => 
 export function App() {
   const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
+  const [chatOpen, setChatOpen] = useState(false);
   const prevView = useRef<ViewKey>("desk");
 
   useEffect(() => {
@@ -235,6 +235,8 @@ export function App() {
       <>
         <AshokaChakraWatermark />
         <SignInGate />
+        <FloatingChatTrigger onClick={() => setChatOpen(true)} />
+        <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       </>
     );
   }
@@ -260,6 +262,8 @@ export function App() {
         <span className="gov-footer__pipe">|</span>
         <span>🛡️ ZERO-RAW-STORAGE PRIVACY</span>
       </footer>
+      <FloatingChatTrigger onClick={() => setChatOpen(true)} />
+      <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
   );
 }

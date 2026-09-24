@@ -60,50 +60,87 @@ class DiscrepancyResult(BaseModel):
     semantic_match: bool = Field(description="True if all documents semantically refer to the same person despite minor typos or formatting differences.")
 
 def extract_document_data(image_bytes: bytes, doc_type: str = "") -> dict:
-    """Uses a multimodal LLM to extract structured fields from a document image."""
+    """Uses a multimodal LLM (LiteLLM proxy or direct Gemini Vision) to extract structured fields from a document image."""
     client = get_client()
-    if not client:
-        return {"ran": False, "reason": "LiteLLM proxy not configured"}
-
-    # Base64 encode the image
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    
     prompt = f"""
-    You are an expert identity document OCR system. Extract the relevant fields from this document image.
+    You are an expert Indian & International identity document OCR system.
+    Extract the relevant fields from this document image accurately:
+    - name: Full name of holder
+    - dob: Date of birth (YYYY-MM-DD)
+    - gender: M or F
+    - pan: 10-character PAN number if this is a PAN card
+    - aadhaar: 12-digit Aadhaar number if this is an Aadhaar card
+    - driving_licence: DL number if this is a Driving Licence
+    - passport: Passport number if this is a passport
+    - voter_id: EPIC number if this is a Voter ID
+    - address: Full permanent address if printed
+    - pincode: 6-digit PIN code if present
+
     Document type hint: {doc_type or "Unknown"}
-    
-    Return the fields in JSON matching the schema. If a field is not present, set it to null.
-    For dates, always format as YYYY-MM-DD.
+    Return only a valid JSON object matching these keys. If a field is not found or not present, set it to null.
     """
-    
-    try:
-        response = client.chat.completions.create(
-            model=os.getenv("LITELLM_EXTRACT_MODEL", "gpt-4o"),
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{b64_image}"
+
+    if client:
+        try:
+            response = client.chat.completions.create(
+                model=os.getenv("LITELLM_EXTRACT_MODEL", "gpt-4o"),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{b64_image}"
+                                }
                             }
-                        }
-                    ]
+                        ]
+                    }
+                ],
+                response_format={"type": "json_schema", "json_schema": {"name": "ExtractedFields", "schema": ExtractedFields.model_json_schema(), "strict": True}},
+                temperature=0.0,
+                max_tokens=1024,
+            )
+            content = response.choices[0].message.content
+            if content:
+                data = json.loads(content)
+                return {"ran": True, "fields": data}
+        except Exception as e:
+            pass
+
+    gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or "").strip()
+    if gemini_key:
+        try:
+            import requests
+            for model in ("gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+                body = {
+                    "contents": [{
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": "image/jpeg", "data": b64_image}}
+                        ]
+                    }],
+                    "generationConfig": {
+                        "response_mime_type": "application/json",
+                        "temperature": 0.0,
+                        "maxOutputTokens": 1024
+                    }
                 }
-            ],
-            response_format={"type": "json_schema", "json_schema": {"name": "ExtractedFields", "schema": ExtractedFields.model_json_schema(), "strict": True}},
-            temperature=0.0,
-            max_tokens=1024,
-        )
-        content = response.choices[0].message.content
-        if content:
-            data = json.loads(content)
-            return {"ran": True, "fields": data}
-        return {"ran": False, "reason": "Empty response"}
-    except Exception as e:
-        return {"ran": False, "reason": str(e)}
+                resp = requests.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=12.0)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    parts = (payload.get("candidates") or [{}])[0].get("content", {}).get("parts") or []
+                    txt = "".join(p.get("text") or "" for p in parts).strip()
+                    if txt:
+                        parsed = json.loads(txt)
+                        return {"ran": True, "fields": parsed, "model": model}
+        except Exception as exc:
+            return {"ran": False, "reason": str(exc)}
+
+    return {"ran": False, "reason": "No multimodal LLM backend configured"}
 
 def analyze_session_discrepancies(docs_data: list[dict]) -> dict:
     """Uses an LLM to semantically compare documents in a session for discrepancies.

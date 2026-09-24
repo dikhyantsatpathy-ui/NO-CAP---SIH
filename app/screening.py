@@ -77,6 +77,7 @@ def mrz_checkdigit(field: str) -> int:
 # --------------------------------------------------------------------------- #
 
 _PAN_RE = re.compile(r"\b[A-Za-z]{5}\s*[0-9]{4}\s*[A-Za-z]\b")
+_PAN_CATEGORY = set("ABCDFGHLJPT")
 _DL_RE = re.compile(r"\b[A-Za-z]{2}[- ]*\d{2}[- ]*\d{4}[- ]*\d{7}\b|\b[A-Za-z]{2}[- ]*\d{13,14}\b")
 _AADHAAR_RE = re.compile(r"\b[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}\b")
 # Passport numbers on Indian/ICAO documents come in two shapes: the classic
@@ -168,17 +169,20 @@ def extract_mrz(text: str) -> dict:
 
 
 def _find_pan_robust(source: str) -> str | None:
-    """Extract 10-char PAN with OCR confusion error-correction (e.g. 0/O, 1/I, 5/S)."""
+    """Extract 10-char PAN with OCR confusion error-correction (e.g. 0/O, 1/I, 5/S).
+    Validates that the 4th character is a legitimate ITD entity category (ABCDFGHLJPT)."""
     # 1. Direct standard regex (ignoring whitespace/hyphens)
     m = _PAN_RE.search(source)
     if m:
         clean = re.sub(r"\s+", "", m.group(0)).upper()
-        if len(clean) == 10:
+        if len(clean) == 10 and clean[3] in _PAN_CATEGORY:
             return clean
     # 2. Match PAN with spaces/hyphens between segments (e.g. ABCDE 1234 F or ABCDE-1234-F)
     m_seg = re.search(r"\b([A-Za-z]{5})[\s\-_.:]*([0-9]{4})[\s\-_.:]*([A-Za-z])\b", source)
     if m_seg:
-        return f"{m_seg.group(1).upper()}{m_seg.group(2)}{m_seg.group(3).upper()}"
+        cand = f"{m_seg.group(1).upper()}{m_seg.group(2)}{m_seg.group(3).upper()}"
+        if len(cand) == 10 and cand[3] in _PAN_CATEGORY:
+            return cand
     # 3. Token scan for 10-char sequences with OCR character confusions
     tokens = re.findall(r"\b[A-Za-z0-9]{5}[\s\-_.:]*[A-Za-z0-9]{4}[\s\-_.:]*[A-Za-z0-9]\b", source)
     digit_map = {"O": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6"}
@@ -189,7 +193,7 @@ def _find_pan_robust(source: str) -> str | None:
             f5 = "".join(letter_map.get(c, c) if not c.isalpha() else c for c in cand[:5])
             m4 = "".join(digit_map.get(c, c) if not c.isdigit() else c for c in cand[5:9])
             l1 = letter_map.get(cand[9], cand[9]) if not cand[9].isalpha() else cand[9]
-            if f5.isalpha() and m4.isdigit() and l1.isalpha():
+            if f5.isalpha() and m4.isdigit() and l1.isalpha() and f5[3] in _PAN_CATEGORY:
                 return f"{f5}{m4}{l1}"
     return None
 
@@ -279,6 +283,7 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
     text = unicodedata.normalize("NFKC", text or "")
     clean = norm(text)
     spaced = re.sub(r"(?i)(?<=[a-z])(?=\d)", " ", clean)
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     found = {"pan": None, "driving_licence": None,
              "passport": None, "voter_id": None, "phone": None,
              "dob": None, "aadhaar": None, "name": None, "gender": None,
@@ -305,11 +310,34 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
     if pin_m:
         found["pincode"] = pin_m.group(1)
 
-    # Extract address snippet if present
-    addr_m = _ADDR_RE.search(text)
-    if addr_m:
-        addr_clean = re.sub(r"\s+", " ", addr_m.group(1)).strip()
-        found["address"] = addr_clean[:120]
+    # Extract address snippet if present (filter out informational/policy text)
+    addr_policy_noise = ("UPDATED IN", "SUPPORT IDENTITY", "PROOF OF IDENTITY", "AVAIL OF", "DATE OF ENROLMENT", "DOWNLOAD MAADHAAR")
+    for addr_cand in _ADDR_RE.finditer(text):
+        cand_str = re.sub(r"\s+", " ", addr_cand.group(1)).strip()
+        cand_str = re.sub(r"(?i)\s*(?:Aadhaar|Aadhar)\s+is\s+proof.*", "", cand_str).strip()
+        if not any(noise in cand_str.upper() for noise in addr_policy_noise) and len(cand_str) >= 8:
+            found["address"] = cand_str[:140]
+            break
+
+    # Look for address lines starting with Plot/House/Street/Sahid Nagar/etc. if _ADDR_RE didn't match
+    if not found.get("address"):
+        addr_cands = []
+        for ln in lines:
+            up = ln.upper()
+            if any(k in up for k in ("PLOT", "HOUSE", "STREET", "ROAD", "SAHID NAGAR", "NAGAR", "VTC:", "DISTRICT:", "DIST:")) and not any(noise in up for noise in addr_policy_noise):
+                cleaned_ln = re.sub(r"(?i)\s*(?:Aadhaar|Aadhar)\s+is\s+proof.*", "", ln).strip()
+                if cleaned_ln:
+                    addr_cands.append(cleaned_ln)
+        if addr_cands:
+            found["address"] = ", ".join(addr_cands[:3])[:140]
+
+    # Suppress cross-document barcode noise (e.g. UIDAI letter tracking codes matching EPIC voter_id regex)
+    doc_norm = (doc_type or "").lower().strip()
+    if doc_norm in ("aadhaar", "aadhaar_card", "aadhar", "pan", "passport", "visa") and found.get("voter_id"):
+        if doc_norm in ("aadhaar", "aadhaar_card", "aadhar") and not any(v in text.upper() for v in ("ELECTION", "VOTER", "EPIC")):
+            found["voter_id"] = None
+        elif doc_norm == "pan" and not any(v in text.upper() for v in ("ELECTION", "VOTER", "EPIC")):
+            found["voter_id"] = None
 
     # Extract state if present in text
     indian_states = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Delhi", "Jammu and Kashmir", "Ladakh"]
@@ -318,69 +346,110 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
             found["state"] = st
             break
 
-    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...", "lame: ...") or layout heuristics
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    # Extract holder name from text patterns (e.g. "Name: ...", "नाम: ...", "To ...", lines before S/O)
     bad_roots = [
-        "INCOME", "TAX", "GOVT", "INDIA", "DEPART", "PERMANENT", "ACCOUNT", "CARD",
-        "SIGN", "DATE", "BIRTH", "BLRTH", "BLTH", "DOB", "MALE", "FEMALE", "NUMBER", "AYAKAR",
-        "BHARAT", "GOVERN", "SIGNED", "PHYSIC", "APPLIC", "VALID", "UNLESS", "DIGIT",
-        "REPUBLIC", "MINISTRY", "AUTHORITY", "NATIONAL", "FATHER", "MOTHER", "HUSBAND",
-        "NAME", "HOLDER", "APLI", "PUD", "HALL", "TION", "DIGI"
+        "INCOME", "TAX", "GOVT", "INDIA", "INDA", "INDAA", "INDIRA", "DEPART", "DEPARTMENT",
+        "PERMANENT", "ACCOUNT", "CARD", "SIGN", "DATE", "BIRTH", "BLRTH", "BLTH", "DOB",
+        "MALE", "FEMALE", "NUMBER", "AYAKAR", "BHARAT", "GOVERN", "SIGNED", "PHYSIC",
+        "APPLIC", "VALID", "UNLESS", "DIGIT", "REPUBLIC", "MINISTRY", "AUTHORITY", "NATIONAL",
+        "FATHER", "MOTHER", "HUSBAND", "NAME", "HOLDER", "APLI", "PUD", "HALL", "TION", "DIGI",
+        "UIDAI", "ENROLMENT", "ENROLLMENT", "INFORMATION", "AADHAAR", "AADHAR", "UNIQUE",
+        "IDENTIFICATION", "VID", "HELP", "WWW", "PLOT", "SAHID", "NAGAR", "DISTRICT", "STATE"
     ]
+    vowels = set("AEIOUYaeiouy")
 
-    # Find father's name first if explicitly labeled
+    # Find father's name / guardian name if explicitly labeled
     father_cands = set()
     for i, ln in enumerate(lines):
         up = ln.upper()
-        if any(k in up for k in ("FATHER", "पिता")) and not any(k in up for k in ("INCOME", "TAX", "CARD", "PERMANENT")):
+        if any(k in up for k in ("FATHER", "पिता", "S/O", "D/O", "W/O", "C/O")) and not any(k in up for k in ("INCOME", "TAX", "CARD", "PERMANENT")):
             for offset in (0, 1, 2):
                 idx = i + offset
                 if 0 <= idx < len(lines):
                     cand_ln = lines[idx]
                     if offset == 0:
-                        m_f = re.search(r"(?i)(?:Father(?:'s)?\s*Name|पिता(?: का)?\s*नाम)[:\s.\-_/]+([A-Za-z ]{3,50})", cand_ln)
+                        m_f = re.search(r"(?i)(?:Father(?:'s)?\s*Name|पिता(?: का)?\s*नाम|(?:S|D|W|C)/O)[:\s.\-_/]+([A-Za-z ]{3,50})", cand_ln)
                         if m_f:
                             cand_ln = m_f.group(1)
                     raw_c = re.sub(r"[^A-Za-z ]", " ", cand_ln).strip()
                     raw_c = re.sub(r"\s+", " ", raw_c)
-                    if len(raw_c) >= 3 and not any(b in raw_c.upper() for b in ("FATHER", "NAME", "पिता", "SIGN", "VALID")):
+                    if len(raw_c) >= 3 and not any(b in raw_c.upper() for b in ("FATHER", "NAME", "पिता", "SIGN", "VALID", "GOVT", "INCOME", "TAX")):
                         fmt_f = _format_glued_name(raw_c)
                         father_cands.add(fmt_f.upper())
 
-    # 1. Label on same line or immediate next line below Name / नाम
+    # 1. Line immediately preceding S/O or D/O or W/O or C/O (e.g. Asutosh Nayak \n S/O ...)
     for i, ln in enumerate(lines):
         up = ln.upper()
-        # Same-line match: Name: ...
-        m_same = re.search(r"(?i)(?:(?:[NnLlM][a-z]{2,3}|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक))[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
-        if m_same and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
-            cand = re.sub(r"\s+", " ", m_same.group(1)).strip()
-            cand_up = cand.upper()
-            if not any(bad in cand_up for bad in bad_roots):
-                fmt = _format_glued_name(cand)
-                words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
-                if 1 <= len(words) <= 4 and fmt.upper() not in father_cands:
-                    found["name"] = fmt[:80]
-                    break
-
-        # Next line check after Name / नाम
-        if any(k in up for k in ("NAME", "नाम", "/NAME")) and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
-            for offset in (1, 2):
-                if i + offset < len(lines):
-                    next_ln = lines[i + offset].strip()
-                    next_up = next_ln.upper()
-                    if not any(bad in next_up for bad in bad_roots) and len(next_ln) >= 3:
-                        cand = re.sub(r"[^A-Za-z ]", " ", next_ln).strip()
-                        cand = re.sub(r"\s+", " ", cand)
-                        if cand and not any(bad in cand.upper() for bad in bad_roots):
-                            fmt = _format_glued_name(cand)
-                            words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
-                            if 1 <= len(words) <= 4 and fmt.upper() not in father_cands:
-                                found["name"] = fmt[:80]
-                                break
+        if any(k in up for k in ("S/O", "D/O", "W/O", "C/O")) and not any(k in up for k in ("INCOME", "TAX", "CARD")):
+            for prev_offset in (1, 2):
+                if i - prev_offset >= 0:
+                    prev_ln = lines[i - prev_offset].strip()
+                    raw_c = re.sub(r"[^A-Za-z ]", " ", prev_ln).strip()
+                    raw_c = re.sub(r"\s+", " ", raw_c)
+                    up_prev = raw_c.upper()
+                    if raw_c and len(raw_c) >= 3 and not any(bad in up_prev for bad in bad_roots):
+                        fmt = _format_glued_name(raw_c)
+                        words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                        if 1 <= len(words) <= 4 and all(any(c in vowels for c in w) for w in words):
+                            found["name"] = fmt[:80]
+                            break
             if found.get("name"):
                 break
 
-    # 2. Scored candidate extraction for PAN and ID cards
+    # 2. Aadhaar Letter "To <Name>" pattern
+    if not found.get("name"):
+        for i, ln in enumerate(lines):
+            if ln.strip().upper() == "TO" or ln.strip().upper().startswith("TO "):
+                for offset in (1, 2, 3):
+                    if i + offset < len(lines):
+                        cand_ln = lines[i + offset].strip()
+                        raw_c = re.sub(r"[^A-Za-z ]", " ", cand_ln).strip()
+                        raw_c = re.sub(r"\s+", " ", raw_c)
+                        up = raw_c.upper()
+                        if raw_c and len(raw_c) >= 3 and not any(bad in up for bad in bad_roots):
+                            fmt = _format_glued_name(raw_c)
+                            words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                            if 1 <= len(words) <= 4 and all(any(c in vowels for c in w) for w in words) and fmt.upper() not in father_cands:
+                                found["name"] = fmt[:80]
+                                break
+                if found.get("name"):
+                    break
+
+    # 3. Label on same line or immediate next line below Name / नाम
+    if not found.get("name"):
+        for i, ln in enumerate(lines):
+            up = ln.upper()
+            # Same-line match: Name: ...
+            m_same = re.search(r"(?i)(?:(?:[NnLlM][a-z]{2,3}|नाम|Holder(?:'s)?\s*Name|Applicant|कार्डधारक))[:\s.\-_/]+([A-Za-z ]{3,50})", ln)
+            if m_same and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
+                cand = re.sub(r"\s+", " ", m_same.group(1)).strip()
+                cand_up = cand.upper()
+                if not any(bad in cand_up for bad in bad_roots):
+                    fmt = _format_glued_name(cand)
+                    words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                    if 1 <= len(words) <= 4 and all(any(c in vowels for c in w) for w in words) and fmt.upper() not in father_cands:
+                        found["name"] = fmt[:80]
+                        break
+
+            # Next line check after Name / नाम
+            if any(k in up for k in ("NAME", "नाम", "/NAME")) and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX")):
+                for offset in (1, 2):
+                    if i + offset < len(lines):
+                        next_ln = lines[i + offset].strip()
+                        next_up = next_ln.upper()
+                        if not any(bad in next_up for bad in bad_roots) and len(next_ln) >= 3:
+                            cand = re.sub(r"[^A-Za-z ]", " ", next_ln).strip()
+                            cand = re.sub(r"\s+", " ", cand)
+                            if cand and not any(bad in cand.upper() for bad in bad_roots):
+                                fmt = _format_glued_name(cand)
+                                words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
+                                if 1 <= len(words) <= 4 and all(any(c in vowels for c in w) for w in words) and fmt.upper() not in father_cands:
+                                    found["name"] = fmt[:80]
+                                    break
+                if found.get("name"):
+                    break
+
+    # 4. Scored candidate extraction for PAN and ID cards
     if not found.get("name"):
         scored_cands = []
         for ln in lines:
@@ -394,6 +463,8 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
             fmt = _format_glued_name(raw_clean)
             words = [w for w in fmt.split() if w.isalpha() and 2 <= len(w) <= 20]
             if not (1 <= len(words) <= 4) or any(len(w) > 18 or len(w) < 2 for w in words):
+                continue
+            if not all(any(c in vowels for c in w) for w in words):
                 continue
 
             score = 0
@@ -411,6 +482,29 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
         scored_cands.sort(key=lambda x: x[0], reverse=True)
         if scored_cands and scored_cands[0][0] >= 30:
             found["name"] = scored_cands[0][1][:80]
+
+    # Aadhaar Address block extraction
+    if not found.get("address"):
+        addr_lines = []
+        in_addr = False
+        for ln in lines:
+            up = ln.upper()
+            if "ADDRESS" in up or "पता" in up:
+                in_addr = True
+                cleaned_ln = re.sub(r"(?i)^(?:Address|पता)[:\s.\-_]+", "", ln).strip()
+                if cleaned_ln:
+                    addr_lines.append(cleaned_ln)
+                continue
+            if in_addr:
+                if any(k in up for k in ("AADHAAR", "UIDAI", "VID", "1947", "HELP@UIDAI", "WWW.UIDAI", "SIGNATURE", "DIGITALLY SIGNED")):
+                    break
+                if re.search(r"\b\d{4}\s*\d{4}\s*\d{4}\b", ln):
+                    break
+                addr_lines.append(ln)
+                if re.search(r"\b\d{6}\b", ln) or len(addr_lines) >= 4:
+                    break
+        if addr_lines:
+            found["address"] = re.sub(r"\s+", " ", ", ".join(addr_lines)).strip()[:140]
 
     # Extract gender if present
     g = re.search(r"\b(MALE|FEMALE|पुरुष|महिला)\b", text, re.IGNORECASE)

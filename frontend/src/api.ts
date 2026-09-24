@@ -1009,4 +1009,30 @@ export function verifySessionLedger() {
   return request<SessionLedgerVerify>("/api/sessions/ledger/verify");
 }
 
+export interface ChatResponse {
+  ok: boolean;
+  answer?: string;
+  reason?: string;
+  message?: string;
+}
+
+/** AI project assistant / technical oracle chat. */
+export async function chatWithAssistant(message: string, history?: { role: string; text: string }[]): Promise<ChatResponse> {
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ message, history: history || [] }),
+    });
+    if (!res.ok) {
+      return { ok: false, reason: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return data as ChatResponse;
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : "network_error" };
+  }
+}
+
 

@@ -2067,11 +2067,43 @@ def _import_pil():
 # [ COLUMN 5: FASTAPI SETUP & BASE ROUTES ]
 # ==============================================================================
 
-# max_body_size lifts Starlette's default 2MB request cap so the screening desk
-# can submit an unscreened document plus an optional webcam live-frame in one
-# request. 50 MB in bytes.
-app = FastAPI(title="No Cap Â· Enterprise Provenance Engine", version="12.0",
-              max_body_size=50 * 1024 * 1024)
+import asyncio
+from contextlib import asynccontextmanager
+
+async def _neon_keepalive_loop():
+    """Background keep-alive worker: executes a lightweight SELECT 1 every 210s (~3.5 min)
+    to keep Neon serverless PostgreSQL connection pool active and lightning fast."""
+    logger.info("[neon_keepalive] Background keep-alive worker started.")
+    while True:
+        try:
+            await asyncio.sleep(210)
+            if not _IS_SQLITE:
+                def _ping():
+                    with engine.connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                await run_in_threadpool(_ping)
+                logger.debug("[neon_keepalive] Neon DB ping OK.")
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.debug(f"[neon_keepalive] Ping exception (safe): {exc}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        _ensure_db_initialized()
+    except Exception as exc:
+        logger.warning(f"[startup] Lazy DB init deferred: {exc}")
+    keepalive_task = asyncio.create_task(_neon_keepalive_loop())
+    yield
+    keepalive_task.cancel()
+    try:
+        await keepalive_task
+    except asyncio.CancelledError:
+        pass
+
+app = FastAPI(title="No Cap · Enterprise Provenance Engine", version="12.0",
+              max_body_size=50 * 1024 * 1024, lifespan=lifespan)
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
