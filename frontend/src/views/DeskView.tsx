@@ -354,22 +354,25 @@ function DocCard({
                     method?: string;
                   };
                   const meta = MODULE_PLAIN[mk];
-                  const v = leaf?.verdict;
+                  const hasFields = Object.keys(doc.masked_fields || {}).length > 0;
+                  const v = leaf?.verdict || (mk === "extraction" && hasFields ? "PASS" : mk === "face" ? "PASS" : undefined);
                   
                   const tone =
                     v === "PASS" ? "ok"
                       : v === "WARN" ? "warn"
-                        : mk === "face" ? "ok"
-                          : v === "REVIEW" ? "warn" : "mute";
+                        : v === "FAIL" ? "bad"
+                          : mk === "face" ? "ok"
+                            : v === "REVIEW" ? "warn" : "mute";
                   const badgeText =
                     v === "PASS" ? "Passed"
                       : v === "WARN" ? "Needs attention"
-                        : mk === "face" ? "Passed"
-                          : plainVerdict(v) || "Passed";
+                        : v === "FAIL" ? "Failed"
+                          : mk === "face" ? "Passed"
+                            : plainVerdict(v) || "Passed";
 
                   const extra =
                     mk === "extraction"
-                      ? (leaf?.mrz?.valid ? "Machine code valid · Text read clearly" : leaf?.ocr?.ran === false ? "Could not auto-read text" : "Document text and numbers read clearly")
+                      ? (leaf?.mrz?.valid ? "Machine code valid · Text read clearly" : hasFields ? "Document text and numbers read clearly" : leaf?.ocr?.ran === false ? "Could not auto-read text" : "Document text and numbers read clearly")
                       : mk === "validation"
                         ? (doc.watchlist_hits && doc.watchlist_hits.length > 0
                             ? "⚠️ Alert: Found on national fraud watchlist"
@@ -1065,7 +1068,7 @@ export function DeskView() {
 
   // New session creation fields
   const [newCheckpoint, setNewCheckpoint] = useState("Raxaul");
-  const [newNationality, setNewNationality] = useState("NP");
+  const [newNationality, setNewNationality] = useState("IN");
   const [newPurpose, setNewPurpose] = useState("Trade");
   const [showNewForm, setShowNewForm] = useState(false);
   const [resumingId, setResumingId] = useState<string | null>(null);
@@ -1187,7 +1190,7 @@ export function DeskView() {
   const startNextTraveller = async () => {
     setBusy(true);
     const post = active?.checkpoint || newCheckpoint.trim() || "Raxaul";
-    const nat = active?.nationality || newNationality.trim() || "NP";
+    const nat = active?.nationality || newNationality.trim() || "IN";
     const purp = active?.purpose || newPurpose.trim() || "Trade";
     const res = await createSession({
       checkpoint: post,

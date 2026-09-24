@@ -1398,7 +1398,7 @@ def _backfill_session_labels(db_engine) -> None:
 
 def _next_session_label(db, created_at_utc: str) -> str:
     """Label for a brand-new session: next running number on today's IST date (Session 1, 2, 3...).
-    Strictly resets back to Session 1 every midnight IST."""
+    Assigns the lowest available Session number among open sessions on today's date."""
     day = _session_day(created_at_utc)
     if not day:
         return "Session 1"
@@ -1406,24 +1406,23 @@ def _next_session_label(db, created_at_utc: str) -> str:
         y, m, d = (int(p) for p in day.split("-"))
         ist_midnight = datetime(y, m, d, 0, 0, 0, tzinfo=IST)
         cutoff = ist_midnight.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        rows = (
+        open_rows = (
             db.query(ScreeningSession.label, ScreeningSession.created_at)
             .filter(ScreeningSession.created_at >= cutoff)
+            .filter(ScreeningSession.status == "open")
             .all()
         )
-        count = 0
-        max_num = 0
-        for lbl, c in rows:
-            if _session_day(c) == day:
-                count += 1
-                if lbl and lbl.startswith("Session "):
-                    try:
-                        num = int(lbl.split("Session ")[1].strip())
-                        if num > max_num:
-                            max_num = num
-                    except (ValueError, IndexError):
-                        pass
-        next_num = max(count, max_num) + 1
+        active_nums = set()
+        for lbl, c in open_rows:
+            if _session_day(c) == day and lbl and lbl.startswith("Session "):
+                try:
+                    num = int(lbl.split("Session ")[1].strip())
+                    active_nums.add(num)
+                except (ValueError, IndexError):
+                    pass
+        next_num = 1
+        while next_num in active_nums:
+            next_num += 1
         return f"Session {next_num}"
     except Exception as e:
         print(f"[_next_session_label] fallback ({e})")
@@ -3058,12 +3057,24 @@ def session_ledger_verify(request: Request, admin: str = Depends(get_current_adm
         if not rows:
             return {"valid": True, "total_blocks": 0, "head_hash": None,
                     "broken_at": None, "verified_blocks": 0, "status": "EMPTY_CHAIN"}
+
+        # Single batch query to avoid N+1 SQL queries across all sessions
+        sids = [s.id for s in rows]
+        doc_blocks_map = {}
+        if sids:
+            reports = (
+                db.query(ScreeningReport.session_id, ScreeningReport.ledger_hash)
+                .filter(ScreeningReport.session_id.in_(sids))
+                .order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc())
+                .all()
+            )
+            for sid, lh in reports:
+                if lh:
+                    doc_blocks_map.setdefault(sid, []).append(lh)
+
         expected_prev = "GENESIS"
         for idx, s in enumerate(rows):
-            doc_blocks = [r.ledger_hash for r in
-                          db.query(ScreeningReport).filter_by(session_id=s.id)
-                          .order_by(ScreeningReport.created_at.asc(), ScreeningReport.id.asc()).all()
-                          if getattr(r, "ledger_hash", None)]
+            doc_blocks = doc_blocks_map.get(s.id, [])
             payload = session_payload(
                 session_id=s.id, checkpoint=s.checkpoint, screener=s.screener,
                 verdict=s.verdict, risk_score=s.risk_score, doc_blocks=doc_blocks,

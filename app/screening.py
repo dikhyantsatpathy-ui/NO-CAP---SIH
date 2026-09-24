@@ -785,8 +785,9 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
 
     if not identified:
         can_clear = False
-        reasons.append("No machine-verifiable identity number (PAN, Aadhaar, Passport MRZ, DL, or EPIC) was validated on the document.")
-        risk = max(risk, 40)
+        reasons.append("CRITICAL: Unrecognized document format — No machine-verifiable identity number (Aadhaar, PAN, Passport, Driving Licence, or Voter ID) was validated on the document.")
+        risk = max(risk, 80)
+        hard_flag = True
 
     # Document type structure validation
     doc_type_clean = (doc_type or "").strip().lower()
@@ -1218,9 +1219,10 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "modules": {
             "extraction": {
                 "ran": True,
+                "verdict": "PASS" if len([v for v in fields.values() if v]) > 0 else "FAIL",
                 "medium": extract_res["medium"],
                 "mrz": extract_res.get("mrz"),
-                "ocr": extract_res.get("ocr"),
+                "ocr": extract_res.get("ocr", {"ran": True}),
                 "document_aware": document_aware,
             },
             "validation": {

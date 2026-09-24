@@ -35,13 +35,19 @@ function verdictChip(verdict: string | null): string {
 
 type SortOption = "time_desc" | "time_asc" | "risk_desc" | "risk_asc" | "label_asc" | "docs_desc";
 
+let _ledgerCache: {
+  payload: SessionLedgerPayload | null;
+  verify: SessionLedgerVerify | null;
+  stats: StatsOverview | null;
+} = { payload: null, verify: null, stats: null };
+
 export function LedgerView() {
   const { toast } = useToast();
-  const [payload, setPayload] = useState<SessionLedgerPayload | null>(null);
-  const [verify, setVerify] = useState<SessionLedgerVerify | null>(null);
-  const [stats, setStats] = useState<StatsOverview | null>(null);
+  const [payload, setPayload] = useState<SessionLedgerPayload | null>(_ledgerCache.payload);
+  const [verify, setVerify] = useState<SessionLedgerVerify | null>(_ledgerCache.verify);
+  const [stats, setStats] = useState<StatsOverview | null>(_ledgerCache.stats);
   const [showStats, setShowStats] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!_ledgerCache.payload);
   const [verifying, setVerifying] = useState(false);
 
   // QoL Controls State
@@ -52,15 +58,31 @@ export function LedgerView() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
-    const [p, v, s] = await Promise.all([
-      getSessionLedger(),
-      verifySessionLedger(),
-      getStatsOverview(),
-    ]);
-    if (p.ok) setPayload(p.data);
-    if (v.ok) setVerify(v.data);
-    if (s.ok) setStats(s.data);
-    setLoading(false);
+    // 1. Fetch ledger blocks first for instant display
+    const pPromise = getSessionLedger().then((p) => {
+      if (p.ok) {
+        _ledgerCache.payload = p.data;
+        setPayload(p.data);
+      }
+      setLoading(false);
+    });
+
+    // 2. Fetch verify and stats concurrently
+    const vPromise = verifySessionLedger().then((v) => {
+      if (v.ok) {
+        _ledgerCache.verify = v.data;
+        setVerify(v.data);
+      }
+    });
+
+    const sPromise = getStatsOverview().then((s) => {
+      if (s.ok) {
+        _ledgerCache.stats = s.data;
+        setStats(s.data);
+      }
+    });
+
+    await Promise.all([pPromise, vPromise, sPromise]);
   }, []);
 
   useEffect(() => {

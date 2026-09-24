@@ -2490,6 +2490,40 @@ textarea::placeholder {
   background: var(--seal-soft);
 }
 
+.doc-card .subtable-nav {
+  display: flex;
+  gap: 8px;
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.doc-card .subtable-nav__btn {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  padding: 6px 14px !important;
+  border-radius: 6px !important;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.doc-card .subtable-nav__btn:hover {
+  background: rgba(255, 255, 255, 0.28) !important;
+  border-color: #93c5fd !important;
+  color: #ffffff !important;
+}
+
+.doc-card .subtable-nav__btn--active {
+  background: #ffffff !important;
+  color: #0b2240 !important;
+  border-color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+}
+
 .subtable-pane {
   background: var(--panel-2);
   border: 1px solid var(--line);

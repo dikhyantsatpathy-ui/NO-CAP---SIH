@@ -12,10 +12,17 @@ same contract build_identity_report used, folded into the MHA screening desk.
 
 VALIDATORS = {
     "aadhaar": ("verify_aadhaar", "Aadhaar"),
+    "aadhaar_card": ("verify_aadhaar", "Aadhaar"),
+    "aadhar": ("verify_aadhaar", "Aadhaar"),
     "pan": ("verify_pan", "PAN"),
+    "pan_card": ("verify_pan", "PAN"),
     "driving_licence": ("verify_dl", "Driving licence"),
+    "driving_license": ("verify_dl", "Driving licence"),
+    "dl": ("verify_dl", "Driving licence"),
     "rc": ("verify_rc", "RC"),
     "voter_id": ("verify_epic", "Voter ID (EPIC)"),
+    "voter": ("verify_epic", "Voter ID (EPIC)"),
+    "epic": ("verify_epic", "Voter ID (EPIC)"),
     "passport": ("verify_passport", "Passport"),
     "visa": ("verify_visa", "Visa"),
 }
@@ -23,10 +30,17 @@ VALIDATORS = {
 # doc_type -> screening field key that carries the number
 _FIELD_FOR = {
     "aadhaar": "aadhaar",
+    "aadhaar_card": "aadhaar",
+    "aadhar": "aadhaar",
     "pan": "pan",
+    "pan_card": "pan",
     "driving_licence": "driving_licence",
+    "driving_license": "driving_licence",
+    "dl": "driving_licence",
     "rc": "driving_licence",
     "voter_id": "voter_id",
+    "voter": "voter_id",
+    "epic": "voter_id",
     "passport": "passport",
     "visa": "passport",
 }
@@ -58,13 +72,27 @@ def validate_document(
 
     declared = declared or {}
     doc_type = (doc_type or "").strip().lower()
+
+    # Auto-infer doc_type from extracted fields if missing or generic
+    if not doc_type or doc_type in ("other", "unknown"):
+        if fields.get("aadhaar"):
+            doc_type = "aadhaar"
+        elif fields.get("pan"):
+            doc_type = "pan"
+        elif fields.get("driving_licence"):
+            doc_type = "driving_licence"
+        elif fields.get("voter_id"):
+            doc_type = "voter_id"
+        elif fields.get("passport"):
+            doc_type = "passport"
+
     vfn = VALIDATORS.get(doc_type)
     checks = []
 
     key = _FIELD_FOR.get(doc_type)
     number = (fields.get(key) if key else None)
 
-    if not number and doc_type and doc_type != "other":
+    if not number and doc_type and doc_type not in ("other", "unknown"):
         checks = [{"label": "structure", "ok": None,
                    "detail": "No machine-readable number was extracted — declare it "
                              "or (with tesseract installed) re-photo the document."}]

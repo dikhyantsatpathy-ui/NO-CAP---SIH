@@ -76,11 +76,14 @@ def extract_document(data: bytes, filename: str = "", doc_type: str = "",
         result["medium"] = "pdf"
         text, img_bytes = _pdf_text_or_image(data)
         if text:
+            result["text"] = text
             result["fields"] = extract_fields(text, doc_type=doc_type)
+            result["ocr"] = {"ran": True, "engine": "pdf-text-layer", "reason": "Digital PDF text stream"}
         elif img_bytes:
             img_res = _extract_image(img_bytes, doc_type=doc_type)
             result["fields"] = img_res.get("fields", {})
             result["mrz"] = img_res.get("mrz")
+            result["text"] = img_res.get("text", "")
             result["ocr"] = img_res.get("ocr", {"ran": True, "engine": "pdf-embedded-ocr"})
             result["pdf_no_text"] = False
         else:
@@ -159,10 +162,25 @@ def _pdf_text_or_image(data: bytes) -> tuple[str, bytes | None]:
         if text.strip():
             return text, None
         if reader.pages:
-            p0 = reader.pages[0]
-            if getattr(p0, "images", None) and len(p0.images) > 0:
-                first_img = p0.images[0]
-                return "", getattr(first_img, "data", None)
+            for p in reader.pages:
+                if getattr(p, "images", None) and len(p.images) > 0:
+                    first_img = p.images[0]
+                    img_d = getattr(first_img, "data", None)
+                    if img_d:
+                        return "", img_d
+    except Exception:
+        pass
+    try:
+        import fitz
+        doc = fitz.open(stream=data, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text() + "\n"
+        if text.strip():
+            return text, None
+        if len(doc) > 0:
+            pix = doc[0].get_pixmap()
+            return "", pix.tobytes("png")
     except Exception:
         pass
     return "", None
