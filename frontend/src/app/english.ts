@@ -35,9 +35,9 @@ export const MODULE_PLAIN: Record<ModuleKey, ModulePlain> = {
     what: "Checks if the photo was replaced, digitally edited, or re-printed from a photocopy.",
   },
   face: {
-    short: "4. Live Face Match",
-    name: "Compare Face with Camera",
-    what: "Matches the photo on the identity card against the traveller standing in front of the camera.",
+    short: "4. Portrait Photo ID",
+    name: "Holder Portrait & Photo Quality",
+    what: "Detects the holder's face photo on the document, checking image clarity, biometric quality, and facial landmarks.",
   },
 };
 

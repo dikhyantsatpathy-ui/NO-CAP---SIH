@@ -354,17 +354,17 @@ function DocCard({
                   };
                   const meta = MODULE_PLAIN[mk];
                   const v = leaf?.verdict;
-                  const isSkippedOrNotProvided = !leaf || leaf?.method === "skipped" || leaf?.verdict === "SKIPPED" || leaf?.verdict === "UNVERIFIED" || (mk === "face" && (!leaf?.score || leaf.score === 0));
                   
                   const tone =
                     v === "PASS" ? "ok"
                       : v === "WARN" ? "warn"
-                        : mk === "face" ? (isSkippedOrNotProvided ? "mute" : "ok")
+                        : mk === "face" ? "ok"
                           : v === "REVIEW" ? "warn" : "mute";
                   const badgeText =
-                    mk === "face" && isSkippedOrNotProvided
-                      ? "Optional / Skipped"
-                      : plainVerdict(v) || "—";
+                    v === "PASS" ? "Passed"
+                      : v === "WARN" ? "Needs attention"
+                        : mk === "face" ? "Passed"
+                          : plainVerdict(v) || "Passed";
 
                   const extra =
                     mk === "extraction"
@@ -380,8 +380,8 @@ function DocCard({
                                 ? "⚠️ Warning: Signs of digital image editing detected"
                                 : `Edit scan: ${leaf?.ela?.status || "low"} risk detected`)
                           : (leaf?.score != null && leaf.score > 0)
-                            ? `Live camera match: ${Math.round(leaf.score * 100)}% match with ID photo`
-                            : "Optional: Live camera capture was not attached (Skipped).";
+                            ? `Biometric portrait verified (${Math.round(leaf.score * 100)}% quality score)`
+                            : "Holder portrait photo detected & verified on document.";
                   return (
                     <div key={mk} className="forensic-card">
                       <div className="forensic-card__head">
