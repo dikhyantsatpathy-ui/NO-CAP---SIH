@@ -211,81 +211,11 @@ function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => 
   );
 }
 
-const PALETTE_DRAFTS = [
-  { id: "draft-1", label: "Draft 1: Warm Ivory & Sovereign Slate", hint: "Ivory Canvas + Slate Blue Card Box" },
-  { id: "draft-2", label: "Draft 2: Nordic Linen & Ocean Marine", hint: "Linen Canvas + Ocean Marine Card Box" },
-  { id: "draft-3", label: "Draft 3: Royal Pearl & Sovereign Indigo", hint: "Pearl Canvas + Sovereign Indigo Card Box" },
-  { id: "draft-4", label: "Draft 4: Sandstone & Precision Cobalt", hint: "Sandstone Canvas + Cobalt Card Box" },
-  { id: "draft-5", label: "Draft 5: Warm Ivory & Royal Sapphire", hint: "Ivory Canvas + Deep Sapphire Card Box" },
-] as const;
-
-function PaletteDraftBar({
-  currentDraft,
-  onSelectDraft,
-}: {
-  currentDraft: string;
-  onSelectDraft: (id: string) => void;
-}) {
-  return (
-    <aside className="palette-draft-bar" aria-label="Palette theme selection">
-      <div className="palette-draft-bar__title">
-        <span>🎨 HARMONIC PALETTE DRAFTS (PURAA BOX COLORED):</span>
-      </div>
-      <div className="palette-draft-bar__options">
-        {PALETTE_DRAFTS.map((d) => {
-          const isActive = currentDraft === d.id;
-          return (
-            <button
-              key={d.id}
-              type="button"
-              className={`palette-draft-pill ${isActive ? "palette-draft-pill--active" : ""}`}
-              onClick={() => onSelectDraft(d.id)}
-              title={d.hint}
-            >
-              {isActive ? "✓ " : ""}{d.label}
-            </button>
-          );
-        })}
-      </div>
-    </aside>
-  );
-}
-
 export function App() {
   const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
   const [chatOpen, setChatOpen] = useState(false);
   const prevView = useRef<ViewKey>("desk");
-
-  const [paletteDraft, setPaletteDraft] = useState<string>(() => {
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const qDraft = urlParams.get("draft");
-      if (qDraft === "1" || qDraft === "draft-1") return "draft-1";
-      if (qDraft === "2" || qDraft === "draft-2") return "draft-2";
-      if (qDraft === "3" || qDraft === "draft-3") return "draft-3";
-      if (qDraft === "4" || qDraft === "draft-4") return "draft-4";
-      if (qDraft === "5" || qDraft === "draft-5") return "draft-5";
-
-      const port = window.location.port;
-      if (port === "8001") return "draft-2";
-      if (port === "8002") return "draft-3";
-      if (port === "8003") return "draft-4";
-      if (port === "8004") return "draft-5";
-      if (port === "8000") return "draft-1";
-
-      return localStorage.getItem("nocap_palette_draft") || "draft-1";
-    } catch {
-      return "draft-1";
-    }
-  });
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-palette-draft", paletteDraft);
-    try {
-      localStorage.setItem("nocap_palette_draft", paletteDraft);
-    } catch {}
-  }, [paletteDraft]);
 
   useEffect(() => {
     if (prevView.current !== view) {
@@ -303,7 +233,6 @@ export function App() {
   if (!signedIn) {
     return (
       <>
-        <PaletteDraftBar currentDraft={paletteDraft} onSelectDraft={setPaletteDraft} />
         <AshokaChakraWatermark />
         <SignInGate />
         <FloatingChatTrigger onClick={() => setChatOpen(true)} />
@@ -314,7 +243,6 @@ export function App() {
 
   return (
     <div className="console-layout">
-      <PaletteDraftBar currentDraft={paletteDraft} onSelectDraft={setPaletteDraft} />
       <AshokaChakraWatermark />
       <SuperHeader />
       <PortalHeader />
