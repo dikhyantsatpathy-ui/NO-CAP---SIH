@@ -22,8 +22,8 @@
   --bg: #faf7f2;               /* Rich Warm Ivory canvas */
   --bg-2: #f2eee3;             /* Soft Ivory tone */
   --panel: #ffffff;            /* Crisp elevated card surface */
-  --panel-2: #f3f6fa;          /* Harmonious soft slate-blue interior box */
-  --panel-3: #e8eef6;          /* Secondary interior / hover */
+  --panel-2: #edf4fc;          /* Harmonious rich slate-blue interior box */
+  --panel-3: #e0ecfa;          /* Secondary interior / hover */
   
   --line: #e6e2d8;             /* Warm ivory hairline border */
   --line-2: #d6d0c4;           /* Structured boundary */
@@ -40,19 +40,19 @@
   --seal-soft: #eef4fb;        /* Harmonious slate blue tint */
   --ink-on-seal: #ffffff;
 
-  --accent-box-bg: #f1f5fb;    /* Harmonious interior box fill */
-  --accent-box-border: #cadcf5;/* Refined slate blue border */
-  --accent-box-text: #1e40af;  /* Heritage navy accent */
+  --accent-box-bg: #edf4fc;    /* Rich prominent slate-blue box fill */
+  --accent-box-border: #b8d5f8;/* Crisp distinct slate-blue border */
+  --accent-box-text: #1d4ed8;  /* Heritage navy accent text */
 
-  --stepper-now-bg: #eef4fc;
+  --stepper-now-bg: #edf4fc;
   --stepper-now-border: #1d4ed8;
   --stepper-now-dot: #1d4ed8;
 
   --cue-bg: #fcfbf5;
   --cue-border: #e8e2cf;
 
-  --hud-bg: linear-gradient(135deg, #ffffff 0%, #f1f5fb 100%);
-  --hud-border: #cadcf5;
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #edf4fc 100%);
+  --hud-border: #b8d5f8;
   --hud-left-border: #1d4ed8;
 
   --security: #059669;
@@ -87,8 +87,8 @@
   --bg: #f6f7f4;               /* Crisp Linen Off-White canvas */
   --bg-2: #eceee8;             /* Linen tone */
   --panel: #ffffff;            /* Pure white card surface */
-  --panel-2: #edf5f9;          /* Harmonious ocean marine interior box */
-  --panel-3: #e0edf5;          /* Secondary marine hover */
+  --panel-2: #e6f4fa;          /* Harmonious ocean marine interior box */
+  --panel-3: #d5edfa;          /* Secondary marine hover */
 
   --line: #e0ded6;             /* Linen hairline border */
   --line-2: #cbc7bd;
@@ -105,19 +105,19 @@
   --seal-soft: #edf6fb;
   --ink-on-seal: #ffffff;
 
-  --accent-box-bg: #ecf6fb;
-  --accent-box-border: #bee0f2;
+  --accent-box-bg: #e6f4fa;
+  --accent-box-border: #99daf5;
   --accent-box-text: #0284c7;
 
-  --stepper-now-bg: #edf6fc;
+  --stepper-now-bg: #e6f4fa;
   --stepper-now-border: #0284c7;
   --stepper-now-dot: #0284c7;
 
   --cue-bg: #fbf9f2;
   --cue-border: #ded8c6;
 
-  --hud-bg: linear-gradient(135deg, #ffffff 0%, #edf6fb 100%);
-  --hud-border: #bee0f2;
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #e6f4fa 100%);
+  --hud-border: #99daf5;
   --hud-left-border: #0284c7;
 
   --security: #059669;
@@ -145,8 +145,8 @@
   --bg: #faf9f6;               /* Royal Pearl Off-White canvas */
   --bg-2: #f0ede6;             /* Pearl tone */
   --panel: #ffffff;            /* Pure white card surface */
-  --panel-2: #f2f4fe;          /* Harmonious indigo interior box */
-  --panel-3: #e5e9fc;
+  --panel-2: #edf0fe;          /* Harmonious indigo interior box */
+  --panel-3: #dbe1fd;
 
   --line: #e4e2da;             /* Pearl hairline border */
   --line-2: #cfcbc0;
@@ -163,19 +163,19 @@
   --seal-soft: #f0f3ff;
   --ink-on-seal: #ffffff;
 
-  --accent-box-bg: #f1f3fe;
-  --accent-box-border: #c7d2fe;
+  --accent-box-bg: #edf0fe;
+  --accent-box-border: #b4c2fd;
   --accent-box-text: #3730a3;
 
-  --stepper-now-bg: #eef2ff;
+  --stepper-now-bg: #edf0fe;
   --stepper-now-border: #4338ca;
   --stepper-now-dot: #4338ca;
 
   --cue-bg: #fdfbf4;
   --cue-border: #e6dfcb;
 
-  --hud-bg: linear-gradient(135deg, #ffffff 0%, #f1f3fe 100%);
-  --hud-border: #c7d2fe;
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #edf0fe 100%);
+  --hud-border: #b4c2fd;
   --hud-left-border: #4338ca;
 
   --security: #059669;
@@ -203,8 +203,8 @@
   --bg: #f8f6f0;               /* Calming Sandstone Alabaster canvas */
   --bg-2: #eeeae0;             /* Sandstone tone */
   --panel: #ffffff;            /* Pure white card surface */
-  --panel-2: #eef4fa;          /* Harmonious precision cobalt interior box */
-  --panel-3: #e1ecf6;
+  --panel-2: #e8f1fa;          /* Harmonious precision cobalt interior box */
+  --panel-3: #d7e6f6;
 
   --line: #e2ded4;             /* Sandstone hairline border */
   --line-2: #ccc6b8;
@@ -221,19 +221,19 @@
   --seal-soft: #edf4fc;
   --ink-on-seal: #ffffff;
 
-  --accent-box-bg: #eff5fa;
-  --accent-box-border: #bad4ee;
+  --accent-box-bg: #e8f1fa;
+  --accent-box-border: #a4caf0;
   --accent-box-text: #1e3a8a;
 
-  --stepper-now-bg: #edf4fc;
+  --stepper-now-bg: #e8f1fa;
   --stepper-now-border: #1e3a8a;
   --stepper-now-dot: #1e3a8a;
 
   --cue-bg: #faf7ee;
   --cue-border: #ded8c4;
 
-  --hud-bg: linear-gradient(135deg, #ffffff 0%, #eff5fa 100%);
-  --hud-border: #bad4ee;
+  --hud-bg: linear-gradient(135deg, #ffffff 0%, #e8f1fa 100%);
+  --hud-border: #a4caf0;
   --hud-left-border: #1e3a8a;
 
   --security: #059669;
@@ -2945,6 +2945,11 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background: var(--accent-box-bg);
+  border: 1.5px solid var(--accent-box-border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .intake-section__title {
@@ -2953,7 +2958,7 @@ textarea::placeholder {
   gap: 8px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--ink);
+  color: var(--accent-box-text);
   letter-spacing: 0.02em;
 }
 
@@ -2962,6 +2967,20 @@ textarea::placeholder {
   color: var(--muted);
   line-height: 1.45;
   margin: -4px 0 2px 0;
+}
+
+.intake-section .field input,
+.intake-section .field select {
+  background: var(--panel);
+  border: 1.5px solid var(--accent-box-border);
+  border-radius: 6px;
+  color: var(--ink);
+}
+
+.intake-section .field input:focus,
+.intake-section .field select:focus {
+  border-color: var(--accent-box-text);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-box-text) 15%, transparent);
 }
 
 .intake-fields-grid {
@@ -2990,9 +3009,9 @@ textarea::placeholder {
 }
 
 .side-card {
-  background: #ffffff;
-  border: 1.5px solid #e2e8f0;
-  border-radius: 10px;
+  background: var(--panel);
+  border: 1.5px solid var(--accent-box-border);
+  border-radius: 8px;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -3001,18 +3020,18 @@ textarea::placeholder {
 }
 
 .side-card:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-color: var(--accent-box-text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .side-card--front {
-  border-top: 3px solid #1d4ed8;
-  background: #ffffff;
+  border-top: 3.5px solid var(--accent-box-text);
+  background: var(--panel);
 }
 
 .side-card--back {
-  border-top: 3px solid #64748b;
-  background: #ffffff;
+  border-top: 3.5px solid var(--line-3);
+  background: var(--panel);
 }
 
 .side-card__header {
@@ -3027,23 +3046,59 @@ textarea::placeholder {
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: #0b2240;
+  color: var(--accent-box-text);
   text-transform: uppercase;
 }
 
 .side-card__subtag {
   font-size: 10px;
-  color: #64748b;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 64px;
+  border: 1.5px dashed var(--accent-box-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-box-bg) 60%, var(--panel) 40%);
+  cursor: pointer;
+  text-align: center;
+  padding: 12px 10px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.dropzone:hover {
+  border-color: var(--accent-box-text);
+  background: color-mix(in srgb, var(--accent-box-bg) 85%, var(--accent-box-text) 15%);
+}
+
+.dropzone__icon {
+  color: var(--accent-box-text);
+}
+
+.dropzone__label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-box-text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dropzone--back {
   border-style: dashed;
-  background: #fafafa;
+  background: color-mix(in srgb, var(--accent-box-bg) 45%, var(--panel) 55%);
 }
 
 .dropzone--back:hover {
-  background: #f1f5f9;
+  background: color-mix(in srgb, var(--accent-box-bg) 75%, var(--accent-box-text) 25%);
 }
 
 .intake-actions-bar {
