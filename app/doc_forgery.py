@@ -66,17 +66,30 @@ def analyze_doc_forgery(image_bytes: bytes) -> dict:
         }
 
     # Remote microservice bypass if configured
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
+    try:
+        from remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+    except ImportError:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
+            from app.remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+        except ImportError:
+            is_remote_available = lambda: bool(os.getenv("ML_SERVICE_URL"))
+            mark_remote_failed = lambda: None
+            mark_remote_success = lambda: None
+            get_timeout = lambda: 2.0
+            prepare_payload = lambda b: b
+
+    if is_remote_available():
+        ml_url = os.getenv("ML_SERVICE_URL")
+        try:
+            timeout_sec = get_timeout()
             base = ml_url.rstrip("/")
+            payload = prepare_payload(image_bytes)
             candidate_urls = (
                 [f"{base}/api/ml/doc_forgery", f"{base}/gradio_api/api/ml/doc_forgery"]
                 if "/gradio_api" not in base else [f"{base}/api/ml/doc_forgery"]
             )
             for target_url in candidate_urls:
-                files = {"file": ("image.png", image_bytes, "image/png")}
+                files = {"file": ("image.jpg", payload, "image/jpeg")}
                 res = None
                 try:
                     import httpx
@@ -87,8 +100,10 @@ def analyze_doc_forgery(image_bytes: bytes) -> dict:
                     res = requests.post(target_url, files=files, timeout=timeout_sec)
 
                 if res is not None and res.status_code == 200:
+                    mark_remote_success()
                     return res.json()
         except Exception as exc:
+            mark_remote_failed()
             logger.warning(f"Remote doc_forgery call to {ml_url} failed: {exc}. Using local engine.")
 
     # Local Dual-Stream SRM & Seam Engine

@@ -72,3 +72,4 @@ frontend/smoke/out.*
 .vite/
 .vercel
 .env*
+pics/

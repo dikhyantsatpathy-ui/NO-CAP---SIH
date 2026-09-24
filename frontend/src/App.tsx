@@ -14,6 +14,16 @@ import { WatchlistView } from "./views/WatchlistView";
 import { StaffView } from "./views/StaffView";
 import { ChatModal, FloatingChatTrigger } from "./views/ChatModal";
 
+export function TriColorRule() {
+  return (
+    <div className="tricolor-rule" aria-hidden="true">
+      <div className="tricolor-rule__saffron" />
+      <div className="tricolor-rule__white" />
+      <div className="tricolor-rule__green" />
+    </div>
+  );
+}
+
 type ViewKey = "desk" | "review" | "ledger" | "watchlist" | "staff";
 
 const NAV: { key: ViewKey; label: string; icon: string }[] = [
@@ -246,12 +256,14 @@ export function App() {
 
   if (!signedIn) {
     return (
-      <>
+      <div>
         <AshokaChakraWatermark />
+        <SuperHeader />
+        <TriColorRule />
         <SignInGate />
         <FloatingChatTrigger onClick={() => setChatOpen(true)} />
         <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
-      </>
+      </div>
     );
   }
 
@@ -259,6 +271,7 @@ export function App() {
     <div className="console-layout">
       <AshokaChakraWatermark />
       <SuperHeader />
+      <TriColorRule />
       <PortalHeader />
       <CommandStatusStrip />
       <NavTabs active={view} onPick={setView} />

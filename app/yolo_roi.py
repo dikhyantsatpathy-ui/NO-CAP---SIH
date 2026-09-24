@@ -30,6 +30,18 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("yolo_roi")
 
+try:
+    from remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+except ImportError:
+    try:
+        from app.remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+    except ImportError:
+        is_remote_available = lambda: bool(os.getenv("ML_SERVICE_URL"))
+        mark_remote_failed = lambda: None
+        mark_remote_success = lambda: None
+        get_timeout = lambda: 2.0
+        prepare_payload = lambda b: b
+
 _MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 
 
@@ -298,17 +310,31 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
         return []
     
     # Remote microservice bypass
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
+    # Remote microservice bypass
+    try:
+        from remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+    except ImportError:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
+            from app.remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+        except ImportError:
+            is_remote_available = lambda: bool(os.getenv("ML_SERVICE_URL"))
+            mark_remote_failed = lambda: None
+            mark_remote_success = lambda: None
+            get_timeout = lambda: 2.0
+            prepare_payload = lambda b: b
+
+    if is_remote_available():
+        ml_url = os.getenv("ML_SERVICE_URL")
+        try:
+            timeout_sec = get_timeout()
             base = ml_url.rstrip("/")
+            payload = prepare_payload(image_bytes)
             candidate_urls = (
                 [f"{base}/api/ml/yolo_roi", f"{base}/gradio_api/api/ml/yolo_roi"]
                 if "/gradio_api" not in base else [f"{base}/api/ml/yolo_roi"]
             )
             for target_url in candidate_urls:
-                files = {"file": ("image.png", image_bytes, "image/png")}
+                files = {"file": ("image.jpg", payload, "image/jpeg")}
                 res = None
                 try:
                     import httpx
@@ -320,6 +346,7 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
 
                 if res is not None:
                     if res.status_code == 200:
+                        mark_remote_success()
                         return res.json()
                     if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
                         continue
@@ -327,6 +354,7 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
                         f"Remote yolo_roi returned HTTP {res.status_code}: {res.text[:200]}"
                     )
         except Exception as exc:
+            mark_remote_failed()
             logger.warning(
                 f"Remote yolo_roi call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )
@@ -400,17 +428,18 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
     if not image_bytes:
         return []
         
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
+    if is_remote_available():
+        ml_url = os.getenv("ML_SERVICE_URL")
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
+            timeout_sec = get_timeout()
             base = ml_url.rstrip("/")
+            payload = prepare_payload(image_bytes)
             candidate_urls = (
                 [f"{base}/api/ml/aadhaar_fields", f"{base}/gradio_api/api/ml/aadhaar_fields"]
                 if "/gradio_api" not in base else [f"{base}/api/ml/aadhaar_fields"]
             )
             for target_url in candidate_urls:
-                files = {"file": ("image.png", image_bytes, "image/png")}
+                files = {"file": ("image.jpg", payload, "image/jpeg")}
                 res = None
                 try:
                     import httpx
@@ -422,6 +451,7 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
 
                 if res is not None:
                     if res.status_code == 200:
+                        mark_remote_success()
                         return res.json()
                     if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
                         continue
@@ -429,6 +459,7 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
                         f"Remote aadhaar_fields returned HTTP {res.status_code}: {res.text[:200]}"
                     )
         except Exception as exc:
+            mark_remote_failed()
             logger.warning(
                 f"Remote aadhaar_fields call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )

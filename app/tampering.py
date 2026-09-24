@@ -122,8 +122,7 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                                  "webcam capture for a person check."})
 
     # ---- AI-generation / Editing / Screen-aware signal ------------------
-    is_cloud_or_model = ai_detection.get("provider") in ("self-hosted", "sightengine", "hive", "vit", "clip", "test")
-    if (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited") or (is_cloud_or_model and (ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 65)):
+    if (ai_detection.get("raw") or {}).get("kind") in ("ai", "edited"):
         checks.append({
             "label": "ai-generated-or-edited",
             "ok": False,
@@ -131,7 +130,14 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                        "Vision/metadata scan flags the document as AI-generated or digitally edited."),
         })
     elif ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 65:
-        if (ela.get("status") in ("LOW", "MEDIUM") or document_aware is False):
+        if ai_detection.get("ai_suspected"):
+            checks.append({
+                "label": "ai-generated-or-edited",
+                "ok": False,
+                "detail": (ai_detection.get("explanation") or
+                           "Vision/metadata scan flags the document as AI-generated or digitally edited."),
+            })
+        elif (ela.get("status") in ("LOW", "MEDIUM") or document_aware is False):
             checks.append({
                 "label": "ai-generated-or-edited",
                 "ok": True,

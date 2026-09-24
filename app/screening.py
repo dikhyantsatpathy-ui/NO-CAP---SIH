@@ -1062,13 +1062,19 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     tamper_passed = (tamper_res.get("verdict") == "PASS")
     is_cloud_or_model = ai_det.get("provider") in ("self-hosted", "sightengine", "hive", "vit", "clip", "test")
 
-    if (ai_raw_kind in ("ai", "edited")) or (is_cloud_or_model and (ai_det.get("ai_suspected") or _ai_score >= 65)):
+    if ai_raw_kind in ("ai", "edited"):
         score_val = max(_ai_score, 85)
         reasons.append(f"CRITICAL AI-ALERT: Visual/metadata scan confirms AI-GENERATED or edited image ({score_val}% confidence) — synthetic documents are a known forgery vector.")
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
-    elif (ai_det.get("ai_suspected") or _ai_score >= 65):
+    elif ai_det.get("ai_suspected"):
+        score_val = max(_ai_score, 80)
+        reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
+        risk = max(risk + 55, 82)
+        hard_flag = True
+        can_clear = False
+    elif _ai_score >= 65:
         if (is_physical_camera or val_passed or has_valid_id):
             reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% spectral variation).")
             risk += 5
@@ -1213,7 +1219,11 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                 for alert in syndicate_alerts:
                     reasons.append(f"SYNDICATE ALERT [{alert['type']}]: {alert['detail']}")
                 risk += syn_res.get("syndicate_risk_bump", 0)
-                can_clear = False
+                # Only individual recidivism / identity clash alerts block CLEAR;
+                # an ambient sector burst alert alone (general checkpoint volume alert)
+                # does not block an otherwise genuine document from clearing.
+                if any(a.get("type") in ("IDENTITY_CLASH", "CROSS_CHECKPOINT_REPRESENTATION", "PREVIOUSLY_FLAGGED_IDENTIFIER") for a in syndicate_alerts):
+                    can_clear = False
         except Exception:
             pass
 

@@ -48,6 +48,7 @@ import {
 } from "../api";
 import { generateSpecimenFile, SPECIMEN_PRESETS } from "../app/specimens";
 import { useToast } from "../app/state";
+import { portalCache } from "../app/preloader";
 import { copyText, downloadBlob, shortHash, timeLabelIst } from "../app/util";
 import {
   DESK_STEPS,
@@ -1117,8 +1118,6 @@ function HandoverModal({
 // The Main Screening Desk
 // ----------------------------------------------------------------------------
 
-import { portalCache } from "../app/preloader";
-
 export function DeskView() {
   const { toast } = useToast();
   const [active, setActive] = useState<ScreeningSessionDetail | null>(null);
@@ -1170,6 +1169,7 @@ export function DeskView() {
   }, [fileBack]);
 
   const [showWebcam, setShowWebcam] = useState(false);
+  const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
   const [handover, setHandover] = useState<ShiftHandoverPacket | null>(null);
   const [handoverBusy, setHandoverBusy] = useState(false);
 
@@ -1482,8 +1482,20 @@ export function DeskView() {
 
   const open = active && active.status === "open";
   const closed = active && active.status !== "open";
-  const hasDiscrepancy = open && active.comparison?.verdict === "DISCREPANCY";
-  const canClose = open && active.documents.length > 0;
+  const hasDiscrepancy = Boolean(open && active.comparison?.verdict === "DISCREPANCY");
+  const canClose = Boolean(open && active.documents.length > 0);
+
+  const hasWatchlistHit = Boolean(
+    active?.documents?.some(
+      (d) =>
+        !d.removed_at &&
+        (Boolean(d.watchlist_hits?.length) ||
+          d.modules?.validation?.checks?.some(
+            (c) => c.ok === false && (c.label === "watchlist" || c.detail?.toLowerCase().includes("watchlist"))
+          ) ||
+          d.reasons?.some((r) => r.toUpperCase().includes("WATCHLIST")))
+    )
+  );
 
   const checkpointOptions = catalog?.checkpoints.all || DEFAULT_CHECKPOINTS;
   const nationalities = catalog?.nationalities || [
@@ -1496,6 +1508,42 @@ export function DeskView() {
     { code: "GB", label: "United Kingdom" },
     { code: "UNKNOWN", label: "Other / Unlisted" },
   ];
+
+  // Keyboard shortcuts for rapid desk inspection: [A] Approve, [O] Override, [E] Review, [S] Take Photo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (showDiscrepancyModal || showWebcam || busy || !active || active.status !== "open") return;
+
+      if (e.key === "a" || e.key === "A") {
+        if (canClose && !hasWatchlistHit) {
+          e.preventDefault();
+          if (hasDiscrepancy) {
+            setShowDiscrepancyModal(true);
+          } else {
+            void closeSessionNow("approve");
+          }
+        }
+      } else if (e.key === "o" || e.key === "O") {
+        if (canClose && hasDiscrepancy) {
+          e.preventDefault();
+          setShowDiscrepancyModal(true);
+        }
+      } else if (e.key === "e" || e.key === "E") {
+        if (canClose) {
+          e.preventDefault();
+          void closeSessionNow("flag");
+        }
+      } else if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        setWebcamTarget("front");
+        setShowWebcam(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canClose, hasWatchlistHit, hasDiscrepancy, showDiscrepancyModal, showWebcam, busy, active]);
 
   return (
     <div className="view">
@@ -1749,6 +1797,8 @@ export function DeskView() {
             status={active.status}
           />
 
+
+
           {/* Executive Session Completed / Next Traveller Hero Banner */}
           {closed && (
             <div className={`session-completed-banner session-completed-banner--${active.status}`}>
@@ -1945,7 +1995,13 @@ export function DeskView() {
                         {file ? (
                           <div className="file-thumb-preview">
                             {thumbUrl ? (
-                              <img src={thumbUrl} alt="Front preview" className="file-thumb-preview__img" />
+                              <div className="doc-preview-wrapper">
+                                <img
+                                  src={thumbUrl}
+                                  alt="Front preview"
+                                  className="file-thumb-preview__img"
+                                />
+                              </div>
                             ) : (
                               <div className="file-thumb-preview__icon">📄</div>
                             )}
@@ -1989,8 +2045,7 @@ export function DeskView() {
 
                         <button
                           type="button"
-                          className="btn btn--small"
-                          style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                          className="btn btn--small btn--webcam"
                           onClick={() => {
                             setWebcamTarget("front");
                             setShowWebcam(true);
@@ -2010,7 +2065,13 @@ export function DeskView() {
                         {fileBack ? (
                           <div className="file-thumb-preview">
                             {thumbUrlBack ? (
-                              <img src={thumbUrlBack} alt="Back preview" className="file-thumb-preview__img" />
+                              <div className="doc-preview-wrapper">
+                                <img
+                                  src={thumbUrlBack}
+                                  alt="Back preview"
+                                  className="file-thumb-preview__img"
+                                />
+                              </div>
                             ) : (
                               <div className="file-thumb-preview__icon">📄</div>
                             )}
@@ -2054,8 +2115,7 @@ export function DeskView() {
 
                         <button
                           type="button"
-                          className="btn btn--small"
-                          style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                          className="btn btn--small btn--webcam"
                           onClick={() => {
                             setWebcamTarget("back");
                             setShowWebcam(true);
@@ -2190,16 +2250,27 @@ export function DeskView() {
                       placeholder="reason / observation (optional)"
                     />
                   </div>
-                  <div className="approval__actions">
-                    {canClose && hasDiscrepancy && (
-                      <span className="chip chip--bad">Details clash — send to a supervisor for review</span>
+                  <div className="approval__actions sticky-decision-bar">
+                    {canClose && hasWatchlistHit && (
+                      <span className="chip chip--bad">🚨 Watchlist Hit — Mandatory Referral to Supervisor</span>
                     )}
-                    {canClose && !hasDiscrepancy && (
+                    {canClose && !hasWatchlistHit && hasDiscrepancy && (
+                      <span className="chip chip--warn">
+                        ⚠️ Details Clash — Officer Override Permitted
+                      </span>
+                    )}
+                    {canClose && !hasWatchlistHit && (
                       <button
                         type="button"
                         className="btn btn--approve"
                         disabled={busy}
-                        onClick={() => void closeSessionNow("approve")}
+                        onClick={() => {
+                          if (hasDiscrepancy) {
+                            setShowDiscrepancyModal(true);
+                          } else {
+                            void closeSessionNow("approve");
+                          }
+                        }}
                       >
                         {busy ? "Signing…" : "Approve — looks genuine"}
                       </button>
@@ -2211,7 +2282,7 @@ export function DeskView() {
                         disabled={busy}
                         onClick={() => void closeSessionNow("flag")}
                       >
-                        Send for review
+                        {busy ? "Flagging…" : "Send for review"}
                       </button>
                     )}
                   </div>
@@ -2364,6 +2435,95 @@ export function DeskView() {
       )}
 
       {handover && <HandoverModal packet={handover} onClose={() => setHandover(null)} />}
+
+      {/* --- Details Clash Warning Modal (Officer Override Verification) --- */}
+      {showDiscrepancyModal && active && (
+        <div className="modal-scrim" role="dialog" aria-modal="true" aria-label="Details Clash Warning">
+          <div className="modal" style={{ width: "min(560px, 100%)" }}>
+            <header className="modal__head" style={{ borderBottom: "1px solid var(--line-2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 24 }}>⚠️</span>
+                <div>
+                  <span className="modal__title" style={{ color: "var(--warn-dark, #b45309)" }}>
+                    Details Clash — Officer Review Warning
+                  </span>
+                  <p className="muted" style={{ margin: "2px 0 0 0", fontSize: 11.5 }}>
+                    Cross-document verification detected conflicting details between IDs
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn--small btn--ghost"
+                onClick={() => setShowDiscrepancyModal(false)}
+              >
+                ✕
+              </button>
+            </header>
+
+            <div className="modal__body" style={{ gap: 14 }}>
+              <div
+                style={{
+                  background: "rgba(245, 158, 11, 0.08)",
+                  border: "1px solid rgba(245, 158, 11, 0.28)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                }}
+              >
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--ink)", fontWeight: 600 }}>
+                  The following cross-document discrepancy was identified:
+                </p>
+                <ul style={{ margin: "8px 0 0 0", paddingLeft: 18, fontSize: 12.5, color: "var(--ink)" }}>
+                  {active.comparison?.checks
+                    ?.filter((c) => c.status === "disagree")
+                    .map((c, idx) => (
+                      <li key={idx} style={{ marginTop: 4 }}>
+                        <strong>{c.label || c.field}:</strong> {c.detail}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+
+              <p style={{ fontSize: 12.5, lineHeight: 1.5, margin: 0, color: "var(--ink)" }}>
+                As an authorized border post officer, you have the operational authority to pass this traveller
+                if you have physically confirmed their identity and verified that the documents belong to the same person.
+              </p>
+
+              <div className="field">
+                <span className="field__label">OFFICER OVERRIDE REASON / OBSERVATION (ATTACHED TO LEDGER)</span>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="e.g. Physical holder verified; phonetic spelling variance accepted."
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={() => setShowDiscrepancyModal(false)}
+                >
+                  Cancel / Re-inspect
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--approve"
+                  disabled={busy}
+                  onClick={() => {
+                    setShowDiscrepancyModal(false);
+                    void closeSessionNow("approve");
+                  }}
+                >
+                  Confirm &amp; Let Traveller Pass
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

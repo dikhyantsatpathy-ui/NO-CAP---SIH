@@ -664,17 +664,30 @@ def onnx_score(output) -> int:
 
 
 def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
-    ml_url = os.getenv("ML_SERVICE_URL")
-    if ml_url:
+    try:
+        from remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+    except ImportError:
         try:
-            timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "2.5"))
+            from app.remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+        except ImportError:
+            is_remote_available = lambda: bool(os.getenv("ML_SERVICE_URL"))
+            mark_remote_failed = lambda: None
+            mark_remote_success = lambda: None
+            get_timeout = lambda: 2.0
+            prepare_payload = lambda b: b
+
+    if is_remote_available():
+        ml_url = os.getenv("ML_SERVICE_URL")
+        try:
+            timeout_sec = get_timeout()
             base = ml_url.rstrip("/")
+            payload = prepare_payload(image_bytes)
             candidate_urls = (
                 [f"{base}/api/ml/detect_image", f"{base}/gradio_api/api/ml/detect_image"]
                 if "/gradio_api" not in base else [f"{base}/api/ml/detect_image"]
             )
             for target_url in candidate_urls:
-                files = {"file": ("image.png", image_bytes, "image/png")}
+                files = {"file": ("image.jpg", payload, "image/jpeg")}
                 res = None
                 try:
                     import httpx
@@ -686,6 +699,7 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
 
                 if res is not None:
                     if res.status_code == 200:
+                        mark_remote_success()
                         return res.json()
                     if res.status_code in (403, 404, 405) and target_url != candidate_urls[-1]:
                         continue
@@ -693,6 +707,7 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
                         f"Remote detect_image returned HTTP {res.status_code}: {res.text[:200]}"
                     )
         except Exception as exc:
+            mark_remote_failed()
             logger.warning(
                 f"Remote detect_image call to {ml_url} failed ({exc.__class__.__name__}: {exc}). Falling back to local."
             )
@@ -1577,22 +1592,42 @@ def _get_db_for_session(session_id: str | None):
     
     @contextmanager
     def _session_db():
-        db = factory()
+        nonlocal factory, factory_name
+        db = None
         try:
             if not _IS_SQLITE and factory_name == "primary":
-                db.execute(text("SELECT 1"))
+                try:
+                    db = factory()
+                    db.execute(text("SELECT 1"))
+                except Exception as pg_err:
+                    global _PRIMARY_LAST_FAILED, _PRIMARY_LAST_ERROR
+                    _PRIMARY_LAST_FAILED = time.monotonic()
+                    _PRIMARY_LAST_ERROR = sanitize_secret_text(f"{type(pg_err).__name__}: {pg_err}")
+                    print(f"[_session_db] Primary DB connection check failed ({_PRIMARY_LAST_ERROR}); switching to fallback SQLite.")
+                    if db:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                    factory = FallbackSessionLocal
+                    factory_name = "fallback"
+                    db = factory()
+            else:
+                db = factory()
             yield db
         except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             raise
         finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+            if db:
+                try:
+                    db.close()
+                except Exception:
+                    pass
     
     return _session_db()
 
@@ -2090,10 +2125,7 @@ async def _neon_keepalive_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        _ensure_db_initialized()
-    except Exception as exc:
-        logger.warning(f"[startup] Lazy DB init deferred: {exc}")
+    asyncio.create_task(run_in_threadpool(_ensure_db_initialized))
     keepalive_task = asyncio.create_task(_neon_keepalive_loop())
     yield
     keepalive_task.cancel()
@@ -2451,7 +2483,7 @@ async def screen_document(
                 )
             except Exception as exc:
                 logger.error(f"[screen_document] Screening failed gracefully for {file.filename}: {exc}", exc_info=True)
-                from screening import sha256_bytes, now_utc
+                from screening import sha256_bytes
                 now = now_utc()
                 sha = sha256_bytes(data)
                 report = {
@@ -2804,12 +2836,30 @@ def close_session(session_id: str, request: Request,
             pub["documents"] = docs
             pub["comparison"] = comparison
             return pub
-        if comparison["verdict"] == "DISCREPANCY":
-            raise HTTPException(status_code=409,
-                                detail="Cross-document discrepancy detected — flag this session for review instead of approving.")
+        # Security Watchlist Check: Mandatory escalation to supervisor
+        has_watchlist_hit = any(
+            any(
+                (not c.get("ok")) and ("watchlist" in (c.get("label") or "").lower() or "watchlist" in (c.get("detail") or "").lower())
+                for c in ((d.get("validation") or {}).get("checks") or [])
+            ) or bool((d.get("validation") or {}).get("watchlist_hits"))
+            for d in docs
+        )
+        if has_watchlist_hit:
+            raise HTTPException(
+                status_code=403,
+                detail="Security Watchlist match detected on traveller identifier. Protocol mandates escalating this session to a supervisor; standard officer approval is forbidden."
+            )
+
+        # Cross-document discrepancy: normal officers have the authority to verify and approve
+        override_note = (note or "").strip()
+        if comparison.get("verdict") == "DISCREPANCY":
+            override_tag = "[OFFICER OVERRIDE: Cross-document details clash verified & approved]"
+            if override_tag not in override_note:
+                override_note = f"{override_note} {override_tag}".strip()
+
         s.status = "approved"
         s.verdict = "CLEAR"
-        _settle_session(db, s, rows, comparison, "approve", note=note)
+        _settle_session(db, s, rows, comparison, "approve", note=override_note)
         pub = _session_pub(s, len(docs))
         pub["documents"] = docs
         pub["comparison"] = comparison

@@ -96,31 +96,46 @@ def classify_document(data: bytes) -> dict | None:
     used: Resize(224 keep-aspect) -> CenterCrop(224x224) -> ToTensor (/255).
     Returns None on decode/inference failure (caller falls back to declared).
     """
+    try:
+        from remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+    except ImportError:
+        try:
+            from app.remote_ml import is_remote_available, mark_remote_failed, mark_remote_success, get_timeout, prepare_payload
+        except ImportError:
+            is_remote_available = lambda: bool(os.getenv("ML_SERVICE_URL"))
+            mark_remote_failed = lambda: None
+            mark_remote_success = lambda: None
+            get_timeout = lambda: 2.0
+            prepare_payload = lambda b: b
+
+    if is_remote_available():
+        ml_url = os.getenv("ML_SERVICE_URL")
+        try:
+            timeout_sec = get_timeout()
+            base = ml_url.rstrip("/")
+            payload = prepare_payload(data)
+            candidate_urls = (
+                [f"{base}/api/ml/doctype", f"{base}/gradio_api/api/ml/doctype"]
+                if "/gradio_api" not in base else [f"{base}/api/ml/doctype"]
+            )
+            for target_url in candidate_urls:
+                files = {"file": ("image.jpg", payload, "image/jpeg")}
+                try:
+                    import httpx
+                    with httpx.Client(timeout=timeout_sec) as client:
+                        res = client.post(target_url, files=files)
+                except ImportError:
+                    import requests
+                    res = requests.post(target_url, files=files, timeout=timeout_sec)
+                if res is not None and res.status_code == 200:
+                    mark_remote_success()
+                    return res.json()
+        except Exception as exc:
+            mark_remote_failed()
+            logger.warning("remote doctype classify failed: %s", exc)
+
     sess = _get_session()
     if sess is None:
-        # Fallback to remote ML microservice if configured (e.g. on Vercel deployment)
-        ml_url = os.getenv("ML_SERVICE_URL")
-        if ml_url:
-            try:
-                timeout_sec = float(os.getenv("ML_SERVICE_TIMEOUT", "6.0"))
-                base = ml_url.rstrip("/")
-                candidate_urls = (
-                    [f"{base}/api/ml/doctype", f"{base}/gradio_api/api/ml/doctype"]
-                    if "/gradio_api" not in base else [f"{base}/api/ml/doctype"]
-                )
-                for target_url in candidate_urls:
-                    files = {"file": ("image.png", data, "image/png")}
-                    try:
-                        import httpx
-                        with httpx.Client(timeout=timeout_sec) as client:
-                            res = client.post(target_url, files=files)
-                    except ImportError:
-                        import requests
-                        res = requests.post(target_url, files=files, timeout=timeout_sec)
-                    if res is not None and res.status_code == 200:
-                        return res.json()
-            except Exception as exc:
-                logger.warning("remote doctype classify failed: %s", exc)
         return None
     try:
         img = Image.open(io.BytesIO(data)).convert("RGB")
