@@ -2737,16 +2737,32 @@ def close_session(session_id: str, request: Request,
                   verdict: str = Form(...), note: str = Form(""),
                   admin: str = Depends(get_current_admin_or_evaluator)):
     """Desk officer closes the session: 'approve' signs it into the ledger;
-    'flag' routes it to the supervisory review queue. Sessions with unresolved
-    cross-document discrepancies FAIL CLOSED on approval."""
+    'flag' routes it to the supervisory review queue; 'close' or 'cancel' closes
+    an unused session with 0 documents."""
     act = (verdict or "").strip().lower()
-    if act not in ("approve", "flag"):
-        raise HTTPException(status_code=400, detail="verdict must be 'approve' or 'flag'.")
+    if act not in ("approve", "flag", "close", "cancel", "dismiss"):
+        raise HTTPException(status_code=400, detail="verdict must be 'approve', 'flag', or 'close'.")
     with _get_db_for_session(session_id) as db:
         s = _get_session_owned(db, session_id, admin, require_open=True)
         docs, rows = _session_docs(db, session_id)
+        
+        # Closing an empty/unused session with 0 documents
+        if act in ("close", "cancel", "dismiss") or (not rows and act in ("approve", "flag", "close", "cancel")):
+            s.status = "closed"
+            s.verdict = "CLOSED"
+            s.risk_score = 0
+            s.note = (note.strip() or s.note or "Unused session closed by officer").strip()
+            s.closed_at = now_utc()
+            s.updated_at = s.closed_at
+            db.commit()
+            pub = _session_pub(s, len(docs))
+            pub["documents"] = docs
+            pub["comparison"] = {"verdict": "CLEAR", "checks": []}
+            return pub
+
         if not rows:
-            raise HTTPException(status_code=400, detail="Session has no documents yet — add at least one first.")
+            raise HTTPException(status_code=400, detail="Session has no documents yet — add at least one first or close it as unused.")
+
         comparison = _comparison_for_rows(docs)
         agg_risk = max(0, min(100, max((d.get("risk_score") or 0) for d in docs)
                               + (comparison.get("risk_bump") or 0)))
@@ -2773,6 +2789,33 @@ def close_session(session_id: str, request: Request,
         pub["documents"] = docs
         pub["comparison"] = comparison
         return pub
+
+
+@app.post("/api/sessions/close-unused")
+@limiter.limit("60/minute")
+def close_unused_sessions(request: Request,
+                          admin: str = Depends(get_current_admin_or_evaluator)):
+    """Closes all open sessions belonging to the desk that have 0 documents."""
+    closed_count = 0
+    with _get_db_for_session("batch") as db:
+        q = db.query(ScreeningSession).filter(ScreeningSession.status == "open")
+        if admin not in ("admin", "superadmin", "evaluator"):
+            q = q.filter(ScreeningSession.screener == admin)
+        open_sessions = q.all()
+        now = now_utc()
+        for s in open_sessions:
+            docs, rows = _session_docs(db, s.id)
+            if not rows:
+                s.status = "closed"
+                s.verdict = "CLOSED"
+                s.risk_score = 0
+                s.note = (s.note or "Unused session closed by officer").strip()
+                s.closed_at = now
+                s.updated_at = now
+                closed_count += 1
+        if closed_count > 0:
+            db.commit()
+    return {"ok": True, "closed_count": closed_count}
 
 
 @app.post("/api/sessions/{session_id}/adjudicate")

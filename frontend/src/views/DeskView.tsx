@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   closeSession,
+  closeUnusedSessions,
   createSession,
   extractLiveImage,
   getCheckpoints,
@@ -1366,6 +1367,40 @@ export function DeskView() {
     else toast(`Handover token failed: ${res.error}`, "error");
   };
 
+  const closeUnused = async (sessionId: string) => {
+    setBusy(true);
+    const res = await closeSession(sessionId, "close", "Closed unused session");
+    setBusy(false);
+    if (res.ok) {
+      toast("Unused session closed.", "info");
+      sessionCacheRef.current.delete(sessionId);
+      if (active?.id === sessionId) {
+        await resetDesk();
+      } else {
+        await refreshOpen();
+      }
+    } else {
+      toast(res.error, "error");
+    }
+  };
+
+  const closeAllUnused = async () => {
+    setBusy(true);
+    const res = await closeUnusedSessions();
+    setBusy(false);
+    if (res.ok) {
+      toast(`Closed ${res.data.closed_count} unused session(s).`, "success");
+      sessionCacheRef.current.clear();
+      if (active && active.documents.length === 0) {
+        await resetDesk();
+      } else {
+        await refreshOpen();
+      }
+    } else {
+      toast(res.error, "error");
+    }
+  };
+
   const resetDesk = async () => {
     setActive(null);
     setFile(null);
@@ -1480,7 +1515,21 @@ export function DeskView() {
 
           {openList.length > 0 && (
             <div className="resume">
-              <span className="k">Resume today's open session</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <span className="k">Resume today's open session</span>
+                {openList.some((s) => s.document_count === 0) && (
+                  <button
+                    type="button"
+                    className="btn btn--small btn--ghost"
+                    style={{ fontSize: "11.5px", color: "var(--bad)" }}
+                    disabled={busy}
+                    onClick={() => void closeAllUnused()}
+                    title="Close all empty sessions that have 0 documents"
+                  >
+                    ✕ Close all unused ({openList.filter((s) => s.document_count === 0).length})
+                  </button>
+                )}
+              </div>
               <table className="tbl tbl--compact">
                 <tbody>
                   {openList.map((s) => (
@@ -1488,15 +1537,29 @@ export function DeskView() {
                       <td>{s.label || `Session · ${s.id.slice(0, 6)}`}</td>
                       <td>{s.checkpoint}</td>
                       <td className="mono muted">{s.document_count} doc(s)</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="btn btn--small btn--primary"
-                          disabled={resumingId === s.id}
-                          onClick={() => void resumeSession(s.id)}
-                        >
-                          {resumingId === s.id ? "Resuming…" : "Resume"}
-                        </button>
+                      <td style={{ textAlign: "right" }}>
+                        <div style={{ display: "inline-flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            className="btn btn--small btn--primary"
+                            disabled={resumingId === s.id}
+                            onClick={() => void resumeSession(s.id)}
+                          >
+                            {resumingId === s.id ? "Resuming…" : "Resume"}
+                          </button>
+                          {s.document_count === 0 && (
+                            <button
+                              type="button"
+                              className="btn btn--small btn--ghost"
+                              style={{ color: "var(--bad)" }}
+                              disabled={busy}
+                              onClick={() => void closeUnused(s.id)}
+                              title="Close this unused 0-document session"
+                            >
+                              ✕ Close
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1575,7 +1638,19 @@ export function DeskView() {
                 </span>
               </div>
             </div>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              {open && active.documents.length === 0 && (
+                <button
+                  type="button"
+                  className="btn btn--small btn--ghost"
+                  style={{ color: "var(--bad)" }}
+                  disabled={busy}
+                  onClick={() => void closeUnused(active.id)}
+                  title="Close this empty session with 0 documents"
+                >
+                  ✕ Close (Unused)
+                </button>
+              )}
               {closed && (
                 <button
                   type="button"

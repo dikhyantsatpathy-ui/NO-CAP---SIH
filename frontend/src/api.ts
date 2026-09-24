@@ -979,12 +979,19 @@ export function getSession(sessionId: string) {
 }
 
 /** Desk officer closes the session: 'approve' signs it into the ledger;
- *  'flag' routes it to the supervisory review queue. */
-export function closeSession(sessionId: string, verdict: "approve" | "flag", note?: string) {
+ *  'flag' routes it to the supervisory review queue; 'close' closes an unused 0-doc session. */
+export function closeSession(sessionId: string, verdict: "approve" | "flag" | "close", note?: string) {
   return request<ScreeningSessionDetail>(
     `/api/sessions/${encodeURIComponent(sessionId)}/close`,
     { method: "POST", body: form({ verdict, note: note || "" }) },
   );
+}
+
+/** Close all unused sessions with 0 documents in one click. */
+export function closeUnusedSessions() {
+  return request<{ ok: boolean; closed_count: number }>("/api/sessions/close-unused", {
+    method: "POST",
+  });
 }
 
 /** Supervisory officer settles a FLAGGED session (CLEARED / CONFIRMED_FRAUD / INCONCLUSIVE). */
