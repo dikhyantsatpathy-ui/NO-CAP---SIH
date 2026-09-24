@@ -35,19 +35,15 @@ function verdictChip(verdict: string | null): string {
 
 type SortOption = "time_desc" | "time_asc" | "risk_desc" | "risk_asc" | "label_asc" | "docs_desc";
 
-let _ledgerCache: {
-  payload: SessionLedgerPayload | null;
-  verify: SessionLedgerVerify | null;
-  stats: StatsOverview | null;
-} = { payload: null, verify: null, stats: null };
+import { portalCache } from "../app/preloader";
 
 export function LedgerView() {
   const { toast } = useToast();
-  const [payload, setPayload] = useState<SessionLedgerPayload | null>(_ledgerCache.payload);
-  const [verify, setVerify] = useState<SessionLedgerVerify | null>(_ledgerCache.verify);
-  const [stats, setStats] = useState<StatsOverview | null>(_ledgerCache.stats);
+  const [payload, setPayload] = useState<SessionLedgerPayload | null>(() => portalCache.ledgerPayload);
+  const [verify, setVerify] = useState<SessionLedgerVerify | null>(() => portalCache.ledgerVerify);
+  const [stats, setStats] = useState<StatsOverview | null>(() => portalCache.statsOverview);
   const [showStats, setShowStats] = useState(false);
-  const [loading, setLoading] = useState(!_ledgerCache.payload);
+  const [loading, setLoading] = useState(() => !portalCache.ledgerPayload);
   const [verifying, setVerifying] = useState(false);
 
   // QoL Controls State
@@ -61,7 +57,7 @@ export function LedgerView() {
     // 1. Fetch ledger blocks first for instant display
     const pPromise = getSessionLedger().then((p) => {
       if (p.ok) {
-        _ledgerCache.payload = p.data;
+        portalCache.ledgerPayload = p.data;
         setPayload(p.data);
       }
       setLoading(false);
@@ -70,14 +66,14 @@ export function LedgerView() {
     // 2. Fetch verify and stats concurrently
     const vPromise = verifySessionLedger().then((v) => {
       if (v.ok) {
-        _ledgerCache.verify = v.data;
+        portalCache.ledgerVerify = v.data;
         setVerify(v.data);
       }
     });
 
     const sPromise = getStatsOverview().then((s) => {
       if (s.ok) {
-        _ledgerCache.stats = s.data;
+        portalCache.statsOverview = s.data;
         setStats(s.data);
       }
     });

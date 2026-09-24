@@ -13,12 +13,14 @@ import { assignRole, getSigners, type OfficerEntry } from "../api";
 import { useAuth, useToast } from "../app/state";
 import { timeLabelIst } from "../app/util";
 
+import { portalCache } from "../app/preloader";
+
 export function StaffView() {
   const { toast } = useToast();
   const { me } = useAuth();
   const isSuper = !!me?.is_super_admin;
-  const [signers, setSigners] = useState<OfficerEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [signers, setSigners] = useState<OfficerEntry[]>(() => portalCache.signers || []);
+  const [loading, setLoading] = useState(() => !portalCache.signers);
   const [busy, setBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [designation, setDesignation] = useState("");
@@ -27,7 +29,10 @@ export function StaffView() {
 
   const load = useCallback(async () => {
     const res = await getSigners();
-    if (res.ok) setSigners(res.data.signers);
+    if (res.ok) {
+      portalCache.signers = res.data.signers;
+      setSigners(res.data.signers);
+    }
     setLoading(false);
   }, []);
 

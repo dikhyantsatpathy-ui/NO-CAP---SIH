@@ -1058,12 +1058,14 @@ function HandoverModal({
 // The Main Screening Desk
 // ----------------------------------------------------------------------------
 
+import { portalCache } from "../app/preloader";
+
 export function DeskView() {
   const { toast } = useToast();
   const [active, setActive] = useState<ScreeningSessionDetail | null>(null);
-  const [openList, setOpenList] = useState<ScreeningSession[]>([]);
-  const [catalog, setCatalog] = useState<CheckpointCatalog | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [openList, setOpenList] = useState<ScreeningSession[]>(() => portalCache.openSessions || []);
+  const [catalog, setCatalog] = useState<CheckpointCatalog | null>(() => portalCache.checkpoints);
+  const [loading, setLoading] = useState(() => !portalCache.openSessions);
   const [busy, setBusy] = useState(false);
 
   // New session creation fields

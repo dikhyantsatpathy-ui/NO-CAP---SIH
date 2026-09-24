@@ -401,13 +401,23 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
 // Supervisory Review Queue View
 // ----------------------------------------------------------------------------
 
+import { portalCache } from "../app/preloader";
+
 export function ReviewQueueView() {
   const { toast } = useToast();
   const { me } = useAuth();
   const isSuper = !!me?.is_super_admin;
-  const [flagged, setFlagged] = useState<ScreeningSession[]>([]);
-  const [settled, setSettled] = useState<ScreeningSession[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [flagged, setFlagged] = useState<ScreeningSession[]>(() => {
+    return (portalCache.closedSessions || []).filter(
+      (s) => s.verdict === "FLAGGED" || s.verdict === "REVIEW" || s.status === "flagged",
+    );
+  });
+  const [settled, setSettled] = useState<ScreeningSession[]>(() => {
+    return (portalCache.closedSessions || []).filter(
+      (s) => s.verdict === "CLEAR" || s.status === "approved",
+    );
+  });
+  const [loading, setLoading] = useState(() => !portalCache.closedSessions);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // QoL Controls: View mode (All / Review / Passed), Search, filters, sort, expand-all
@@ -420,8 +430,11 @@ export function ReviewQueueView() {
 
   const load = useCallback(async () => {
     const [f, s] = await Promise.all([getSessions("flagged"), getSessions("approved")]);
-    setFlagged(f.ok ? f.data.sessions : []);
-    setSettled(s.ok ? s.data.sessions : []);
+    const fList = f.ok ? f.data.sessions : [];
+    const sList = s.ok ? s.data.sessions : [];
+    setFlagged(fList);
+    setSettled(sList);
+    portalCache.closedSessions = [...fList, ...sList];
     setLoading(false);
   }, []);
 

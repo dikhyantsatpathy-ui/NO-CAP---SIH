@@ -23,12 +23,14 @@ import {
 import { useAuth, useToast } from "../app/state";
 import { copyText, downloadBlob, shortHash, timeLabelIst } from "../app/util";
 
+import { portalCache } from "../app/preloader";
+
 export function WatchlistView() {
   const { toast } = useToast();
   const { me } = useAuth();
   const isSuper = !!me?.is_super_admin;
-  const [entries, setEntries] = useState<WatchlistEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [entries, setEntries] = useState<WatchlistEntry[]>(() => portalCache.watchlistEntries || []);
+  const [loading, setLoading] = useState(() => !portalCache.watchlistEntries);
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState<ScreenWatchlistCategory>("passport");
   const [value, setValue] = useState("");
@@ -41,7 +43,10 @@ export function WatchlistView() {
 
   const load = useCallback(async () => {
     const res = await getWatchlist();
-    if (res.ok) setEntries(res.data.entries);
+    if (res.ok) {
+      portalCache.watchlistEntries = res.data.entries;
+      setEntries(res.data.entries);
+    }
     setLoading(false);
   }, []);
 

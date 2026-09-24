@@ -214,17 +214,31 @@ function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => 
 export function App() {
   const { booting, signedIn, me } = useAuth();
   const [view, setView] = useState<ViewKey>("desk");
+  const [visitedViews, setVisitedViews] = useState<Set<ViewKey>>(new Set(["desk"]));
   const [chatOpen, setChatOpen] = useState(false);
   const prevView = useRef<ViewKey>("desk");
+
+  // Warm background cache for all tabs during idle time
+  useEffect(() => {
+    if (signedIn && me) {
+      import("./app/preloader").then(({ preloadAllBackgroundData }) => {
+        void preloadAllBackgroundData();
+      });
+    }
+  }, [signedIn, me]);
 
   useEffect(() => {
     if (prevView.current !== view) {
       prevView.current = view;
+      setVisitedViews((prev) => (prev.has(view) ? prev : new Set(prev).add(view)));
       return;
     }
-    if (signedIn && me) setView("desk");
+    if (signedIn && me) {
+      setView("desk");
+      setVisitedViews(new Set(["desk"]));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn, me]);
+  }, [signedIn, me, view]);
 
   if (booting) {
     return <BootScreen />;
@@ -249,11 +263,31 @@ export function App() {
       <CommandStatusStrip />
       <NavTabs active={view} onPick={setView} />
       <main className="console-main">
-        {view === "desk" && <DeskView />}
-        {view === "review" && <ReviewQueueView />}
-        {view === "ledger" && <LedgerView />}
-        {view === "watchlist" && <WatchlistView />}
-        {view === "staff" && <StaffView />}
+        {visitedViews.has("desk") && (
+          <div style={{ display: view === "desk" ? "block" : "none" }}>
+            <DeskView />
+          </div>
+        )}
+        {visitedViews.has("review") && (
+          <div style={{ display: view === "review" ? "block" : "none" }}>
+            <ReviewQueueView />
+          </div>
+        )}
+        {visitedViews.has("ledger") && (
+          <div style={{ display: view === "ledger" ? "block" : "none" }}>
+            <LedgerView />
+          </div>
+        )}
+        {visitedViews.has("watchlist") && (
+          <div style={{ display: view === "watchlist" ? "block" : "none" }}>
+            <WatchlistView />
+          </div>
+        )}
+        {visitedViews.has("staff") && (
+          <div style={{ display: view === "staff" ? "block" : "none" }}>
+            <StaffView />
+          </div>
+        )}
       </main>
       <footer className="gov-footer">
         <span>🔒 SHA-256 HASH CHAIN</span>
