@@ -25,7 +25,9 @@
     <script>
       (function () {
         document.documentElement.dataset.theme = "light";
+        document.documentElement.removeAttribute("data-palette-draft");
         localStorage.setItem("nocap-theme", "light");
+        localStorage.removeItem("nocap_palette_draft");
       })();
     </script>
   </head>

@@ -1104,17 +1104,17 @@ textarea::placeholder {
   padding: 10px 14px;
   border: 1.5px solid var(--line-2);
   border-radius: 10px;
-  background: #ffffff;
-  opacity: 0.85;
+  background: #ffffff !important;
+  opacity: 0.9;
   transition: all 0.15s ease;
   min-width: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 .stepper__item--now {
   opacity: 1;
-  border-color: #0b2240 !important;
-  background: #0b2240 !important;
-  box-shadow: 0 4px 14px rgba(11, 34, 64, 0.25);
+  border-color: #061528 !important;
+  background: #061528 !important;
+  box-shadow: 0 4px 14px rgba(6, 21, 40, 0.35);
 }
 .stepper__item--now .stepper__label {
   color: #ffffff !important;
@@ -1124,14 +1124,14 @@ textarea::placeholder {
   color: #93c5fd !important;
 }
 .stepper__item--now .stepper__dot {
-  color: #0b2240 !important;
+  color: #061528 !important;
   background: #ffffff !important;
   border-color: #ffffff !important;
 }
 .stepper__item--done {
   opacity: 1;
-  background: #ffffff;
-  border-color: var(--line-2);
+  background: #ffffff !important;
+  border-color: var(--line-2) !important;
 }
 .stepper__item--done .stepper__dot {
   color: #ffffff !important;
@@ -1166,13 +1166,14 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #fffdf5;
-  border: 1.5px solid #fde68a;
+  background: #ffffff !important;
+  border: 1.5px solid var(--line-2);
+  border-left: 4.5px solid #d97706;
   border-radius: 10px;
-  padding: 10px 16px;
-  color: #92400e;
+  padding: 11px 18px;
+  color: var(--ink);
   font-size: 12.5px;
-  box-shadow: 0 1px 3px rgba(217, 119, 6, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
   animation: fadeIn 0.2s ease;
 }
 .step-guide-cue__icon {
@@ -1181,12 +1182,12 @@ textarea::placeholder {
   flex-shrink: 0;
 }
 .step-guide-cue__title {
-  color: #78350f;
+  color: #061528;
   margin-right: 6px;
-  font-weight: 750;
+  font-weight: 800;
 }
 .step-guide-cue__hint {
-  color: #92400e;
+  color: var(--ink-soft);
 }
 
 .new-session {
