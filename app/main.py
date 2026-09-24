@@ -2797,15 +2797,24 @@ def close_unused_sessions(request: Request,
                           admin: str = Depends(get_current_admin_or_evaluator)):
     """Closes all open sessions belonging to the desk that have 0 documents."""
     closed_count = 0
-    with _get_db_for_session("batch") as db:
+    with get_db() as db:
         q = db.query(ScreeningSession).filter(ScreeningSession.status == "open")
-        if admin not in ("admin", "superadmin", "evaluator"):
+        if not is_super_admin(admin):
             q = q.filter(ScreeningSession.screener == admin)
         open_sessions = q.all()
+        if not open_sessions:
+            return {"ok": True, "closed_count": 0}
+
+        sids = [s.id for s in open_sessions]
+        counts = dict(
+            db.query(ScreeningReport.session_id, func.count(ScreeningReport.id))
+            .filter(ScreeningReport.session_id.in_(sids))
+            .group_by(ScreeningReport.session_id).all()
+        )
         now = now_utc()
         for s in open_sessions:
-            docs, rows = _session_docs(db, s.id)
-            if not rows:
+            doc_cnt = counts.get(s.id, 0)
+            if doc_cnt == 0:
                 s.status = "closed"
                 s.verdict = "CLOSED"
                 s.risk_score = 0
