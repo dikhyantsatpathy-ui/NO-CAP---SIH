@@ -213,13 +213,61 @@ _VISA_RE = re.compile(r"\b[A-Z0-9]{6,9}\b")
 _AADHAAR_RE = re.compile(r"\b[2-9]\d{11}\b")
 
 
+_VERHOEFF_D = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+    [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+    [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+    [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+    [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+    [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+]
+
+_VERHOEFF_P = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+    [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+    [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+    [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+    [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+]
+
+
+def validate_verhoeff(num_str: str) -> bool:
+    """Verhoeff algorithm checksum validation for 12-digit Indian Aadhaar."""
+    digits = [int(c) for c in str(num_str or "") if c.isdigit()]
+    if len(digits) != 12:
+        return False
+    c = 0
+    for idx, item in enumerate(reversed(digits)):
+        c = _VERHOEFF_D[c][_VERHOEFF_P[idx % 8][item]]
+    return c == 0
+
+
 def verify_aadhaar(number: str) -> list:
-    """Aadhaar checks: exactly 12 digits, first digit cannot be 0 or 1."""
+    """Aadhaar checks: exactly 12 digits, first digit cannot be 0 or 1, and Verhoeff D5 dihedral checksum."""
     n = re.sub(r"[ -]", "", str(number or ""))
     valid_len = len(n) == 12 and n.isdigit()
     valid_start = valid_len and n[0] not in ("0", "1")
-    return [{"label": "structure", "ok": valid_len and valid_start,
-             "detail": "12-digit UIDAI format (first digit 2-9)" if (valid_len and valid_start) else "Invalid Aadhaar structure"}]
+    is_verhoeff = valid_len and valid_start and validate_verhoeff(n)
+    
+    results = []
+    results.append({
+        "label": "structure",
+        "ok": valid_len and valid_start,
+        "detail": "12-digit UIDAI format (first digit 2-9)" if (valid_len and valid_start) else "Invalid Aadhaar structure (must be 12 digits starting 2-9)",
+    })
+    results.append({
+        "label": "verhoeff-checksum",
+        "ok": is_verhoeff,
+        "detail": "UIDAI Verhoeff Dihedral D5 Checksum Valid" if is_verhoeff else "CRITICAL: Verhoeff Checksum Failure (Mathematically Invalid UIDAI Number)",
+    })
+    return results
 
 
 def _pan_check_char(first9: str) -> str:

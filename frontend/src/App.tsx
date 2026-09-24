@@ -212,10 +212,11 @@ function NavTabs({ active, onPick }: { active: ViewKey; onPick: (k: ViewKey) => 
 }
 
 const PALETTE_DRAFTS = [
-  { id: "draft-1", label: "Draft 1: Warm Ivory & Heritage Slate", hint: "Ivory + Slate Blue" },
-  { id: "draft-2", label: "Draft 2: Nordic Linen & Marine", hint: "Linen + Deep Marine" },
-  { id: "draft-3", label: "Draft 3: Royal Pearl & Indigo", hint: "Pearl + Sovereign Indigo" },
-  { id: "draft-4", label: "Draft 4: Sandstone & Cobalt", hint: "Sandstone + Precision Cobalt" },
+  { id: "draft-1", label: "Draft 1: Warm Ivory & Sovereign Slate", hint: "Ivory Canvas + Slate Blue Card Box" },
+  { id: "draft-2", label: "Draft 2: Nordic Linen & Ocean Marine", hint: "Linen Canvas + Ocean Marine Card Box" },
+  { id: "draft-3", label: "Draft 3: Royal Pearl & Sovereign Indigo", hint: "Pearl Canvas + Sovereign Indigo Card Box" },
+  { id: "draft-4", label: "Draft 4: Sandstone & Precision Cobalt", hint: "Sandstone Canvas + Cobalt Card Box" },
+  { id: "draft-5", label: "Draft 5: Warm Ivory & Royal Sapphire", hint: "Ivory Canvas + Deep Sapphire Card Box" },
 ] as const;
 
 function PaletteDraftBar({
@@ -228,7 +229,7 @@ function PaletteDraftBar({
   return (
     <aside className="palette-draft-bar" aria-label="Palette theme selection">
       <div className="palette-draft-bar__title">
-        <span>🎨 HARMONIC PALETTE DRAFTS:</span>
+        <span>🎨 HARMONIC PALETTE DRAFTS (PURAA BOX COLORED):</span>
       </div>
       <div className="palette-draft-bar__options">
         {PALETTE_DRAFTS.map((d) => {
@@ -264,11 +265,13 @@ export function App() {
       if (qDraft === "2" || qDraft === "draft-2") return "draft-2";
       if (qDraft === "3" || qDraft === "draft-3") return "draft-3";
       if (qDraft === "4" || qDraft === "draft-4") return "draft-4";
+      if (qDraft === "5" || qDraft === "draft-5") return "draft-5";
 
       const port = window.location.port;
       if (port === "8001") return "draft-2";
       if (port === "8002") return "draft-3";
       if (port === "8003") return "draft-4";
+      if (port === "8004") return "draft-5";
       if (port === "8000") return "draft-1";
 
       return localStorage.getItem("nocap_palette_draft") || "draft-1";

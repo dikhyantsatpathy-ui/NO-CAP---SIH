@@ -807,13 +807,39 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         can_clear = False
 
     if aadhaar_no:
-        reasons.append(f"Aadhaar verified as a 12-digit UIDAI-format number read from "
-                       f"the card's own field zone ({mask(aadhaar_no)}).")
-        risk -= 3
+        try:
+            from app.identity import validate_verhoeff
+        except ImportError:
+            from identity import validate_verhoeff
+        if not validate_verhoeff(aadhaar_no):
+            reasons.append(f"CRITICAL FORGERY SIGNAL: Aadhaar number {mask(aadhaar_no)} FAILS UIDAI Verhoeff Checksum — mathematical proof of a fabricated or counterfeit Aadhaar number.")
+            risk = max(risk + 65, 90)
+            hard_flag = True
+            can_clear = False
+        else:
+            reasons.append(f"Aadhaar verified as a 12-digit UIDAI-format number with valid Verhoeff checksum ({mask(aadhaar_no)}).")
+            risk -= 3
     elif "aadhaar" in doc_type_clean and not aadhaar_no:
         reasons.append("Aadhaar declared but the 12-digit number zone could not be "
                        "machine-read (OCR/webcam quality) — verify the printed number by eye.")
         risk = max(risk, 30)
+        can_clear = False
+
+    # Check for explicit synthetic/fake/meme watermarks or markers on document text
+    text_raw = f"{extract_res.get('text') or ''} {fields.get('name') or ''} {filename or ''}"
+    fake_match = re.search(r"\b(fake|sample|specimen|dummy|chatgpt|dall-?e|midjourney|photoshop|counterfeit|meme|parody|not a real id|not a valid id|not for official use|stay alert)\b", text_raw, re.IGNORECASE)
+    if fake_match:
+        reasons.append(f"CRITICAL FORGERY / SYNTHETIC WATERMARK: Document text explicitly contains '{fake_match.group(1).upper()}' marker — counterfeit or AI-generated identity document.")
+        risk = max(risk + 70, 95)
+        hard_flag = True
+        can_clear = False
+
+    # Check for known public celebrity / athlete names used in fake IDs
+    name_upper = (fields.get("name") or "").upper()
+    if any(celeb in name_upper for celeb in ("CRISTIANO RONALDO", "LIONEL MESSI", "DONALD TRUMP", "BARACK OBAMA", "ELON MUSK")):
+        reasons.append(f"CRITICAL IMPOSTER / FICTITIOUS IDENTITY: Document name '{fields.get('name')}' is a known public celebrity — fraudulent identity spoofing.")
+        risk = max(risk + 70, 95)
+        hard_flag = True
         can_clear = False
 
     if voter:
