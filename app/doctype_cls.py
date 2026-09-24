@@ -112,7 +112,8 @@ def classify_document(data: bytes) -> dict | None:
                     files = {"file": ("image.png", data, "image/png")}
                     try:
                         import httpx
-                        res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                        with httpx.Client(timeout=timeout_sec) as client:
+                            res = client.post(target_url, files=files)
                     except ImportError:
                         import requests
                         res = requests.post(target_url, files=files, timeout=timeout_sec)

@@ -312,7 +312,8 @@ def extract_roi_boxes(image_bytes: bytes) -> List[Dict[str, Any]]:
                 res = None
                 try:
                     import httpx
-                    res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                    with httpx.Client(timeout=timeout_sec) as client:
+                        res = client.post(target_url, files=files)
                 except ImportError:
                     import requests
                     res = requests.post(target_url, files=files, timeout=timeout_sec)
@@ -413,7 +414,8 @@ def extract_aadhaar_fields(image_bytes: bytes) -> List[Dict[str, Any]]:
                 res = None
                 try:
                     import httpx
-                    res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                    with httpx.Client(timeout=timeout_sec) as client:
+                        res = client.post(target_url, files=files)
                 except ImportError:
                     import requests
                     res = requests.post(target_url, files=files, timeout=timeout_sec)

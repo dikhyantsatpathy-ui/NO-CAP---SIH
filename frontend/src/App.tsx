@@ -120,7 +120,7 @@ function PortalHeader() {
             VIBE CHECK-POINT
           </h1>
           <p className="gov-portal-header__desc">
-            Smart Border Screening &amp; Fake ID Detection · Indo-Nepal / Indo-Bhutan Sector · SIH 26188
+            Smart Border Screening &amp; Fake ID Detection · SIH 26188
           </p>
         </div>
       </div>

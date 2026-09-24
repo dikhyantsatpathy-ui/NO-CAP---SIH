@@ -678,7 +678,8 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
                 res = None
                 try:
                     import httpx
-                    res = httpx.post(target_url, files=files, timeout=timeout_sec)
+                    with httpx.Client(timeout=timeout_sec) as client:
+                        res = client.post(target_url, files=files)
                 except ImportError:
                     import requests
                     res = requests.post(target_url, files=files, timeout=timeout_sec)

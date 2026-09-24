@@ -354,38 +354,45 @@ function DocCard({
                   };
                   const meta = MODULE_PLAIN[mk];
                   const v = leaf?.verdict;
+                  const isSkippedOrNotProvided = !leaf || leaf?.method === "skipped" || leaf?.verdict === "SKIPPED" || leaf?.verdict === "UNVERIFIED" || (mk === "face" && (!leaf?.score || leaf.score === 0));
+                  
                   const tone =
                     v === "PASS" ? "ok"
                       : v === "WARN" ? "warn"
-                        : mk === "face" ? "mute"
+                        : mk === "face" ? (isSkippedOrNotProvided ? "mute" : "ok")
                           : v === "REVIEW" ? "warn" : "mute";
+                  const badgeText =
+                    mk === "face" && isSkippedOrNotProvided
+                      ? "Optional / Skipped"
+                      : plainVerdict(v) || "—";
+
                   const extra =
                     mk === "extraction"
-                      ? `${leaf?.mrz?.valid ? "Machine code valid · Text read clearly" : leaf?.ocr?.ran === false ? "Could not auto-read text" : "Document text and numbers read clearly"}`
+                      ? (leaf?.mrz?.valid ? "Machine code valid · Text read clearly" : leaf?.ocr?.ran === false ? "Could not auto-read text" : "Document text and numbers read clearly")
                       : mk === "validation"
-                        ? doc.watchlist_hits && doc.watchlist_hits.length > 0
-                          ? "⚠️ Alert: Found on national fraud watchlist"
-                          : "Authentic checksums · Clear of fraud watchlist"
+                        ? (doc.watchlist_hits && doc.watchlist_hits.length > 0
+                            ? "⚠️ Alert: Found on national fraud watchlist"
+                            : "Authentic checksums · Clear of fraud watchlist")
                         : mk === "tampering"
-                          ? leaf?.verdict === "PASS"
-                            ? "Photo integrity verified · Original texture (no edits/splicing)"
-                            : leaf?.ela?.status === "high" || leaf?.ela?.status === "medium"
-                              ? "⚠️ Warning: Signs of digital image editing detected"
-                              : `Edit scan: ${leaf?.ela?.status || "low"} risk detected`
-                          : leaf?.score != null
+                          ? (leaf?.verdict === "PASS"
+                              ? "Photo integrity verified · Original texture (no edits/splicing)"
+                              : leaf?.ela?.status === "high" || leaf?.ela?.status === "medium"
+                                ? "⚠️ Warning: Signs of digital image editing detected"
+                                : `Edit scan: ${leaf?.ela?.status || "low"} risk detected`)
+                          : (leaf?.score != null && leaf.score > 0)
                             ? `Live camera match: ${Math.round(leaf.score * 100)}% match with ID photo`
-                            : "No live camera photo attached (Skipped)";
+                            : "Optional: Live camera capture was not attached (Skipped).";
                   return (
                     <div key={mk} className="forensic-card">
                       <div className="forensic-card__head">
                         <span className="forensic-card__title">
                           {meta.short}
                         </span>
-                        <span className={`chip chip--${tone}`}>{plainVerdict(v) || "—"}</span>
+                        <span className={`chip chip--${tone}`}>{badgeText}</span>
                       </div>
                       <div className="forensic-card__val">
-                        {extra}
-                        <span className="forensic-card__what muted">{meta.what}</span>
+                        <div className="forensic-card__extra">{extra}</div>
+                        <div className="forensic-card__what muted">{meta.what}</div>
                       </div>
                     </div>
                   );
@@ -1101,6 +1108,8 @@ export function DeskView() {
   const [handover, setHandover] = useState<ShiftHandoverPacket | null>(null);
   const [handoverBusy, setHandoverBusy] = useState(false);
 
+  const sessionCacheRef = useRef<Map<string, ScreeningSessionDetail>>(new Map());
+
   // Load checkpoint catalog
   useEffect(() => {
     getCheckpoints().then((res) => {
@@ -1114,9 +1123,25 @@ export function DeskView() {
     return res.ok ? res.data.sessions : [];
   }, []);
 
-  const loadDetail = useCallback(async (id: string) => {
+  const loadDetail = useCallback(async (id: string, forceFresh = false) => {
+    // Instant cache-first switch for 0ms latency
+    if (!forceFresh && sessionCacheRef.current.has(id)) {
+      const cached = sessionCacheRef.current.get(id)!;
+      setActive(cached);
+      setModelHint(null);
+      // Quiet background refresh so data stays up-to-date
+      void getSession(id).then((freshRes) => {
+        if (freshRes.ok) {
+          sessionCacheRef.current.set(id, freshRes.data);
+          setActive((curr) => (curr?.id === id ? freshRes.data : curr));
+        }
+      });
+      return true;
+    }
+
     const res = await getSession(id);
     if (res.ok) {
+      sessionCacheRef.current.set(id, res.data);
       setActive(res.data);
       setModelHint(null);
       return true;
@@ -1126,19 +1151,18 @@ export function DeskView() {
     return false;
   }, [toast]);
 
-  // On mount: reopen the newest OPEN session if there is one
+  // On mount: load open roster list only without auto-opening past sessions
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const open = await refreshOpen();
+      await refreshOpen();
       if (!mounted) return;
-      if (open.length > 0) await loadDetail(open[0].id);
       setLoading(false);
     })();
     return () => {
       mounted = false;
     };
-  }, [refreshOpen, loadDetail]);
+  }, [refreshOpen]);
 
   const openNewSession = async () => {
     setBusy(true);
@@ -1277,7 +1301,7 @@ export function DeskView() {
       setDeclaredName("");
       setDeclaredDob("");
       setModelHint(null);
-      await loadDetail(active.id);
+      await loadDetail(active.id, true);
     } else {
       toast(res.error, "error");
       if (res.error?.toLowerCase().includes("session not found")) {
@@ -1294,7 +1318,7 @@ export function DeskView() {
     setBusy(false);
     if (res.ok) {
       toast("Document removed from session check (audit log preserved).", "info");
-      await loadDetail(active.id);
+      await loadDetail(active.id, true);
     } else {
       toast(res.error, "error");
     }
@@ -1307,7 +1331,7 @@ export function DeskView() {
     setBusy(false);
     if (res.ok) {
       toast("Document restored into session check.", "success");
-      await loadDetail(active.id);
+      await loadDetail(active.id, true);
     } else {
       toast(res.error, "error");
     }
@@ -1348,10 +1372,13 @@ export function DeskView() {
     setFileBack(null);
     setFileKey((k) => k + 1);
     setFileKeyBack((k) => k + 1);
+    setDocNumber("");
+    setDeclaredName("");
+    setDeclaredDob("");
     setNote("");
     setModelHint(null);
-    const open = await refreshOpen();
-    if (open.length > 0) await loadDetail(open[0].id);
+    setShowNewForm(false);
+    await refreshOpen();
   };
 
   const open = active && active.status === "open";
@@ -1671,11 +1698,11 @@ export function DeskView() {
                       All checks run instantly in secure memory.
                     </p>
                   </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div className="intake-card__badges">
                     {file && (
-                      <div className="intake-file-badge">
+                      <div className="intake-file-badge" title={file.name}>
                         <span className="dot dot--ok" />
-                        <span>Front: {file.name} ({(file.size / 1024).toFixed(0)} KB)</span>
+                        <span className="intake-file-badge__name">Front: {file.name} ({(file.size / 1024).toFixed(0)} KB)</span>
                         <button
                           type="button"
                           className="btn btn--small btn--ghost"
@@ -1688,9 +1715,9 @@ export function DeskView() {
                       </div>
                     )}
                     {fileBack && (
-                      <div className="intake-file-badge">
+                      <div className="intake-file-badge" title={fileBack.name}>
                         <span className="dot dot--ok" />
-                        <span>Back: {fileBack.name} ({(fileBack.size / 1024).toFixed(0)} KB)</span>
+                        <span className="intake-file-badge__name">Back: {fileBack.name} ({(fileBack.size / 1024).toFixed(0)} KB)</span>
                         <button
                           type="button"
                           className="btn btn--small btn--ghost"
@@ -1707,7 +1734,7 @@ export function DeskView() {
 
                 <div className="intake-layout">
                   {/* Left Column: Metadata & Declared Values */}
-                  <div className="intake-section">
+                  <div className="intake-section intake-section--meta">
                     <div className="intake-section__title">
                       <span>1. Document Information</span>
                     </div>
@@ -1760,7 +1787,7 @@ export function DeskView() {
                   </div>
 
                   {/* Right Column: Dual Capture Source (Front & Back) */}
-                  <div className="intake-section">
+                  <div className="intake-section intake-section--upload">
                     <div className="intake-section__title">
                       <span>2. Upload or Take Photos</span>
                     </div>
@@ -1784,7 +1811,7 @@ export function DeskView() {
                               <div className="file-thumb-preview__icon">📄</div>
                             )}
                             <div className="file-thumb-preview__meta">
-                              <span className="file-thumb-preview__name">{file.name}</span>
+                              <span className="file-thumb-preview__name" title={file.name}>{file.name}</span>
                               <span className="file-thumb-preview__size">
                                 {(file.size / 1024).toFixed(0)} KB · Front
                               </span>
@@ -1849,7 +1876,7 @@ export function DeskView() {
                               <div className="file-thumb-preview__icon">📄</div>
                             )}
                             <div className="file-thumb-preview__meta">
-                              <span className="file-thumb-preview__name">{fileBack.name}</span>
+                              <span className="file-thumb-preview__name" title={fileBack.name}>{fileBack.name}</span>
                               <span className="file-thumb-preview__size">
                                 {(fileBack.size / 1024).toFixed(0)} KB · Back
                               </span>

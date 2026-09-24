@@ -179,7 +179,8 @@ def compare_faces(document_photo, selfie, doc_age_years: float | None = None, em
                 res = None
                 try:
                     import httpx
-                    res = httpx.post(target_url, data=payload, files=files, timeout=timeout_sec)
+                    with httpx.Client(timeout=timeout_sec) as client:
+                        res = client.post(target_url, data=payload, files=files)
                 except ImportError:
                     import requests
                     res = requests.post(target_url, data=payload, files=files, timeout=timeout_sec)
