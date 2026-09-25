@@ -49,7 +49,7 @@ import {
 import { generateSpecimenFile, SPECIMEN_PRESETS } from "../app/specimens";
 import { useToast } from "../app/state";
 import { portalCache } from "../app/preloader";
-import { copyText, downloadBlob, optimizeUploadFile, shortHash, timeLabelIst } from "../app/util";
+import { copyText, downloadBlob, shortHash, timeLabelIst } from "../app/util";
 import {
   DESK_STEPS,
   MODULE_PLAIN,
@@ -1334,7 +1334,7 @@ export function DeskView() {
     return out;
   };
 
-  const handleFrontFileSelect = async (rawFile: File | null) => {
+  const handleFrontFileSelect = (rawFile: File | null) => {
     if (!rawFile) {
       setFile(null);
       return;
@@ -1343,15 +1343,10 @@ export function DeskView() {
       toast(`PDF size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds server 4.5 MB cap. Please upload a smaller scan.`, "warn");
       return;
     }
-    try {
-      const optimized = await optimizeUploadFile(rawFile);
-      setFile(optimized);
-    } catch {
-      setFile(rawFile);
-    }
+    setFile(rawFile);
   };
 
-  const handleBackFileSelect = async (rawFile: File | null) => {
+  const handleBackFileSelect = (rawFile: File | null) => {
     if (!rawFile) {
       setFileBack(null);
       return;
@@ -1360,12 +1355,7 @@ export function DeskView() {
       toast(`PDF size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds server 4.5 MB cap. Please upload a smaller scan.`, "warn");
       return;
     }
-    try {
-      const optimized = await optimizeUploadFile(rawFile);
-      setFileBack(optimized);
-    } catch {
-      setFileBack(rawFile);
-    }
+    setFileBack(rawFile);
   };
 
   const screenIntoSession = async () => {
@@ -1380,16 +1370,14 @@ export function DeskView() {
     setBusy(true);
     const decl = declaredMap();
     try {
-      const optFront = await optimizeUploadFile(file);
-      const optBack = fileBack ? await optimizeUploadFile(fileBack) : null;
       const res = await screenDocument(
-        optFront,
+        file,
         docType,
         active.checkpoint,
         Object.keys(decl).length ? decl : undefined,
         null,
         active.id,
-        optBack,
+        fileBack ?? null,
       );
       setBusy(false);
 
