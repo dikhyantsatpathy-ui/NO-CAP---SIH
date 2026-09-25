@@ -4742,3 +4742,197 @@ textarea::placeholder {
   flex: 1;
   background: #138808;
 }
+
+/* ============================================================================
+   PROMINENT RECORD EXPAND / CONTRACT BUTTON (NEEDS REVIEW & AUDIT LOG)
+   ============================================================================ */
+.record-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: var(--seal);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: all 0.16s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.record-expand-btn:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.14);
+}
+
+.record-expand-btn--active {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+.record-expand-btn--active:hover {
+  background: #1e293b;
+}
+
+.record-expand-btn--table {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+/* ============================================================================
+   FLOATING ML KEEP-ALIVE TRIGGER (BOTTOM RIGHT NEXT TO AI ASSISTANT)
+   ============================================================================ */
+.floating-keepalive-pill {
+  position: fixed;
+  bottom: 24px;
+  right: 84px;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 28px;
+  background: #0b2240;
+  color: #ffffff;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 8px 24px -2px rgba(11, 34, 64, 0.45), 0 3px 8px -1px rgba(29, 78, 216, 0.35);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: var(--font-ui);
+}
+
+.floating-keepalive-pill:hover {
+  transform: translateY(-2px);
+  background: #061528;
+  border-color: #60a5fa;
+  box-shadow: 0 12px 28px -3px rgba(11, 34, 64, 0.55);
+}
+
+.floating-keepalive-pill--on {
+  border-color: #22c55e;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.35), 0 8px 24px rgba(11, 34, 64, 0.4);
+}
+
+.floating-keepalive-pill--waking {
+  border-color: #f59e0b;
+}
+
+.floating-keepalive-pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.floating-keepalive-pill .dot--pulse {
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+  animation: pulse 1.8s infinite;
+}
+
+.floating-keepalive-pill .dot--waking {
+  background: #f59e0b;
+  animation: pulse 0.8s infinite;
+}
+
+.floating-keepalive-pill .dot--idle {
+  background: #94a3b8;
+}
+
+/* ============================================================================
+   SLEEK COMPACT PROTOCOL SOP RIBBON (DESK VIEW)
+   ============================================================================ */
+.protocol-hud-compact {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.protocol-hud-compact__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.protocol-hud-compact__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.protocol-hud-compact__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.protocol-hud-compact__drawer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  animation: fadeIn 0.2s ease;
+}
+
+.protocol-hud-compact__card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.protocol-hud-compact__card-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--seal);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.protocol-hud-compact__list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.protocol-hud-compact__item {
+  display: flex;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.protocol-hud-compact__step-badge {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--seal);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

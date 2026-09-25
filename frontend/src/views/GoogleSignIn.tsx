@@ -79,7 +79,7 @@ export function SignInGate() {
     try {
       const res = await (await import("../api")).demoLogin();
       if (res.ok) {
-        toast("Authenticated as Inspector R. Sharma (SSB Panitanki ICP)", "success");
+        toast("Authenticated as Inspector R. Sharma (Border Screening Division)", "success");
         await refresh();
       } else {
         toast(res.error, "error");

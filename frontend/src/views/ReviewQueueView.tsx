@@ -8,7 +8,7 @@
 // No raw identifiers rendered.
 // ============================================================================
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   adjudicateSession,
   getBsaCertificateUrl,
@@ -58,29 +58,40 @@ function FlaggedCard({
 }) {
   const [detail, setDetail] = useState<ScreeningSessionDetail | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [note, setNote] = useState("");
   const { toast } = useToast();
+  const lastForcedRef = useRef<boolean | null | undefined>(undefined);
 
+  // Synchronize with bulk expand/collapse controls ONLY when forceExpand value changes,
+  // preventing async detail loading or re-renders from accidentally collapsing open records.
   useEffect(() => {
-    if (forceExpand === true) {
-      if (!detail) {
-        getSession(flag.id).then((res) => {
-          if (res.ok) setDetail(res.data);
-        }).catch(() => {});
+    if (forceExpand !== undefined && forceExpand !== null && forceExpand !== lastForcedRef.current) {
+      lastForcedRef.current = forceExpand;
+      if (forceExpand) {
+        setExpanded(true);
+        if (!detail) {
+          setLoadingDetail(true);
+          getSession(flag.id).then((res) => {
+            if (res.ok) setDetail(res.data);
+          }).finally(() => setLoadingDetail(false));
+        }
+      } else {
+        setExpanded(false);
       }
-      setExpanded(true);
-    } else if (forceExpand === false) {
-      setExpanded(false);
     }
-  }, [forceExpand, flag.id, detail]);
+  }, [forceExpand, flag.id]);
 
   const toggle = async () => {
-    if (!expanded && !detail) {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !detail) {
+      setLoadingDetail(true);
       const res = await getSession(flag.id);
+      setLoadingDetail(false);
       if (res.ok) setDetail(res.data);
       else toast(res.error, "error");
     }
-    setExpanded((v) => !v);
   };
 
   const docs = detail?.documents || [];
@@ -106,7 +117,18 @@ function FlaggedCard({
           {flag.document_count} document(s) · {riskWord(flag.risk_score)} ·{" "}
           {timeLabelIst(flag.created_at_ist || flag.closed_at || flag.updated_at)}
         </span>
-        <span className="queue-card__toggle">{expanded ? "▼" : "▶"}</span>
+        <button
+          type="button"
+          className={`record-expand-btn ${expanded ? "record-expand-btn--active" : ""}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            void toggle();
+          }}
+          aria-expanded={expanded}
+          title={expanded ? "Collapse record details" : "Expand to inspect documents and forensics"}
+        >
+          {loadingDetail ? "⏳ Loading…" : expanded ? "▲ Collapse Record" : "▼ Inspect Record & Forensics"}
+        </button>
       </header>
 
       {flag.note && <p className="queue-card__note">desk note: {flag.note}</p>}
@@ -273,14 +295,20 @@ function SettledSessionRow({ session }: { session: ScreeningSession }) {
     <>
       <tr>
         <td>
-          <button
-            type="button"
-            className="subtable-toggle"
-            style={{ padding: "2px 6px", fontSize: 11 }}
-            onClick={() => void toggle()}
-          >
-            {expanded ? "▼" : "▶"} {session.label || `Session · ${session.id.slice(0, 6)}`}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>
+              {session.label || `Session · ${session.id.slice(0, 6)}`}
+            </span>
+            <button
+              type="button"
+              className={`record-expand-btn record-expand-btn--table ${expanded ? "record-expand-btn--active" : ""}`}
+              onClick={() => void toggle()}
+              aria-expanded={expanded}
+              title={expanded ? "Collapse session details" : "Inspect documents screened in this session"}
+            >
+              {loading ? "⏳ Loading…" : expanded ? "▲ Collapse" : "▼ Inspect Record"}
+            </button>
+          </div>
         </td>
         <td>
           <span

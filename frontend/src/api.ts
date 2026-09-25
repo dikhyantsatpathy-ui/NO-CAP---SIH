@@ -101,13 +101,36 @@ export function assignRole(targetEmail: string, designation: string, institution
   });
 }
 
-/** Officer directory row for super-admin role approvals (no keys/ledger data). */
+export function revokeOfficer(targetEmail: string) {
+  return request<{ status: string; email: string; revoked_at: string }>("/api/admin/revoke_officer", {
+    method: "POST",
+    body: form({ target_email: targetEmail }),
+  });
+}
+
+export function unrevokeOfficer(targetEmail: string) {
+  return request<{ status: string; email: string }>("/api/admin/unrevoke_officer", {
+    method: "POST",
+    body: form({ target_email: targetEmail }),
+  });
+}
+
+export function removeOfficer(targetEmail: string) {
+  return request<{ status: string; email: string }>("/api/admin/remove_officer", {
+    method: "POST",
+    body: form({ target_email: targetEmail }),
+  });
+}
+
+/** Officer directory row for super-admin role approvals, revocation, and removal. */
 export interface OfficerEntry {
   email: string;
   name: string;
   designation: string | null;
   institution: string | null;
   registered_at: string;
+  is_revoked?: boolean;
+  revoked_at?: string | null;
 }
 
 export function getSigners() {

@@ -1140,6 +1140,8 @@ class SignerIdentity(Base):
     institution = Column(String, nullable=True)
     designation = Column(String, nullable=True)
     registered_at = Column(String, nullable=False)
+    is_revoked = Column(Integer, nullable=False, default=0)
+    revoked_at = Column(String, nullable=True)
 
 
 class ScreeningReport(Base):
@@ -1311,9 +1313,9 @@ _MIGRATIONS = [
     # inserts, so drop the whole stale set to match the current model.
     "ALTER TABLE signer_identities DROP COLUMN IF EXISTS pub_key;",
     "ALTER TABLE signer_identities DROP COLUMN IF EXISTS enc_priv_key;",
-    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS is_revoked;",
-    "ALTER TABLE signer_identities DROP COLUMN IF EXISTS revoked_at;",
     "ALTER TABLE signer_identities DROP COLUMN IF EXISTS revoke_pin;",
+    "ALTER TABLE signer_identities ADD COLUMN IF NOT EXISTS is_revoked INTEGER DEFAULT 0;",
+    "ALTER TABLE signer_identities ADD COLUMN IF NOT EXISTS revoked_at VARCHAR;",
 ]
 
 def _ensure_db_initialized():
@@ -1371,6 +1373,14 @@ def _ensure_db_initialized():
                     ):
                         if _scol not in scols:
                             conn.execute(text(f"ALTER TABLE screening_sessions ADD COLUMN {_scol} {_sddl}"))
+                            conn.commit()
+                    sicols = [r[0] for r in conn.execute(text("PRAGMA table_info(signer_identities)")).fetchall()]
+                    for _sicol, _sic_ddl in (
+                        ("is_revoked", "INTEGER DEFAULT 0"),
+                        ("revoked_at", "VARCHAR"),
+                    ):
+                        if _sicol not in sicols:
+                            conn.execute(text(f"ALTER TABLE signer_identities ADD COLUMN {_sicol} {_sic_ddl}"))
                             conn.commit()
             except Exception:
                 pass
@@ -1662,6 +1672,10 @@ def get_current_admin(request: Request):
         raise HTTPException(status_code=401, detail="ACCESS DENIED: Session signature invalid or tampered.")
     if exp < int(datetime.now(timezone.utc).timestamp()):
         raise HTTPException(status_code=401, detail="ACCESS DENIED: Session expired — please sign in again.")
+    with get_db() as db:
+        identity = db.query(SignerIdentity).filter_by(email=email).first()
+        if identity and getattr(identity, "is_revoked", 0) == 1:
+            raise HTTPException(status_code=403, detail="OFFICER ACCESS REVOKED: Your credentials have been revoked by an administrator.")
     return email
 
 def get_current_admin_or_evaluator(request: Request) -> str:
@@ -2314,11 +2328,16 @@ def admin_login(request: Request, credential: str = Form(...)):
         if not allowed:
             raise ValueError("ACCESS DENIED: your Google account is not authorized to use this system.")
 
-        with get_db() as db: get_or_create_signer_identity(db, email, idinfo.get("name"))
+        with get_db() as db:
+            identity = get_or_create_signer_identity(db, email, idinfo.get("name"))
+            if identity and getattr(identity, "is_revoked", 0) == 1:
+                raise HTTPException(403, "OFFICER ACCESS REVOKED: Your credentials have been revoked by an administrator.")
         is_secure = os.getenv("VERCEL") == "1" or request.url.scheme == "https" or os.getenv("ENVIRONMENT") == "production"
         res = JSONResponse(content={"status": "SUCCESS", "admin": email})
         res.set_cookie(key="nischay_session", value=make_session_token(email), httponly=True, secure=is_secure, samesite="lax", max_age=86400)
         return res
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(401, "AUTH FAILED: your Google credential could not be verified.")
 
@@ -2328,7 +2347,7 @@ def admin_demo_login(request: Request):
     """Instant 1-click authentication for SIH evaluators and sandbox officers."""
     demo_email = "evaluator@ssb.gov.in"
     with get_db() as db:
-        identity = get_or_create_signer_identity(db, demo_email, "Inspector R. Sharma (SSB Panitanki ICP)")
+        identity = get_or_create_signer_identity(db, demo_email, "Inspector R. Sharma (Border Screening Division)")
         if not identity.designation:
             identity.designation = "Border Screening Inspector"
         if not identity.institution:
@@ -2357,8 +2376,10 @@ def check_auth_status(request: Request, admin: str = Depends(get_current_admin))
     designation = (identity.designation if identity else None) or None
     institution = (identity.institution if identity else None) or None
     pending = bool(identity and (not designation or not institution))
+    is_revoked = bool(identity and getattr(identity, "is_revoked", 0) == 1)
     return {"status": "AUTHENTICATED", "admin": admin, "name": identity.name if identity else admin,
             "designation": designation, "institution": institution, "pending_approval": pending,
+            "is_revoked": is_revoked,
             "is_super_admin": is_super_admin(admin)}
 
 @app.post("/api/admin/assign_role")
@@ -2376,16 +2397,64 @@ def assign_role(request: Request, target_email: str = Form(...), designation: st
         db.commit()
     return {"status": "ROLE_ASSIGNED", "email": target, "designation": desig, "institution": inst}
 
+@app.post("/api/admin/revoke_officer")
+@limiter.limit("20/minute")
+def revoke_officer(request: Request, target_email: str = Form(...), admin: str = Depends(get_current_admin)):
+    """Super-admin only: Revoke an officer's screening and signing clearance."""
+    if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
+    target = target_email.strip().lower()
+    if not target: raise HTTPException(400, "Target officer email is required.")
+    if is_super_admin(target): raise HTTPException(400, "Cannot revoke a super-administrator.")
+    with get_db() as db:
+        identity = db.query(SignerIdentity).filter_by(email=target).first()
+        if not identity: raise HTTPException(404, "Officer not found.")
+        identity.is_revoked = 1
+        identity.revoked_at = now_utc()
+        db.commit()
+    return {"status": "OFFICER_REVOKED", "email": target, "revoked_at": identity.revoked_at}
+
+@app.post("/api/admin/unrevoke_officer")
+@limiter.limit("20/minute")
+def unrevoke_officer(request: Request, target_email: str = Form(...), admin: str = Depends(get_current_admin)):
+    """Super-admin only: Restore a revoked officer back to active status."""
+    if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
+    target = target_email.strip().lower()
+    if not target: raise HTTPException(400, "Target officer email is required.")
+    with get_db() as db:
+        identity = db.query(SignerIdentity).filter_by(email=target).first()
+        if not identity: raise HTTPException(404, "Officer not found.")
+        identity.is_revoked = 0
+        identity.revoked_at = None
+        db.commit()
+    return {"status": "OFFICER_UNREVOKED", "email": target}
+
+@app.post("/api/admin/remove_officer")
+@limiter.limit("20/minute")
+def remove_officer(request: Request, target_email: str = Form(...), admin: str = Depends(get_current_admin)):
+    """Super-admin only: Completely remove an officer (active, revoked, or unassigned/pending)
+    from the database. Their record is purged so they can be re-registered or re-added fresh later."""
+    if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
+    target = target_email.strip().lower()
+    if not target: raise HTTPException(400, "Target officer email is required.")
+    if is_super_admin(target): raise HTTPException(400, "Cannot delete a super-administrator.")
+    with get_db() as db:
+        identity = db.query(SignerIdentity).filter_by(email=target).first()
+        if not identity: raise HTTPException(404, "Officer not found.")
+        db.delete(identity)
+        db.commit()
+    return {"status": "OFFICER_REMOVED", "email": target}
+
 @app.get("/api/admin/signers")
 @limiter.limit("60/minute")
 def list_signers(request: Request, admin: str = Depends(get_current_admin)):
-    """Super-admin only: officer directory used for role approvals."""
-    if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
+    """Officer directory: accessible by authenticated personnel for roster visibility."""
     with get_db() as db:
         rows = db.query(SignerIdentity).order_by(SignerIdentity.registered_at.desc()).all()
     return {"signers": [
         {"email": s.email, "name": s.name, "designation": s.designation,
-         "institution": s.institution, "registered_at": s.registered_at}
+         "institution": s.institution, "registered_at": s.registered_at,
+         "is_revoked": bool(getattr(s, "is_revoked", 0)),
+         "revoked_at": getattr(s, "revoked_at", None)}
         for s in rows
     ]}
 

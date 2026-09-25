@@ -87,7 +87,7 @@ def ist_hour_of_day(utc_str: str | None) -> int | None:
 # Specimen real ICPs (Indo-Nepal + Indo-Bhutan land borders), plus air/sea/rail.
 CHECKPOINT_CLUSTERS = {
     "LAND_NEPAL": {
-        "label": "Indo-Nepal Land (SSB)",
+        "label": "Integrated Check Post (Land Border)",
         "mode": "land",
         "icps": [
             "Sunauli", "Raxaul", "Jogbani", "Rupaidiha", "Banbasa", "Barhni",

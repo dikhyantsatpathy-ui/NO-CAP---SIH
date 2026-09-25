@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useState } from "react";
-import { assignRole, getSigners, type OfficerEntry } from "../api";
+import { assignRole, getSigners, revokeOfficer, unrevokeOfficer, removeOfficer, type OfficerEntry } from "../api";
 import { useAuth, useToast } from "../app/state";
 import { timeLabelIst } from "../app/util";
 
@@ -53,6 +53,44 @@ export function StaffView() {
       setEmail("");
       setDesignation("");
       setInstitution("");
+      await load();
+    } else {
+      toast(res.error, "error");
+    }
+  };
+
+  const handleRevoke = async (targetEmail: string) => {
+    if (!window.confirm(`Revoke officer clearance for ${targetEmail}? They will no longer be permitted to screen or sign documents.`)) return;
+    setBusy(true);
+    const res = await revokeOfficer(targetEmail);
+    setBusy(false);
+    if (res.ok) {
+      toast(`Officer ${targetEmail} clearance revoked.`, "warn");
+      await load();
+    } else {
+      toast(res.error, "error");
+    }
+  };
+
+  const handleUnrevoke = async (targetEmail: string) => {
+    setBusy(true);
+    const res = await unrevokeOfficer(targetEmail);
+    setBusy(false);
+    if (res.ok) {
+      toast(`Officer ${targetEmail} clearance restored.`, "success");
+      await load();
+    } else {
+      toast(res.error, "error");
+    }
+  };
+
+  const handleRemove = async (targetEmail: string) => {
+    if (!window.confirm(`Completely remove officer ${targetEmail} from the system? Their identity and revocation history will be purged, allowing them to be re-added fresh if needed.`)) return;
+    setBusy(true);
+    const res = await removeOfficer(targetEmail);
+    setBusy(false);
+    if (res.ok) {
+      toast(`Officer ${targetEmail} removed from system.`, "info");
       await load();
     } else {
       toast(res.error, "error");
@@ -145,13 +183,26 @@ export function StaffView() {
                         </td>
                         <td className="mono muted">{timeLabelIst(s.registered_at)}</td>
                         <td style={{ textAlign: "right" }}>
-                          <button
-                            type="button"
-                            className="btn btn--small btn--primary"
-                            onClick={() => prefill(s)}
-                          >
-                            Approve role
-                          </button>
+                          <div style={{ display: "inline-flex", gap: 6 }}>
+                            <button
+                              type="button"
+                              className="btn btn--small btn--primary"
+                              disabled={busy}
+                              onClick={() => prefill(s)}
+                            >
+                              Approve role
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn--small btn--ghost"
+                              style={{ color: "var(--bad)" }}
+                              disabled={busy}
+                              onClick={() => void handleRemove(s.email)}
+                              title="Delete this pending registration from the system"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -162,15 +213,16 @@ export function StaffView() {
 
             {active.length > 0 && (
               <>
-                <h3 className="board__title">Active officers</h3>
+                <h3 className="board__title">Active &amp; registered officers</h3>
                 <table className="tbl">
                   <thead>
                     <tr>
                       <th>Officer</th>
                       <th>Designation</th>
                       <th>Institution</th>
+                      <th>Status</th>
                       <th>Registered (IST)</th>
-                      <th>Security Profile</th>
+                      <th style={{ textAlign: "right" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -183,22 +235,65 @@ export function StaffView() {
                           </td>
                           <td>{s.designation}</td>
                           <td>{s.institution}</td>
-                          <td className="mono">{timeLabelIst(s.registered_at)}</td>
                           <td>
-                            <button
-                              type="button"
-                              className="subtable-toggle"
-                              style={{ padding: "2px 6px", fontSize: 11 }}
-                              onClick={() => setExpandedEmail((cur) => (cur === s.email ? null : s.email))}
-                            >
-                              {expandedEmail === s.email ? "▼" : "▶"} Profile
-                            </button>
+                            {s.is_revoked ? (
+                              <span className="chip chip--bad" title={`Revoked at ${s.revoked_at || "previously"}`}>
+                                🛑 REVOKED
+                              </span>
+                            ) : (
+                              <span className="chip chip--ok">ACTIVE</span>
+                            )}
+                          </td>
+                          <td className="mono">{timeLabelIst(s.registered_at)}</td>
+                          <td style={{ textAlign: "right" }}>
+                            <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                              {s.is_revoked ? (
+                                <button
+                                  type="button"
+                                  className="btn btn--small btn--primary"
+                                  disabled={busy}
+                                  onClick={() => void handleUnrevoke(s.email)}
+                                  title="Restore clearance for this officer"
+                                >
+                                  Unrevoke
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn--small btn--ghost"
+                                  style={{ color: "var(--warn)" }}
+                                  disabled={busy}
+                                  onClick={() => void handleRevoke(s.email)}
+                                  title="Revoke officer clearance (blocks screening/signing)"
+                                >
+                                  Revoke
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn--small btn--ghost"
+                                style={{ color: "var(--bad)" }}
+                                disabled={busy}
+                                onClick={() => void handleRemove(s.email)}
+                                title="Completely remove officer from system"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                type="button"
+                                className="subtable-toggle"
+                                style={{ padding: "3px 8px", fontSize: 11 }}
+                                onClick={() => setExpandedEmail((cur) => (cur === s.email ? null : s.email))}
+                              >
+                                {expandedEmail === s.email ? "▼" : "▶"} Profile
+                              </button>
+                            </div>
                           </td>
                         </tr>
 
                         {expandedEmail === s.email && (
                           <tr key={`${s.email}-profile`}>
-                            <td colSpan={5} style={{ padding: 0, background: "var(--panel-2)" }}>
+                            <td colSpan={6} style={{ padding: 0, background: "var(--panel-2)" }}>
                               <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--line)" }}>
                                 <span className="k" style={{ fontSize: 11, marginBottom: 6, display: "block" }}>
                                   OFFICER SIGNING PROFILE (AUDIT)
@@ -212,9 +307,15 @@ export function StaffView() {
                                     <tr>
                                       <td className="k">CLEARANCE STATUS</td>
                                       <td>
-                                        <span className="chip chip--ok">ACTIVE SIGNER</span>
+                                        {s.is_revoked ? (
+                                          <span className="chip chip--bad">REVOKED (ACCESS BLOCKED)</span>
+                                        ) : (
+                                          <span className="chip chip--ok">ACTIVE SIGNER</span>
+                                        )}
                                         <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>
-                                          Authorised to conduct border screening, sign blocks into the ledger, and export shift tokens.
+                                          {s.is_revoked
+                                            ? `Privileges revoked on ${s.revoked_at || "record"}. Cannot screen or sign documents.`
+                                            : "Authorised to conduct border screening, sign blocks into the ledger, and export shift tokens."}
                                         </span>
                                       </td>
                                     </tr>

@@ -63,13 +63,12 @@ import {
 } from "../app/english";
 
 const DEFAULT_CHECKPOINTS = [
-  "Raxaul",
-  "Sunauli",
-  "Jogbani",
-  "Panitanki",
-  "Jaigaon",
-  "Banbasa",
-  "Rupaidiha",
+  "Integrated Checkpost Alpha",
+  "Border Checkpost 01",
+  "Sector Checkpoint 02",
+  "Transit Terminal Central",
+  "ICP Sector East",
+  "ICP Sector West",
   "IGI Delhi Airport",
   "Kolkata Airport",
 ];
@@ -145,22 +144,20 @@ function GuideStepper({
 // ----------------------------------------------------------------------------
 
 function buildDefaultGuide(checkpoint: string, nationality?: string | null): GuidedFlow {
-  const post = checkpoint || "Raxaul Checkpoint";
+  const post = checkpoint || "Border Checkpoint";
   const nat = (nationality || "IN").toUpperCase();
-  const isNepal = nat === "NP";
-  const isBhutan = nat === "BT";
   const isIndia = nat === "IN";
 
   return {
     checkpoint: post,
-    cluster: isNepal ? "indo_nepal" : isBhutan ? "indo_bhutan" : "integrated_icp",
-    cluster_label: `${post} (Border Verification Post)`,
+    cluster: "integrated_icp",
+    cluster_label: `${post} (Integrated Checkpost)`,
     mode: "land",
     doc_type: "pan",
     doc_label: "Identity Document",
     nationality: nat,
-    nationality_label: isNepal ? "Nepal (1950 Friendship Treaty)" : isBhutan ? "Bhutan (1949 Treaty)" : isIndia ? "India (Domestic / Outbound)" : `International (${nat})`,
-    expected_documents: isNepal ? ["citizenship", "passport", "voter_id"] : isBhutan ? ["citizenship", "passport", "voter_id"] : ["aadhaar", "pan", "passport", "voter_id", "dl"],
+    nationality_label: isIndia ? "Domestic Transit" : `International (${nat})`,
+    expected_documents: ["aadhaar", "pan", "passport", "voter_id", "dl"],
     officer_steps: [
       {
         order: 1,
@@ -193,7 +190,7 @@ function buildDefaultGuide(checkpoint: string, nationality?: string | null): Gui
       },
     ],
     traveller_steps: [
-      { order: 1, text: "Please present your physical identity document (Passport, Aadhaar, PAN, Voter ID, or Citizenship Certificate)." },
+      { order: 1, text: "Please present your physical identity document (Passport, Aadhaar, PAN, Voter ID, or Border Pass)." },
       { order: 2, text: "Place the document flat on the scanner or hold steady in front of the capture lens." },
       { order: 3, text: "Look directly at the desk camera for a quick biometric match." },
       { order: 4, text: "Verification complete. Thank you for your cooperation." },
@@ -215,75 +212,82 @@ function GuidedProtocolBar({
   const effectiveGuide = guide || buildDefaultGuide(checkpoint, nationality);
 
   return (
-    <div className="protocol-hud">
-      <div className="protocol-hud__header">
-        <div className="protocol-hud__title">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-          </svg>
-          <span>What to do at {effectiveGuide.cluster_label || checkpoint || "Border Checkpoint"}</span>
+    <div className="protocol-hud-compact">
+      <div className="protocol-hud-compact__row">
+        <div className="protocol-hud-compact__left">
+          <span className="protocol-hud-compact__title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            Standard Operating Procedure
+          </span>
+          <span className="chip chip--seal">
+            {effectiveGuide.mode ? `${effectiveGuide.mode.toUpperCase()} BORDER` : "LAND BORDER"}
+          </span>
+          <span className="chip chip--mute">Post: {checkpoint || "Active Post"}</span>
+          {nationality && (
+            <span className="chip chip--info">
+              {effectiveGuide.nationality_label || nationality}
+            </span>
+          )}
+          {effectiveGuide.expected_documents && effectiveGuide.expected_documents.length > 0 && (
+            <span className="muted" style={{ fontSize: "11px" }}>
+              Expected: {effectiveGuide.expected_documents.map((d) => SCREEN_DOC_LABELS[d as ScreenDocType] || d).join(" / ")}
+            </span>
+          )}
         </div>
         <button
           type="button"
           className="subtable-toggle"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
+          style={{ fontSize: "11.5px", padding: "3px 8px" }}
         >
-          {open ? "▼ Hide the steps" : "▶ Show the steps"}
+          {open ? "▲ Hide SOP Steps" : "📋 Show SOP Steps"}
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-        <span className="chip chip--seal">
-          {effectiveGuide.mode ? `${effectiveGuide.mode.toUpperCase()} BORDER` : "LAND BORDER"}
-        </span>
-        <span className="chip chip--mute">Post: {checkpoint || "Active Post"}</span>
-        {nationality && (
-          <span className="chip chip--info">
-            Nationality: {effectiveGuide.nationality_label || nationality}
-          </span>
-        )}
-        {effectiveGuide.expected_documents && effectiveGuide.expected_documents.length > 0 && (
-          <span className="muted" style={{ fontSize: "11.5px" }}>
-            Expected documents: {effectiveGuide.expected_documents.map((d) => SCREEN_DOC_LABELS[d as ScreenDocType] || d).join(" / ")}
-          </span>
-        )}
-      </div>
-
       {open && (
-        <div className="protocol-hud__grid">
-          <div className="protocol-col">
-            <span className="protocol-col__heading">Officer — what to check</span>
-            {effectiveGuide.officer_steps?.map((st) => (
-              <div key={st.order} className="protocol-step-item">
-                <span className="protocol-step-num">{st.order}</span>
-                <div>
-                  <strong style={{ textTransform: "capitalize" }}>{st.phase}:</strong> {st.text}
-                  {st.detail && <div className="muted" style={{ fontSize: "11px" }}>{st.detail}</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="protocol-col">
-            <span className="protocol-col__heading">Traveller — what to say</span>
-            <div className="protocol-brief-box">
-              {effectiveGuide.traveller_steps?.map((ts) => (
-                <div key={ts.order} style={{ marginBottom: "6px" }}>
-                  <span>{ts.order}. {ts.text}</span>
+        <div className="protocol-hud-compact__drawer">
+          <div className="protocol-hud-compact__card">
+            <div className="protocol-hud-compact__card-title">
+              Officer Inspection Checklist
+            </div>
+            <div className="protocol-hud-compact__list">
+              {effectiveGuide.officer_steps?.map((st) => (
+                <div key={st.order} className="protocol-hud-compact__item">
+                  <span className="protocol-hud-compact__step-badge">{st.order}</span>
+                  <div>
+                    <strong>{st.phase}:</strong> {st.text}
+                  </div>
                 </div>
               ))}
             </div>
-            {effectiveGuide.capture_hint && (
-              <div className="muted" style={{ fontSize: "11px", marginTop: "4px" }}>
-                <strong>Capture tip:</strong> {effectiveGuide.capture_hint}
-              </div>
-            )}
+          </div>
+          <div className="protocol-hud-compact__card">
+            <div className="protocol-hud-compact__card-title">
+              Traveller Instructions
+            </div>
+            <div className="protocol-hud-compact__list">
+              {effectiveGuide.traveller_steps?.map((ts) => (
+                <div key={ts.order} className="protocol-hud-compact__item">
+                  <span className="protocol-hud-compact__step-badge">{ts.order}</span>
+                  <div>{ts.text}</div>
+                </div>
+              ))}
+              {effectiveGuide.capture_hint && (
+                <div className="muted" style={{ fontSize: "11px", marginTop: "4px" }}>
+                  <strong>Tip:</strong> {effectiveGuide.capture_hint}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
+
 
 // ----------------------------------------------------------------------------
 // A single screened document's card with nested expandable sub-tables
@@ -1127,7 +1131,7 @@ export function DeskView() {
   const [busy, setBusy] = useState(false);
 
   // New session creation fields
-  const [newCheckpoint, setNewCheckpoint] = useState("Raxaul");
+  const [newCheckpoint, setNewCheckpoint] = useState("Integrated Checkpost Alpha");
   const [newNationality, setNewNationality] = useState("IN");
   const [newPurpose, setNewPurpose] = useState("Trade");
   const [showNewForm, setShowNewForm] = useState(false);
@@ -1232,7 +1236,7 @@ export function DeskView() {
   const openNewSession = async () => {
     setBusy(true);
     const res = await createSession({
-      checkpoint: newCheckpoint.trim() || "Raxaul",
+      checkpoint: newCheckpoint.trim() || "Integrated Checkpost Alpha",
       nationality: newNationality.trim(),
       purpose: newPurpose.trim(),
     });
@@ -1250,7 +1254,7 @@ export function DeskView() {
 
   const startNextTraveller = async () => {
     setBusy(true);
-    const post = active?.checkpoint || newCheckpoint.trim() || "Raxaul";
+    const post = active?.checkpoint || newCheckpoint.trim() || "Integrated Checkpost Alpha";
     const nat = active?.nationality || newNationality.trim() || "IN";
     const purp = active?.purpose || newPurpose.trim() || "Trade";
     const res = await createSession({
@@ -1575,7 +1579,7 @@ export function DeskView() {
                   list="checkpoint-options"
                   value={newCheckpoint}
                   onChange={(e) => setNewCheckpoint(e.target.value)}
-                  placeholder="e.g. Raxaul, Panitanki..."
+                  placeholder="e.g. ICP Alpha, Checkpoint 01..."
                 />
                 <datalist id="checkpoint-options">
                   {checkpointOptions.map((c) => (

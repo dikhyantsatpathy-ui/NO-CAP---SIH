@@ -109,7 +109,7 @@ function PortalHeader() {
   const { me } = useAuth();
   const officerName = me?.name || me?.admin || "Inspector R. Sharma";
   const officerRole = me?.designation || (me?.pending_approval ? "Screening Officer" : "Screening Officer");
-  const officerUnit = me?.institution || "SSB Panitanki ICP";
+  const officerUnit = me?.institution || "Border Screening Division";
 
   return (
     <header className="gov-portal-header">
@@ -151,11 +151,8 @@ function PortalHeader() {
   );
 }
 
-function CommandStatusStrip() {
-  const { signOut } = useAuth();
+export function useMlKeepAlive() {
   const { toast } = useToast();
-  const [signingOut, setSigningOut] = useState(false);
-  const [istTime, setIstTime] = useState("");
   const [hfKeepAlive, setHfKeepAlive] = useState<boolean>(() => {
     return localStorage.getItem("nocap_hf_keepalive") !== "false";
   });
@@ -163,21 +160,7 @@ function CommandStatusStrip() {
   const [isWaking, setIsWaking] = useState(false);
 
   useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      const istOffset = 5.5 * 3600 * 1000;
-      const istDate = new Date(now.getTime() + istOffset);
-      setIstTime(istDate.toISOString().slice(11, 19) + " IST");
-    };
-    updateTime();
-    const id = window.setInterval(updateTime, 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // Periodic keep-alive ping (every 4 mins) to prevent Hugging Face Space from idling/sleeping
-  useEffect(() => {
     if (!hfKeepAlive) return;
-
     let isMounted = true;
     const sendPing = async () => {
       try {
@@ -188,10 +171,9 @@ function CommandStatusStrip() {
           }
         }
       } catch {
-        // silent fallback
+        // silent
       }
     };
-
     sendPing();
     const interval = window.setInterval(sendPing, 4 * 60 * 1000);
     return () => {
@@ -229,6 +211,66 @@ function CommandStatusStrip() {
     }
   };
 
+  return { hfKeepAlive, mlLatency, isWaking, toggleKeepAlive };
+}
+
+export function FloatingKeepAliveTrigger() {
+  const { hfKeepAlive, mlLatency, isWaking, toggleKeepAlive } = useMlKeepAlive();
+
+  return (
+    <button
+      type="button"
+      className={`floating-keepalive-pill ${
+        isWaking
+          ? "floating-keepalive-pill--waking"
+          : hfKeepAlive
+          ? "floating-keepalive-pill--on"
+          : ""
+      }`}
+      onClick={() => void toggleKeepAlive()}
+      title="Hugging Face Keep-Alive: prevents external AI models from going to sleep or getting rate limited"
+    >
+      <span
+        className={`dot ${
+          isWaking
+            ? "dot--waking"
+            : hfKeepAlive
+            ? "dot--pulse"
+            : "dot--idle"
+        }`}
+      />
+      <span>
+        {isWaking
+          ? "Waking ML Space…"
+          : hfKeepAlive
+          ? mlLatency
+            ? `⚡ ML Warm (${mlLatency}ms)`
+            : "⚡ HF Keep-Alive: ON"
+          : "💤 HF Keep-Alive: OFF"}
+      </span>
+    </button>
+  );
+}
+
+function CommandStatusStrip() {
+  const { signOut } = useAuth();
+  const { toast } = useToast();
+  const [signingOut, setSigningOut] = useState(false);
+  const [istTime, setIstTime] = useState("");
+  const { hfKeepAlive, mlLatency, isWaking, toggleKeepAlive } = useMlKeepAlive();
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      const istOffset = 5.5 * 3600 * 1000;
+      const istDate = new Date(now.getTime() + istOffset);
+      setIstTime(istDate.toISOString().slice(11, 19) + " IST");
+    };
+    updateTime();
+    const id = window.setInterval(updateTime, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const doSignOut = async () => {
     setSigningOut(true);
     await signOut();
@@ -241,8 +283,6 @@ function CommandStatusStrip() {
         <span className="command-strip__status">
           <span className="command-strip__dot" /> SYSTEM ONLINE
         </span>
-        <span className="command-strip__sep">•</span>
-        <span>Raxaul / Panitanki ICP</span>
         <span className="command-strip__sep">•</span>
         <span className="command-strip__live">ACTIVE DUTY</span>
         <span className="command-strip__sep">•</span>
@@ -354,6 +394,7 @@ export function App() {
         <SuperHeader />
         <TriColorRule />
         <SignInGate />
+        <FloatingKeepAliveTrigger />
         <FloatingChatTrigger onClick={() => setChatOpen(true)} />
         <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       </div>
@@ -402,6 +443,7 @@ export function App() {
         <span className="gov-footer__pipe">|</span>
         <span>🛡️ ZERO-RAW-STORAGE PRIVACY</span>
       </footer>
+      <FloatingKeepAliveTrigger />
       <FloatingChatTrigger onClick={() => setChatOpen(true)} />
       <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
     </div>

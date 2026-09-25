@@ -81,16 +81,16 @@ const ENTRIES: Entry[] = [
   },
   {
     id: "checkpoints-treaty",
-    tags: ["checkpoints", "border", "indo nepal", "indo bhutan", "treaty", "1950", "panitanki", "raxaul", "sonauli", "jaigaon", "ssb"],
-    q: "What border checkpoint sectors and treaties are supported?",
-    a: "The console is pre-configured with operational parameters for major SSB Integrated Check Posts (ICPs):\n- **Panitanki (West Bengal)**: Indo-Nepal corridor (Kakarbhitta crossing).\n- **Raxaul (Bihar)**: Major commercial and transit corridor to Birgunj, Nepal.\n- **Sonauli (Uttar Pradesh)**: High-volume passenger route near Lumbini, Nepal.\n- **Jaigaon (West Bengal)**: Primary gateway into Phuentsholing, Bhutan.\n\n**Treaty Compliance**:\n- **Indo-Nepal 1950 Treaty of Peace and Friendship**: Permits Indian and Nepalese citizens to cross without visas, validating Nepali Citizenship Cards, Election Cards, and Passports.\n- **Indo-Bhutan Travel Agreement**: Enforces Bhutanese Voter ID / Citizenship Identity Card protocols.\n- **Third-Country Nationals**: Mandates standard passport, valid Indian Visa / e-Visa, and biometrics.",
+    tags: ["checkpoints", "border", "bilateral", "treaty", "sectors", "transit", "ssb"],
+    q: "What border checkpoint sectors and protocols are supported?",
+    a: "The console is pre-configured with operational parameters for major Integrated Check Posts (ICPs):\n- **Integrated Checkpost Alpha**: Primary land transit and passenger corridor.\n- **Integrated Checkpost Beta**: Major commercial and cargo transit sector.\n- **Sector Checkpoint 02**: High-volume passenger route and regional transit.\n- **Transit Terminal Central**: Gateway hub with biometric verification bays.\n\n**Regulatory Compliance**:\n- **Bilateral Travel Protocols**: Enforces verified national identity credentials and demographic cross-matching.\n- **International Travel Agreements**: Enforces voter identity and citizenship credential verification.\n- **Third-Country Nationals**: Mandates standard passport, valid Indian Visa / e-Visa, and biometrics.",
     s: "app/config.py · app/guide.py · app/screening.py",
   },
   {
     id: "syndicate-graph",
     tags: ["syndicate", "network", "graph", "cluster", "cross checkpoint", "recidivism", "fraud ring", "alerts"],
     q: "How does the Cross-Border Syndicate Monitor detect fraud rings?",
-    a: "The **Syndicate Monitor (`app/syndicate.py`)** connects screening digests across all ICPs in near-real-time:\n- **Velocity & Clashing Alerts**: Detects when the same identifier or photo embedding appears at two different checkpoints (e.g. Panitanki and Sonauli) within an impossible transit window.\n- **Cluster Analysis**: Flags coordinated fraud rings where multiple individuals present documents with sequential serial numbers, identical templates, or shared forged stamps.\n- **Recidivism Tracking**: Alerts desk officers if an individual whose document was previously FLAGGED or ADJUDICATED as fraud attempts entry at a different crossing.",
+    a: "The **Syndicate Monitor (`app/syndicate.py`)** connects screening digests across all ICPs in near-real-time:\n- **Velocity & Clashing Alerts**: Detects when the same identifier or photo embedding appears at two different checkpoints within an impossible transit window.\n- **Cluster Analysis**: Flags coordinated fraud rings where multiple individuals present documents with sequential serial numbers, identical templates, or shared forged stamps.\n- **Recidivism Tracking**: Alerts desk officers if an individual whose document was previously FLAGGED or ADJUDICATED as fraud attempts entry at a different crossing.",
     s: "app/syndicate.py · frontend/src/views/DeskView.tsx",
   },
   {
