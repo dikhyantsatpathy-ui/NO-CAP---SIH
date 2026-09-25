@@ -2214,6 +2214,71 @@ def health_check():
         "timestamp": now_utc(),
     }
 
+
+@app.get("/api/ml/status")
+@app.post("/api/ml/keepalive/ping")
+def ping_ml_service():
+    """
+    Lightweight health ping to keep external Hugging Face Space awake and warm.
+    Only pings /gradio_api/health (or /health), which returns in <100ms and consumes
+    no ONNX inference compute, preventing rate limits and zero-activity sleep shutdowns.
+    """
+    url = os.getenv("ML_SERVICE_URL")
+    if not url:
+        return {
+            "status": "unconfigured",
+            "configured": False,
+            "message": "ML_SERVICE_URL is not set in environment.",
+        }
+
+    import time
+    import httpx
+    t0 = time.perf_counter()
+    candidates = [
+        f"{url.rstrip('/')}/gradio_api/health",
+        f"{url.rstrip('/')}/health",
+    ]
+    last_err = None
+    for cand in candidates:
+        try:
+            resp = httpx.get(cand, timeout=8.0, headers={"User-Agent": "NoCap-KeepAlive/1.0"})
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            if resp.status_code == 200:
+                try:
+                    payload = resp.json()
+                except Exception:
+                    payload = {}
+                try:
+                    from app.remote_ml import mark_remote_success
+                except ImportError:
+                    try:
+                        from remote_ml import mark_remote_success
+                    except ImportError:
+                        mark_remote_success = None
+                if mark_remote_success:
+                    mark_remote_success(elapsed_ms / 1000.0)
+                return {
+                    "status": "online",
+                    "configured": True,
+                    "url": url,
+                    "latency_ms": elapsed_ms,
+                    "models": payload.get("models", {}),
+                    "message": f"ML microservice is warm and active ({elapsed_ms}ms).",
+                }
+        except Exception as exc:
+            last_err = str(exc)
+            continue
+
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    return {
+        "status": "sleeping",
+        "configured": True,
+        "url": url,
+        "latency_ms": elapsed_ms,
+        "message": f"ML microservice is waking up or unreachable: {last_err}",
+    }
+
+
 @app.post("/api/admin/login")
 @limiter.limit("20/minute")
 def admin_login(request: Request, credential: str = Form(...)):

@@ -13,6 +13,7 @@ import { LedgerView } from "./views/LedgerView";
 import { WatchlistView } from "./views/WatchlistView";
 import { StaffView } from "./views/StaffView";
 import { ChatModal, FloatingChatTrigger } from "./views/ChatModal";
+import { pingMlKeepAlive } from "./api";
 
 export function TriColorRule() {
   return (
@@ -155,6 +156,11 @@ function CommandStatusStrip() {
   const { toast } = useToast();
   const [signingOut, setSigningOut] = useState(false);
   const [istTime, setIstTime] = useState("");
+  const [hfKeepAlive, setHfKeepAlive] = useState<boolean>(() => {
+    return localStorage.getItem("nocap_hf_keepalive") !== "false";
+  });
+  const [mlLatency, setMlLatency] = useState<number | null>(null);
+  const [isWaking, setIsWaking] = useState(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -167,6 +173,61 @@ function CommandStatusStrip() {
     const id = window.setInterval(updateTime, 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Periodic keep-alive ping (every 4 mins) to prevent Hugging Face Space from idling/sleeping
+  useEffect(() => {
+    if (!hfKeepAlive) return;
+
+    let isMounted = true;
+    const sendPing = async () => {
+      try {
+        const res = await pingMlKeepAlive();
+        if (isMounted && res.ok) {
+          if (res.data.status === "online" && typeof res.data.latency_ms === "number") {
+            setMlLatency(res.data.latency_ms);
+          }
+        }
+      } catch {
+        // silent fallback
+      }
+    };
+
+    sendPing();
+    const interval = window.setInterval(sendPing, 4 * 60 * 1000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, [hfKeepAlive]);
+
+  const toggleKeepAlive = async () => {
+    if (!hfKeepAlive) {
+      setHfKeepAlive(true);
+      localStorage.setItem("nocap_hf_keepalive", "true");
+      setIsWaking(true);
+      toast("Waking up Hugging Face ML service...", "info");
+      try {
+        const res = await pingMlKeepAlive();
+        if (res.ok) {
+          if (res.data.status === "online") {
+            setMlLatency(res.data.latency_ms ?? null);
+            toast(`Hugging Face Space is awake & warm (${res.data.latency_ms ?? 0}ms)`, "success");
+          } else {
+            toast(res.data.message || "Hugging Face Space waking up...", "info");
+          }
+        }
+      } catch {
+        toast("Could not reach ML service", "error");
+      } finally {
+        setIsWaking(false);
+      }
+    } else {
+      setHfKeepAlive(false);
+      localStorage.setItem("nocap_hf_keepalive", "false");
+      setMlLatency(null);
+      toast("ML Keep-Alive disabled. Space will idle normally.", "info");
+    }
+  };
 
   const doSignOut = async () => {
     setSigningOut(true);
@@ -184,6 +245,38 @@ function CommandStatusStrip() {
         <span>Raxaul / Panitanki ICP</span>
         <span className="command-strip__sep">•</span>
         <span className="command-strip__live">ACTIVE DUTY</span>
+        <span className="command-strip__sep">•</span>
+        <button
+          type="button"
+          className={`command-strip__keepalive ${
+            isWaking
+              ? "command-strip__keepalive--waking"
+              : hfKeepAlive
+              ? "command-strip__keepalive--on"
+              : ""
+          }`}
+          title="Prevents Hugging Face ML models from going to sleep without triggering rate limits (pings /health every 4 mins)"
+          onClick={() => void toggleKeepAlive()}
+        >
+          <span
+            className={`command-strip__dot ${
+              isWaking
+                ? "command-strip__dot--waking"
+                : hfKeepAlive
+                ? "command-strip__dot--pulse"
+                : "command-strip__dot--idle"
+            }`}
+          />
+          <span>
+            {isWaking
+              ? "Waking ML Space..."
+              : hfKeepAlive
+              ? mlLatency
+                ? `⚡ ML Warm (${mlLatency}ms)`
+                : "⚡ HF Keep-Alive: ON"
+              : "💤 HF Keep-Alive: OFF"}
+          </span>
+        </button>
       </div>
 
       <div className="command-strip__right">

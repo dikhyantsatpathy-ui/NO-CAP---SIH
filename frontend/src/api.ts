@@ -1042,4 +1042,23 @@ export async function chatWithAssistant(message: string, history?: { role: strin
   }
 }
 
+export interface MlHealthStatus {
+  status: "online" | "sleeping" | "offline" | "unconfigured";
+  configured: boolean;
+  url?: string;
+  latency_ms?: number;
+  models?: Record<string, boolean | string>;
+  message?: string;
+}
+
+/** Check remote ML microservice health status. */
+export function getMlStatus() {
+  return request<MlHealthStatus>("/api/ml/status", { method: "GET" }, 10000);
+}
+
+/** Send lightweight keepalive ping to prevent Hugging Face Space from sleeping. */
+export function pingMlKeepAlive() {
+  return request<MlHealthStatus>("/api/ml/keepalive/ping", { method: "POST" }, 15000);
+}
+
 
