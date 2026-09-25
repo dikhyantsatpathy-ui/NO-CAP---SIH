@@ -2135,18 +2135,30 @@ export function DeskView() {
                 {/* Bottom Actions Bar */}
                 <div className="intake-actions-bar">
                   <div className="specimen-row">
-                    <span className="k" style={{ fontSize: "11px" }}>TEST WITH PRESETS:</span>
-                    {SPECIMEN_PRESETS.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className="btn btn--small"
-                        disabled={specimenBusy}
-                        onClick={() => void loadSpecimen(p.id)}
-                      >
-                        {p.title}
-                      </button>
-                    ))}
+                    <span className="specimen-row__tag">⚡ TEST WITH PRESETS:</span>
+                    {SPECIMEN_PRESETS.map((p) => {
+                      let kind = "clean";
+                      if (p.id.includes("tampered")) kind = "tampered";
+                      else if (p.id.includes("syndicate")) kind = "syndicate";
+                      else if (p.docType === "driving_licence") kind = "dl";
+                      else if (p.docType === "pan") kind = "pan";
+                      else if (p.docType === "aadhaar") kind = "aadhaar";
+
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`specimen-chip specimen-chip--${kind}`}
+                          disabled={specimenBusy}
+                          onClick={() => void loadSpecimen(p.id)}
+                          title={`${p.title} · ${p.badge} — ${p.description}`}
+                        >
+                          <span className="specimen-chip__dot" />
+                          <span className="specimen-chip__title">{p.title}</span>
+                          {p.badge && <span className="specimen-chip__badge">{p.badge}</span>}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <button

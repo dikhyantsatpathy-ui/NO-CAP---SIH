@@ -3037,29 +3037,29 @@ textarea::placeholder {
    Dual-Sided Document Intake Card & Dropzones (Elevated Command Console)
    --------------------------------------------------------------------------- */
 .intake-card {
-  background: var(--panel) !important;
-  border: 1px solid var(--line) !important;
-  border-top: 3px solid var(--seal) !important;
+  background: linear-gradient(135deg, #061528 0%, #0b2240 100%) !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.16) !important;
+  border-top: 3.5px solid #d97706 !important;
   border-radius: 16px;
   padding: 24px 28px;
   margin-top: 18px;
   margin-bottom: 24px;
-  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.02) !important;
-  color: var(--ink);
+  box-shadow: 0 12px 36px -4px rgba(6, 21, 40, 0.45) !important;
+  color: #ffffff;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 [data-theme="dark"] .intake-card {
-  background: #0f172a !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  border-top-color: #3b82f6 !important;
-  box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.5) !important;
-  color: #f8fafc;
+  background: linear-gradient(135deg, #030a14 0%, #07162c 100%) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  border-top-color: #f59e0b !important;
+  box-shadow: 0 14px 40px -4px rgba(0, 0, 0, 0.7) !important;
+  color: #ffffff;
 }
 
 .intake-card:focus-within {
-  border-color: var(--seal-edge);
-  box-shadow: 0 8px 28px -4px rgba(15, 23, 42, 0.08), 0 0 0 1px var(--seal-edge);
+  border-color: #60a5fa !important;
+  box-shadow: 0 14px 38px -4px rgba(6, 21, 40, 0.55), 0 0 0 1px #60a5fa !important;
 }
 
 .intake-card__header {
@@ -3069,28 +3069,28 @@ textarea::placeholder {
   gap: 16px;
   margin-bottom: 22px;
   padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14) !important;
 }
 
 [data-theme="dark"] .intake-card__header {
-  border-bottom-color: rgba(255, 255, 255, 0.08);
+  border-bottom-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 .intake-card__title {
   font-size: 19px;
   font-weight: 800;
-  color: var(--ink);
+  color: #ffffff !important;
   margin: 0 0 6px 0;
   letter-spacing: -0.015em;
 }
 
 [data-theme="dark"] .intake-card__title {
-  color: #ffffff;
+  color: #ffffff !important;
 }
 
 .intake-card__subtitle {
   font-size: 13.5px;
-  color: var(--muted);
+  color: #93c5fd !important;
   line-height: 1.5;
   margin: 0;
   max-width: 72ch;
@@ -3457,22 +3457,221 @@ textarea::placeholder {
   flex-wrap: wrap;
 }
 
-.specimen-row .k,
-.specimen-row span {
-  color: #cbd5e1;
-  font-weight: 700;
+.specimen-row__tag {
+  color: #fbbf24 !important;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-right: 4px;
 }
 
-.specimen-row .btn {
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: #ffffff;
+.specimen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  border: 1.5px solid transparent;
+  font-family: var(--font-ui);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
-.specimen-row .btn:hover {
-  background: rgba(255, 255, 255, 0.22);
+.specimen-chip:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  filter: brightness(1.15);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+}
+
+.specimen-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.specimen-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.specimen-chip__title {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.specimen-chip__badge {
+  font-size: 9.5px;
+  font-weight: 750;
+  padding: 1px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-left: 2px;
+}
+
+/* Green / Clean Presets (Passport, Clean Aadhaar) */
+.specimen-chip--clean {
+  background: rgba(16, 185, 129, 0.16) !important;
+  border-color: rgba(16, 185, 129, 0.45) !important;
+  color: #34d399 !important;
+}
+.specimen-chip--clean .specimen-chip__dot {
+  background: #10b981;
+  box-shadow: 0 0 7px rgba(16, 185, 129, 0.7);
+}
+.specimen-chip--clean .specimen-chip__badge {
+  background: rgba(16, 185, 129, 0.28);
+  color: #6ee7b7;
+}
+
+/* Red / Tampered Presets */
+.specimen-chip--tampered {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  color: #f87171 !important;
+}
+.specimen-chip--tampered .specimen-chip__dot {
+  background: #ef4444;
+  box-shadow: 0 0 7px rgba(239, 68, 68, 0.8);
+}
+.specimen-chip--tampered .specimen-chip__badge {
+  background: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+/* Amber / Syndicate Clash Presets */
+.specimen-chip--syndicate {
+  background: rgba(245, 158, 11, 0.18) !important;
+  border-color: rgba(245, 158, 11, 0.55) !important;
+  color: #fbbf24 !important;
+}
+.specimen-chip--syndicate .specimen-chip__dot {
+  background: #f59e0b;
+  box-shadow: 0 0 7px rgba(245, 158, 11, 0.8);
+}
+.specimen-chip--syndicate .specimen-chip__badge {
+  background: rgba(245, 158, 11, 0.3);
+  color: #fde68a;
+}
+
+/* Blue / Driving Licence Presets */
+.specimen-chip--dl {
+  background: rgba(59, 130, 246, 0.16) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  color: #60a5fa !important;
+}
+.specimen-chip--dl .specimen-chip__dot {
+  background: #3b82f6;
+  box-shadow: 0 0 7px rgba(59, 130, 246, 0.7);
+}
+.specimen-chip--dl .specimen-chip__badge {
+  background: rgba(59, 130, 246, 0.28);
+  color: #93c5fd;
+}
+
+/* Violet / PAN Card Presets */
+.specimen-chip--pan {
+  background: rgba(168, 85, 247, 0.18) !important;
+  border-color: rgba(168, 85, 247, 0.5) !important;
+  color: #c084fc !important;
+}
+.specimen-chip--pan .specimen-chip__dot {
+  background: #a855f7;
+  box-shadow: 0 0 7px rgba(168, 85, 247, 0.7);
+}
+.specimen-chip--pan .specimen-chip__badge {
+  background: rgba(168, 85, 247, 0.28);
+  color: #e9d5ff;
+}
+
+/* Cyan / Aadhaar Presets */
+.specimen-chip--aadhaar {
+  background: rgba(6, 182, 212, 0.18) !important;
+  border-color: rgba(6, 182, 212, 0.5) !important;
+  color: #22d3ee !important;
+}
+.specimen-chip--aadhaar .specimen-chip__dot {
+  background: #06b6d4;
+  box-shadow: 0 0 7px rgba(6, 182, 212, 0.7);
+}
+.specimen-chip--aadhaar .specimen-chip__badge {
+  background: rgba(6, 182, 212, 0.28);
+  color: #a5f3fc;
+}
+
+/* Sovereign Hero Verification Button */
+.btn--hero {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%) !important;
+  color: #ffffff !important;
+  font-weight: 750 !important;
+  font-size: 14px !important;
+  padding: 12px 24px !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  box-shadow: 0 4px 16px rgba(29, 78, 216, 0.45) !important;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.btn--hero:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.55) !important;
+}
+
+.btn--hero:disabled {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.btn--webcam {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(11, 34, 64, 0.06);
+  border: 1px solid var(--line-2);
+  color: var(--ink);
+  font-weight: 650;
+  font-size: 12.5px;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn--webcam:hover {
+  background: rgba(11, 34, 64, 0.12);
+  border-color: #2563eb;
+  color: #1d4ed8;
+}
+
+[data-theme="dark"] .btn--webcam {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .btn--webcam:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: #60a5fa;
   color: #ffffff;
-  border-color: #93c5fd;
 }
 
 /* ---------------------------------------------------------------------------
