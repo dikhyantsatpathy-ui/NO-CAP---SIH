@@ -53,6 +53,11 @@ def sha256(value: str) -> str:
     return hashlib.sha256(norm(value).encode("utf-8")).hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    """SHA-256 digest of raw bytes — used for file-hash fingerprinting."""
+    return hashlib.sha256(data).hexdigest()
+
+
 # --------------------------------------------------------------------------- #
 # Checksum utilities (deterministic, explainable)
 # --------------------------------------------------------------------------- #

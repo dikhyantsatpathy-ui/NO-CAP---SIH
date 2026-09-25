@@ -2,7 +2,7 @@ fastapi
 uvicorn
 sqlalchemy
 psycopg2-binary
-psycopg[binary]
+# psycopg3 not used — clean_postgres_dsn always produces postgresql+psycopg2:// URLs
 pypdf
 requests
 python-multipart

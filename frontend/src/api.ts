@@ -48,7 +48,7 @@ async function request<T>(url: string, init?: RequestInit, timeoutMs = 45000): P
     clearTimeout(timeoutId);
     if (response.status === 429) throw new Error("Rate limit exceeded. Please wait.");
     if (response.status === 413) {
-      throw new Error("Upload payload exceeds server limit (max 4.5 MB). Please select a compressed image or scan under 4.5 MB.");
+      throw new Error("File too large — the server limit is 4.5 MB. Please use a smaller or lower-resolution file.");
     }
 
     let data: unknown = null;
@@ -80,7 +80,7 @@ function form(fields: Record<string, string | Blob | File | undefined | null>): 
 // Auth endpoints
 // ----------------------------------------------------------------------------
 
-export function getMe(timeoutMs = 3500) {
+export function getMe(timeoutMs = 8000) {
   return request<Me>("/api/admin/me", undefined, timeoutMs);
 }
 

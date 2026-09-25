@@ -91,19 +91,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
-    const res = await getMe();
+    const res = await getMe(8000);
     if (mounted.current) setMe(res.ok ? res.data : null);
   }, []);
 
   useEffect(() => {
     mounted.current = true;
-    refresh().finally(() => {
+
+    // Boot probe: generous timeout + one retry to survive Vercel cold-starts
+    // and Neon DB wakeups. A genuine 401/403 is still fast and won't retry.
+    const boot = async () => {
+      let res = await getMe(12000);
+      if (!res.ok && mounted.current) {
+        const isAuthErr = /40[13]/.test(res.error ?? "");
+        if (!isAuthErr) {
+          // Likely a timeout/network blip — wait for the function to warm up
+          await new Promise<void>((r) => setTimeout(r, 1500));
+          if (mounted.current) res = await getMe(12000);
+        }
+      }
+      if (mounted.current) setMe(res.ok ? res.data : null);
+    };
+
+    boot().finally(() => {
       if (mounted.current) setBooting(false);
     });
+
     return () => {
       mounted.current = false;
     };
-  }, [refresh]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const signOut = useCallback(async () => {
     await apiLogout();

@@ -1339,8 +1339,8 @@ export function DeskView() {
       setFile(null);
       return;
     }
-    if (rawFile.size > 4.5 * 1024 * 1024 && rawFile.type === "application/pdf") {
-      toast(`PDF size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds server 4.5 MB cap. Please upload a smaller scan.`, "warn");
+    if (rawFile.size > 4.5 * 1024 * 1024) {
+      toast(`File size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB server cap. Please use a compressed or lower-resolution file.`, "warn");
       return;
     }
     setFile(rawFile);
@@ -1351,8 +1351,8 @@ export function DeskView() {
       setFileBack(null);
       return;
     }
-    if (rawFile.size > 4.5 * 1024 * 1024 && rawFile.type === "application/pdf") {
-      toast(`PDF size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds server 4.5 MB cap. Please upload a smaller scan.`, "warn");
+    if (rawFile.size > 4.5 * 1024 * 1024) {
+      toast(`File size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB server cap. Please use a compressed or lower-resolution file.`, "warn");
       return;
     }
     setFileBack(rawFile);
