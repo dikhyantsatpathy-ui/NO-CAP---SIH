@@ -948,7 +948,10 @@ def clean_postgres_dsn(raw_url: str) -> str:
 
     if not url or "postgres" not in url:
         return url
-    url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
     if url.count("?") > 1:
         first_q = url.find("?")
         base = url[:first_q]
@@ -990,9 +993,19 @@ _parsed_db = None
 
 if not _IS_SQLITE:
     import urllib.parse
-    import psycopg2
     try:
-        _parsed_db = urllib.parse.urlparse(DATABASE_URL)
+        import psycopg2
+    except ImportError:
+        psycopg2 = None
+
+    _raw_pg_url = DATABASE_URL
+    if _raw_pg_url.startswith("postgresql+psycopg2://"):
+        _raw_pg_url = _raw_pg_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    elif _raw_pg_url.startswith("postgresql+psycopg://"):
+        _raw_pg_url = _raw_pg_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+    try:
+        _parsed_db = urllib.parse.urlparse(_raw_pg_url)
         _host = _parsed_db.hostname or ""
         if "neon.tech" in _host:
             _NEON_ENDPOINT = _host.split(".")[0]
@@ -1001,6 +1014,8 @@ if not _IS_SQLITE:
 
     def _pg_creator(**kw):
         global _PRIMARY_LAST_ERROR
+        if psycopg2 is None:
+            raise RuntimeError("psycopg2 driver is not installed")
         conn_kw = dict(kw)
         conn_kw.setdefault("connect_timeout", 4)
         if _NEON_ENDPOINT and "options" not in conn_kw:
@@ -1009,7 +1024,7 @@ if not _IS_SQLITE:
         last = None
         for attempt in range(2):
             try:
-                return psycopg2.connect(DATABASE_URL, **conn_kw)
+                return psycopg2.connect(_raw_pg_url, **conn_kw)
             except Exception as e:
                 last = e
                 _PRIMARY_LAST_ERROR = sanitize_secret_text(f"{type(e).__name__}: {e}")
@@ -1025,34 +1040,45 @@ if not _IS_SQLITE:
                             for _ans in _data.get("Answer", []):
                                 if _ans.get("type") == 1:
                                     conn_kw["hostaddr"] = _ans.get("data")
-                                    return psycopg2.connect(DATABASE_URL, **conn_kw)
+                                    return psycopg2.connect(_raw_pg_url, **conn_kw)
                     except Exception as doh_err:
                         _PRIMARY_LAST_ERROR = sanitize_secret_text(f"DoH resolve failed: {doh_err} (orig: {e})")
                 if attempt < 1:
                     time.sleep(0.3)
         raise RuntimeError(sanitize_secret_text(str(last or "PostgreSQL connect failed")))
 
-    engine = create_engine(
-        DATABASE_URL,
-        creator=_pg_creator,
-        pool_pre_ping=True,
-        pool_size=2,
-        max_overflow=4,
-        pool_recycle=290,
-        pool_timeout=5,
-        connect_args={"application_name": "nocap"},
-    )
+    try:
+        engine = create_engine(
+            DATABASE_URL,
+            creator=_pg_creator if psycopg2 else None,
+            pool_pre_ping=True,
+            pool_size=2,
+            max_overflow=4,
+            pool_recycle=290,
+            pool_timeout=5,
+            connect_args={"application_name": "nocap"},
+        )
+    except Exception as pg_init_err:
+        print(f"[startup] PostgreSQL engine initialization error ({pg_init_err}); falling back to local SQLite")
+        DATABASE_URL = "sqlite:////tmp/nocap.db" if os.name != "nt" else "sqlite:///nocap.db"
+        _IS_SQLITE = True
+        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+if _IS_SQLITE:
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragmas(dbapi_conn, connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.execute("PRAGMA cache_size=-64000")
-        cursor.execute("PRAGMA temp_store=MEMORY")
-        cursor.close()
+        try:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA cache_size=-64000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.close()
+        except Exception:
+            pass
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
