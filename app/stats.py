@@ -17,7 +17,29 @@ import time
 from config import utc_to_epoch, ist_hour_of_day, to_ist
 
 
+def _get_main_models():
+    """Dynamically resolves ScreeningReport, ScreeningSession, now_utc
+    from app.main or main without crashing regardless of module hierarchy."""
+    import sys
+    for mod_name in ("app.main", "main"):
+        m = sys.modules.get(mod_name)
+        if m and hasattr(m, "ScreeningReport"):
+            return getattr(m, "ScreeningReport"), getattr(m, "ScreeningSession"), getattr(m, "now_utc")
+    try:
+        import app.main as app_main
+        return app_main.ScreeningReport, app_main.ScreeningSession, app_main.now_utc
+    except Exception:
+        try:
+            import main as root_main
+            return root_main.ScreeningReport, root_main.ScreeningSession, getattr(root_main, "now_utc", lambda: "")
+        except Exception:
+            from datetime import datetime, timezone
+            return None, None, lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def _rows(db, model, limit: int = 5000):
+    if model is None:
+        return []
     try:
         return db.query(model).order_by(model.created_at.desc()).limit(limit).all()
     except Exception:
@@ -52,10 +74,12 @@ def report_stats(db, limit: int = 5000) -> dict:
     per-officer, module pass/fail rates, AI-detector performance, latency
     percentiles, and IST hourly + daily histograms.
     """
-    rows = _rows(db, __import__("main").ScreeningReport, limit)
+    report_cls, _, now_fn = _get_main_models()
+    rows = _rows(db, report_cls, limit)
+    now_utc_str = now_fn()
     out = {
-        "generated_at_utc": __import__("main").now_utc(),
-        "generated_at_ist": to_ist(__import__("main").now_utc()),
+        "generated_at_utc": now_utc_str,
+        "generated_at_ist": to_ist(now_utc_str),
         "total_screens": len(rows),
         "verdicts": {},
         "risk_buckets": {},
@@ -154,7 +178,8 @@ def report_stats(db, limit: int = 5000) -> dict:
 
 def session_stats(db, limit: int = 2000) -> dict:
     """Aggregate closed screening sessions (the border ledger)."""
-    rows = _rows(db, __import__("main").ScreeningSession, limit)
+    _, session_cls, _ = _get_main_models()
+    rows = _rows(db, session_cls, limit)
     out = {
         "total_sessions": len(rows),
         "by_status": {},
@@ -188,12 +213,13 @@ def throughput(db, minutes: int = 60) -> dict:
     cutoff = int(time.time()) - minutes * 60
     screens = 0
     sessions = 0
-    rows = _rows(db, __import__("main").ScreeningReport, 5000)
+    report_cls, session_cls, _ = _get_main_models()
+    rows = _rows(db, report_cls, 5000)
     for r in rows:
         ts = utc_to_epoch(r.created_at)
         if ts is not None and ts >= cutoff:
             screens += 1
-    srows = _rows(db, __import__("main").ScreeningSession, 2000)
+    srows = _rows(db, session_cls, 2000)
     for s in srows:
         ts = utc_to_epoch(s.closed_at or s.updated_at)
         if ts is not None and ts >= cutoff:

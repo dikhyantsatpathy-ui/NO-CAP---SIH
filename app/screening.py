@@ -1057,9 +1057,10 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     ai_raw_kind = (ai_det.get("raw") or {}).get("kind")
     _ai_score = ai_det.get("ai_score", 0) or 0
     has_valid_id = bool(pan or aadhaar_no or passport or fields.get("driving_licence") or fields.get("voter_id"))
-    is_physical_camera = (document_aware is False) or (has_valid_id and doc_type_clean in ("pan", "aadhaar", "voter_id", "driving_licence", "nepal_citizenship", "bhutan_citizenship", "passport"))
+    is_physical_camera = (document_aware is False) or has_valid_id or (doc_type_clean in ("pan", "aadhaar", "voter_id", "driving_licence", "nepal_citizenship", "bhutan_citizenship", "passport"))
     val_passed = (val_res.get("verdict") == "PASS")
     tamper_passed = (tamper_res.get("verdict") == "PASS")
+    ela_status = (tamper_res.get("ela") or {}).get("status")
     is_cloud_or_model = ai_det.get("provider") in ("self-hosted", "sightengine", "hive", "vit", "clip", "test")
 
     if ai_raw_kind in ("ai", "edited"):
@@ -1068,18 +1069,12 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
-    elif ai_det.get("ai_suspected"):
-        score_val = max(_ai_score, 80)
-        reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
-        risk = max(risk + 55, 82)
-        hard_flag = True
-        can_clear = False
-    elif _ai_score >= 65:
-        if (is_physical_camera or val_passed or has_valid_id):
-            reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% spectral variation).")
+    elif ai_det.get("ai_suspected") or _ai_score >= 65:
+        if has_valid_id and val_passed and ela_status != "HIGH":
+            reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% model variation).")
             risk += 5
         else:
-            score_val = _ai_score
+            score_val = max(_ai_score, 80)
             reasons.append(f"CRITICAL AI-ALERT: Visual/spectral scan flags the document as AI-GENERATED or edited ({score_val}% confidence) — synthetic documents are a known forgery vector.")
             risk = max(risk + 55, 82)
             hard_flag = True

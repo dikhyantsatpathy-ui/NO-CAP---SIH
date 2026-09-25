@@ -2125,14 +2125,19 @@ async def _neon_keepalive_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    asyncio.create_task(run_in_threadpool(_ensure_db_initialized))
-    keepalive_task = asyncio.create_task(_neon_keepalive_loop())
-    yield
-    keepalive_task.cancel()
-    try:
-        await keepalive_task
-    except asyncio.CancelledError:
-        pass
+    if os.getenv("VERCEL") != "1" and not _IS_SQLITE:
+        asyncio.create_task(run_in_threadpool(_ensure_db_initialized))
+        keepalive_task = asyncio.create_task(_neon_keepalive_loop())
+        try:
+            yield
+        finally:
+            keepalive_task.cancel()
+            try:
+                await keepalive_task
+            except asyncio.CancelledError:
+                pass
+    else:
+        yield
 
 app = FastAPI(title="No Cap · Enterprise Provenance Engine", version="12.0",
               max_body_size=50 * 1024 * 1024, lifespan=lifespan)
@@ -2850,16 +2855,18 @@ def close_session(session_id: str, request: Request,
                 detail="Security Watchlist match detected on traveller identifier. Protocol mandates escalating this session to a supervisor; standard officer approval is forbidden."
             )
 
-        # Cross-document discrepancy: normal officers have the authority to verify and approve
-        override_note = (note or "").strip()
+        # Cross-document discrepancy: fail closed — a lane officer cannot approve
+        # a session whose documents disagree. It must be flagged for supervisory
+        # review and settled via /adjudicate by an authorised supervisor.
         if comparison.get("verdict") == "DISCREPANCY":
-            override_tag = "[OFFICER OVERRIDE: Cross-document details clash verified & approved]"
-            if override_tag not in override_note:
-                override_note = f"{override_note} {override_tag}".strip()
+            raise HTTPException(
+                status_code=409,
+                detail="Cross-document discrepancy detected — flag this session for review instead of approving.",
+            )
 
         s.status = "approved"
         s.verdict = "CLEAR"
-        _settle_session(db, s, rows, comparison, "approve", note=override_note)
+        _settle_session(db, s, rows, comparison, "approve", note=note)
         pub = _session_pub(s, len(docs))
         pub["documents"] = docs
         pub["comparison"] = comparison

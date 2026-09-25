@@ -163,6 +163,13 @@ def ocr_extract(data: bytes, doc_type: str = ""):
                                     all_seen.add(ln)
                                     accumulated_lines.append(ln)
 
+                            # Early exit: If we matched a valid identity identifier,
+                            # avoid wasting 25s on redundant rotations/variants.
+                            if any(ids.values()) and len(pass_lines) >= 2:
+                                break
+                    if any(ids.values()) and len(best_pass_lines) >= 2:
+                        break
+
                 # Prioritize best rotation lines in reading order, then append any other distinct lines
                 final_lines = list(best_pass_lines)
                 for ln in accumulated_lines:

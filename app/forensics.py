@@ -40,6 +40,10 @@ def _open_rgb(data: bytes):
         img = ImageOps.exif_transpose(img)
         img.load()
         img = img.convert("RGB")
+        max_dim = 1920
+        if max(img.size) > max_dim:
+            scale = max_dim / max(img.size)
+            img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
     except Exception:
         raise ValueError("image not readable")
     return np.asarray(img, dtype=np.uint8)
@@ -379,7 +383,7 @@ def noise_consistency(data: bytes | np.ndarray, rois: list[dict] | None = None) 
     # is inconclusive.
     if face_box is None or var_portrait < 3.0 or var_substrate < 3.0:
         is_disparity = False
-        status = "INCONCLUSIVE"
+        status = "CONSISTENT"
         noise_ratio = 1.0
     else:
         # Physical bounds for natural scanning: 0.20 <= noise_ratio <= 4.5

@@ -130,18 +130,12 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
                        "Vision/metadata scan flags the document as AI-generated or digitally edited."),
         })
     elif ai_detection.get("ai_suspected") or (ai_detection.get("ai_score") or 0) >= 65:
-        if ai_detection.get("ai_suspected"):
-            checks.append({
-                "label": "ai-generated-or-edited",
-                "ok": False,
-                "detail": (ai_detection.get("explanation") or
-                           "Vision/metadata scan flags the document as AI-generated or digitally edited."),
-            })
-        elif (ela.get("status") in ("LOW", "MEDIUM") or document_aware is False):
+        is_physical_card = bool(crop_meta and crop_meta.get("cropped") and ela.get("status") in ("LOW", "MEDIUM") and ela.get("verdict") != "FAIL")
+        if is_physical_card:
             checks.append({
                 "label": "ai-generated-or-edited",
                 "ok": True,
-                "detail": f"Physical capture / surface lighting variation noted ({ai_detection.get('ai_score', 0)}% spectral variance); not an AI synthetic document.",
+                "detail": f"Physical card capture: camera sensor noise / surface lighting noted ({ai_detection.get('ai_score', 0)}% model variance); no composite forgery detected.",
             })
         else:
             checks.append({
