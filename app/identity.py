@@ -123,6 +123,14 @@ def ocr_extract(data: bytes, doc_type: str = ""):
                 all_seen = set()
                 accumulated_lines = []
 
+                _DOC_ANCHORS = (
+                    "PASSPORT", "REPUBLIC", "INDIA", "NEPAL", "BHUTAN", "GOVERNMENT",
+                    "MINISTRY", "INCOME TAX", "DEPARTMENT", "ELECTION COMMISSION",
+                    "DRIVING", "LICENCE", "LICENSE", "AADHAAR", "IDENTITY", "CARD",
+                    "ACCOUNT NUMBER", "PERMANENT", "UNION OF INDIA", "FATHER", "NAME",
+                    "DOB", "DATE OF BIRTH", "EXPIRY", "PLACE OF ISSUE", "AUTHORITY",
+                )
+
                 for rot_angle in (0, 90, 180, 270):
                     if rot_angle == 0:
                         cur_bgr = bgr
@@ -133,25 +141,29 @@ def ocr_extract(data: bytes, doc_type: str = ""):
                     else:
                         cur_bgr = cv2.rotate(bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
-                    for var in _get_variants(cur_bgr):
+                    variants = _get_variants(cur_bgr)
+                    for var_idx, var in enumerate(variants):
                         res, _ = rapid(var)
                         if res:
-                            # Sort bounding boxes top-to-bottom, left-to-right
                             try:
                                 sorted_res = sorted(res, key=lambda item: (item[0][0][1], item[0][0][0]))
                             except Exception:
                                 sorted_res = res
                             pass_lines = [r[1].strip() for r in sorted_res if len(r) >= 2 and r[1] and r[1].strip()]
                             pass_text = "\n".join(pass_lines)
-                            
-                            # Score rotation pass quality
+
                             pass_score = len(pass_lines)
+                            has_id = False
                             try:
                                 ids = _match_identifiers(pass_text)
                                 if any(ids.values()):
+                                    has_id = True
                                     pass_score += 50 * sum(1 for v in ids.values() if v)
                             except Exception:
                                 pass
+
+                            has_mrz_line = any("<" in ln and len(ln) >= 15 for ln in pass_lines)
+                            has_anchors = any(anchor in pass_text.upper() for anchor in _DOC_ANCHORS)
 
                             if pass_score > best_pass_score:
                                 best_pass_score = pass_score
@@ -163,11 +175,20 @@ def ocr_extract(data: bytes, doc_type: str = ""):
                                     all_seen.add(ln)
                                     accumulated_lines.append(ln)
 
-                            # Early exit: If we matched a valid identity identifier,
-                            # avoid wasting 25s on redundant rotations/variants.
-                            if any(ids.values()) and len(pass_lines) >= 2:
+                            # Early exit on this rotation variant if good text extracted
+                            if has_id or (len(pass_lines) >= 6 and (has_anchors or has_mrz_line)):
                                 break
-                    if any(ids.values()) and len(best_pass_lines) >= 2:
+
+                    # If rotation 0 already has an identifier, or strong document anchors + sufficient lines,
+                    # or an MRZ line, the document is definitively upright — stop checking other rotations.
+                    if rot_angle == 0:
+                        best_text = "\n".join(best_pass_lines)
+                        ids_0 = _match_identifiers(best_text) if best_text else {}
+                        mrz_0 = any("<" in ln and len(ln) >= 15 for ln in best_pass_lines)
+                        anchors_0 = sum(1 for anchor in _DOC_ANCHORS if anchor in best_text.upper())
+                        if any(ids_0.values()) or mrz_0 or (anchors_0 >= 2 and len(best_pass_lines) >= 6) or len(best_pass_lines) >= 15:
+                            break
+                    elif any(ids.values()) and len(best_pass_lines) >= 2:
                         break
 
                 # Prioritize best rotation lines in reading order, then append any other distinct lines

@@ -35,7 +35,12 @@ def _open_rgb(data: bytes) -> np.ndarray | None:
         img = Image.open(io.BytesIO(data))
         img = ImageOps.exif_transpose(img)
         img.load()
-        return np.asarray(img.convert("RGB"), dtype=np.uint8)
+        img = img.convert("RGB")
+        max_dim = 1280
+        if max(img.size) > max_dim:
+            scale = max_dim / max(img.size)
+            img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.BILINEAR)
+        return np.asarray(img, dtype=np.uint8)
     except Exception:
         return None
 

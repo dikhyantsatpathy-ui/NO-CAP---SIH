@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - SDK intentionally optional
     _OpenAI = None  # type: ignore[assignment,misc]
 
 _client = None
+_GEMINI_CIRCUIT_BROKEN_UNTIL = 0.0
 
 def get_client():
     """Return the cached LiteLLM/OpenAI-compatible client, or None when the
@@ -110,11 +111,13 @@ def extract_document_data(image_bytes: bytes, doc_type: str = "") -> dict:
         except Exception as e:
             pass
 
+    global _GEMINI_CIRCUIT_BROKEN_UNTIL
     gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or "").strip()
-    if gemini_key:
+    import time
+    if gemini_key and time.monotonic() >= _GEMINI_CIRCUIT_BROKEN_UNTIL:
         try:
             import requests
-            for model in ("gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"):
+            for model in ("gemini-2.5-flash", "gemini-1.5-flash"):
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
                 body = {
                     "contents": [{
@@ -129,7 +132,7 @@ def extract_document_data(image_bytes: bytes, doc_type: str = "") -> dict:
                         "maxOutputTokens": 1024
                     }
                 }
-                resp = requests.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=12.0)
+                resp = requests.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=2.5)
                 if resp.status_code == 200:
                     payload = resp.json()
                     parts = (payload.get("candidates") or [{}])[0].get("content", {}).get("parts") or []
@@ -137,7 +140,12 @@ def extract_document_data(image_bytes: bytes, doc_type: str = "") -> dict:
                     if txt:
                         parsed = json.loads(txt)
                         return {"ran": True, "fields": parsed, "model": model}
+                elif resp.status_code in (400, 401, 403, 404):
+                    # Invalid key or unsupported model: trip circuit breaker for 300s to avoid stall
+                    _GEMINI_CIRCUIT_BROKEN_UNTIL = time.monotonic() + 300.0
+                    break
         except Exception as exc:
+            _GEMINI_CIRCUIT_BROKEN_UNTIL = time.monotonic() + 300.0
             return {"ran": False, "reason": str(exc)}
 
     return {"ran": False, "reason": "No multimodal LLM backend configured"}

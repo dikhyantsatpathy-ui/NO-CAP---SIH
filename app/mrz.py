@@ -58,14 +58,16 @@ def _clean_mrz_lines(raw_text: str) -> list[str]:
     """Extract and sanitize MRZ lines from raw OCR or pasted text.
 
     Filters for lines containing predominantly uppercase letters, digits, and '<'.
-    Minimum 30 characters matches the ICAO TD1 format (shortest standardised MRZ:
-    3 lines × 30 chars). Values shorter than this are OCR noise fragments that would
-    poison the TD3 parser.
+    Minimum 28 characters matches the ICAO TD1 format (shortest standardised MRZ:
+    3 lines × 30 chars).
+    Crucially, an authentic MRZ line per ICAO Doc 9303 Part 3 ALWAYS utilizes '<'
+    filler characters (for blank positions and name separations). Any line with
+    zero '<' characters is ordinary English/document text, not an MRZ line.
     """
     lines = []
     for line in (raw_text or "").splitlines():
         cleaned = re.sub(r"[^A-Z0-9<]", "", line.upper().strip())
-        if len(cleaned) >= 30:
+        if len(cleaned) >= 28 and cleaned.count("<") >= 1:
             lines.append(cleaned)
     return lines
 
@@ -415,10 +417,18 @@ def parse_mrz(raw_text: str) -> dict[str, Any]:
         res = parse_td3(lines[-2], lines[-1])
         if res.get("valid"):
             return res
-        return parse_td2(lines[-2], lines[-1])
+        res2 = parse_td2(lines[-2], lines[-1])
+        if res2.get("valid"):
+            return res2
+        if lines[-2].count("<") >= 2 and lines[-1].count("<") >= 2:
+            return res
+        return {"valid": False, "error": "Candidate lines lack MRZ format"}
 
     # Single-line MRZ fallback (e.g. TD3 Line 2 alone)
     if len(lines) == 1 and len(lines[0]) >= 26:
-        return parse_td3_line2(lines[0])
+        res = parse_td3_line2(lines[0])
+        if res.get("valid") or lines[0].count("<") >= 3:
+            return res
+        return {"valid": False, "error": "Single line lacks valid check digits or MRZ filler"}
 
     return {"valid": False, "error": f"Incomplete MRZ lines ({len(lines)} line(s) found)."}

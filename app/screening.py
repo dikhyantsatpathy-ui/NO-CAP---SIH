@@ -238,6 +238,40 @@ def _find_dl_robust(source: str) -> str | None:
     return None
 
 
+def _find_passport_robust(source: str) -> str | None:
+    """Extract passport number: from MRZ blocks, labeled passport numbers, or standard series."""
+    try:
+        from app.mrz import parse_mrz
+    except ImportError:
+        try:
+            from mrz import parse_mrz
+        except ImportError:
+            parse_mrz = None
+    if parse_mrz is not None:
+        try:
+            mrz_res = parse_mrz(source)
+            if mrz_res and mrz_res.get("passport_number"):
+                pno = mrz_res["passport_number"].strip("<").strip()
+                if len(pno) >= 6:
+                    return pno
+        except Exception:
+            pass
+
+    m_label = re.search(r"(?:PASSPORT\s*(?:NO|NUMBER|#)?|DOC\s*(?:NO|NUMBER))\s*[:\.\s\-]*([A-Z0-9]{7,9})\b", source, re.IGNORECASE)
+    if m_label:
+        cand = m_label.group(1).upper()
+        if not cand.isdigit() and any(c.isdigit() for c in cand):
+            return cand
+
+    m_ind = re.search(r"\b([A-PR-WYa-pr-wy][0-9]{7}|[A-PR-WYa-pr-wy][0-9]{6}[A-Za-z])\b", source)
+    if m_ind:
+        return m_ind.group(1).upper()
+
+    for cand in set(_PASSPORT_LITE_RE.findall(source)):
+        return cand.upper()
+    return None
+
+
 def _match_identifiers(source: str) -> dict:
     """Run the identifier regexes over one text variant; first valid wins."""
     hits = {}
@@ -247,9 +281,9 @@ def _match_identifiers(source: str) -> dict:
     dl = _find_dl_robust(source)
     if dl:
         hits["driving_licence"] = dl
-    for cand in set(_PASSPORT_LITE_RE.findall(source)):
-        hits["passport"] = cand     # demoted to a review signal if MRZ missing
-        break
+    p_no = _find_passport_robust(source)
+    if p_no:
+        hits["passport"] = p_no
     for cand in set(_EPIC_RE.findall(source)):
         hits["voter_id"] = re.sub(r"\s+", "", cand).upper()  # EPIC: 3 letters + 7 digits
         break
@@ -932,7 +966,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         try:
             exp_date_obj = _date(int(_exp[0]), int(_exp[1]), int(_exp[2]))
             if exp_date_obj < _date.today():
-                reasons.append(f"CRITICAL EXPIRED DOCUMENT: Document expired on {expiry} (in the PAST) — document is invalid for travel or entry.")
+                reasons.append(f"CRITICAL EXPIRED DOCUMENT: Document expired on {exp_date_obj.isoformat()} (in the PAST) — document is invalid for travel or entry.")
                 risk = max(risk + 45, 80)
                 hard_flag = True
                 can_clear = False
@@ -1070,7 +1104,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         hard_flag = True
         can_clear = False
     elif ai_det.get("ai_suspected") or _ai_score >= 65:
-        if has_valid_id and val_passed and ela_status != "HIGH":
+        if has_valid_id and ela_status != "HIGH":
             reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% model variation).")
             risk += 5
         else:

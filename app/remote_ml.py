@@ -30,17 +30,21 @@ def mark_remote_failed():
     logger.warning("[remote_ml] Remote ML call failed or timed out. Circuit breaker active for 300s (using local models).")
 
 
-def mark_remote_success():
+def mark_remote_success(latency_sec: float = 0.0):
     global _CIRCUIT_BROKEN_UNTIL
-    _CIRCUIT_BROKEN_UNTIL = 0.0
+    if latency_sec > 2.0:
+        _CIRCUIT_BROKEN_UNTIL = time.monotonic() + 180.0
+        logger.warning(f"[remote_ml] Remote ML call exceeded latency budget ({latency_sec:.2f}s). Circuit breaker active for 180s.")
+    else:
+        _CIRCUIT_BROKEN_UNTIL = 0.0
 
 
 def get_timeout() -> float:
-    """Max network budget per call (default 2.0s)."""
+    """Max network budget per call (default 1.5s for snappy desk response)."""
     try:
-        return float(os.getenv("ML_SERVICE_TIMEOUT", "2.0"))
+        return float(os.getenv("ML_SERVICE_TIMEOUT", "1.5"))
     except Exception:
-        return 2.0
+        return 1.5
 
 
 def prepare_payload(image_bytes: bytes, max_dim: int = 800) -> bytes:
