@@ -21,19 +21,27 @@ export function StaffView() {
   const isSuper = !!me?.is_super_admin;
   const [signers, setSigners] = useState<OfficerEntry[]>(() => portalCache.signers || []);
   const [loading, setLoading] = useState(() => !portalCache.signers);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [email, setEmail] = useState("");
   const [designation, setDesignation] = useState("");
   const [institution, setInstitution] = useState("");
   const [expandedEmail, setExpandedEmail] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (isManual = false) => {
+    if (isManual) setRefreshing(true);
     const res = await getSigners();
     if (res.ok) {
       portalCache.signers = res.data.signers;
       setSigners(res.data.signers);
+      setErrorMsg(null);
+    } else {
+      console.warn("Failed to load signers roster:", res.error);
+      setErrorMsg(res.error);
     }
     setLoading(false);
+    if (isManual) setRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -185,10 +193,42 @@ export function StaffView() {
       </section>
 
       <section className="panel">
-        <h2 className="panel__title">Officer roster ({signers.length} · {pending.length} pending)</h2>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div>
+            <h2 className="panel__title" style={{ margin: 0 }}>
+              Officer roster ({signers.length} · {pending.length} pending)
+            </h2>
+            <p className="panel__body" style={{ margin: "2px 0 0 0", fontSize: 13, color: "var(--text-sub)" }}>
+              Live directory from Neon database. Auto-syncs in background.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn--small btn--ghost"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            disabled={loading || refreshing}
+            onClick={() => void load(true)}
+            title="Fetch latest roster directly from Neon DB"
+          >
+            <span>{refreshing ? "↻ Refreshing…" : "↻ Refresh Roster"}</span>
+          </button>
+        </div>
 
-        {loading ? (
-          <p className="hint">Loading roster…</p>
+        {errorMsg && (
+          <div className="alert alert--warn" style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>⚠️ Could not update roster ({errorMsg}). Showing last known record.</span>
+            <button
+              type="button"
+              className="btn btn--small btn--primary"
+              onClick={() => void load(true)}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {loading && signers.length === 0 ? (
+          <p className="hint">Loading live roster from database…</p>
         ) : (
           <>
             {pending.length > 0 && (
@@ -360,7 +400,19 @@ export function StaffView() {
               </>
             )}
 
-            {signers.length === 0 && <p className="hint">No registered identities yet.</p>}
+            {signers.length === 0 && (
+              <div style={{ textAlign: "center", padding: "16px 0" }}>
+                <p className="hint">No registered identities found in database.</p>
+                <button
+                  type="button"
+                  className="btn btn--small btn--primary"
+                  style={{ marginTop: 8 }}
+                  onClick={() => void load(true)}
+                >
+                  ↻ Query Neon Database
+                </button>
+              </div>
+            )}
           </>
         )}
       </section>

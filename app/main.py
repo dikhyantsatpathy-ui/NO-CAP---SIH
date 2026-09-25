@@ -1017,7 +1017,7 @@ if not _IS_SQLITE:
         if psycopg2 is None:
             raise RuntimeError("psycopg2 driver is not installed")
         conn_kw = dict(kw)
-        conn_kw.setdefault("connect_timeout", 4)
+        conn_kw.setdefault("connect_timeout", 15)
         if _NEON_ENDPOINT and "options" not in conn_kw:
             if not (_parsed_db and _parsed_db.query and "options=" in _parsed_db.query):
                 conn_kw["options"] = f"endpoint={_NEON_ENDPOINT}"
@@ -1055,7 +1055,7 @@ if not _IS_SQLITE:
             pool_size=2,
             max_overflow=4,
             pool_recycle=290,
-            pool_timeout=5,
+            pool_timeout=15,
             connect_args={"application_name": "nocap"},
         )
     except Exception as pg_init_err:
@@ -1512,7 +1512,7 @@ _PRIMARY_LAST_ERROR = None
 def get_db():
     _ensure_db_initialized()
     global _PRIMARY_LAST_FAILED, _PRIMARY_LAST_ERROR
-    use_fallback = (_IS_SQLITE is False) and (time.monotonic() - _PRIMARY_LAST_FAILED < 30.0)
+    use_fallback = (_IS_SQLITE is False) and (time.monotonic() - _PRIMARY_LAST_FAILED < 4.0)
     db = None
 
     if not use_fallback:
@@ -2428,7 +2428,7 @@ def assign_role(request: Request, target_email: str = Form(...), designation: st
     return {"status": "ROLE_ASSIGNED", "email": target, "designation": desig, "institution": inst}
 
 @app.post("/api/admin/revoke_officer")
-@limiter.limit("20/minute")
+@limiter.limit("300/minute")
 def revoke_officer(request: Request, target_email: str = Form(...), admin: str = Depends(get_current_admin)):
     """Super-admin only: Revoke an officer's screening and signing clearance."""
     if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
@@ -2444,7 +2444,7 @@ def revoke_officer(request: Request, target_email: str = Form(...), admin: str =
     return {"status": "OFFICER_REVOKED", "email": target, "revoked_at": identity.revoked_at}
 
 @app.post("/api/admin/unrevoke_officer")
-@limiter.limit("20/minute")
+@limiter.limit("300/minute")
 def unrevoke_officer(request: Request, target_email: str = Form(...), admin: str = Depends(get_current_admin)):
     """Super-admin only: Restore a revoked officer back to active status."""
     if not is_super_admin(admin): raise HTTPException(403, "Super-admin clearance required.")
@@ -2459,7 +2459,7 @@ def unrevoke_officer(request: Request, target_email: str = Form(...), admin: str
     return {"status": "OFFICER_UNREVOKED", "email": target}
 
 @app.post("/api/admin/remove_officer")
-@limiter.limit("20/minute")
+@limiter.limit("300/minute")
 def remove_officer(request: Request, target_email: str = Form(...), admin: str = Depends(get_current_admin)):
     """Super-admin only: Completely remove an officer (active, revoked, or unassigned/pending)
     from the database. Their record is purged so they can be re-registered or re-added fresh later."""
@@ -2475,7 +2475,7 @@ def remove_officer(request: Request, target_email: str = Form(...), admin: str =
     return {"status": "OFFICER_REMOVED", "email": target}
 
 @app.get("/api/admin/signers")
-@limiter.limit("60/minute")
+@limiter.limit("300/minute")
 def list_signers(request: Request, admin: str = Depends(get_current_admin)):
     """Officer directory: accessible by authenticated personnel for roster visibility."""
     with get_db() as db:
