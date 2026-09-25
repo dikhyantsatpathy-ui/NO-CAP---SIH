@@ -2145,6 +2145,14 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"[unhandled_exception] {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": sanitize_secret_text(str(exc)) or "An internal error occurred", "path": request.url.path},
+    )
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -2202,7 +2210,7 @@ def health_check():
         "ml_service": {
             "configured": bool(os.getenv("ML_SERVICE_URL")),
         },
-        "version": "2.1.0",
+        "version": "2.1.1",
         "timestamp": now_utc(),
     }
 
@@ -3026,11 +3034,49 @@ def guide_endpoint(request: Request, checkpoint: str = "", doc_type: str = "othe
 @limiter.limit("60/minute")
 def stats_overview(request: Request, admin: str = Depends(get_current_admin_or_evaluator)):
     """Border-wide screening statistics (privacy-preserving: only masked rows)."""
-    with get_db() as db:
+    try:
+        with get_db() as db:
+            return {
+                "reports": report_stats(db),
+                "sessions": session_stats(db),
+                "throughput": throughput(db, minutes=60),
+            }
+    except Exception as exc:
+        logger.error(f"[stats_overview] Error computing stats overview: {exc}", exc_info=True)
+        now_str = now_utc()
         return {
-            "reports": report_stats(db),
-            "sessions": session_stats(db),
-            "throughput": throughput(db, minutes=60),
+            "reports": {
+                "generated_at_utc": now_str,
+                "generated_at_ist": to_ist(now_str),
+                "total_screens": 0,
+                "verdicts": {},
+                "risk_buckets": {},
+                "by_doc_type": {},
+                "by_checkpoint": {},
+                "by_officer": {},
+                "modules": {"validation": {}, "tampering": {}, "face": {}, "extraction": {}},
+                "ai_detector": {"ran": 0, "suspected": 0, "score_sum": 0.0, "suspicion_rate": 0.0},
+                "latency_ms": {"min": None, "max": 0, "sum": 0, "avg": None, "p50": None, "p95": None},
+                "hourly_ist": {h: 0 for h in range(24)},
+                "daily": {},
+                "flagged_count": 0,
+            },
+            "sessions": {
+                "total_sessions": 0,
+                "by_status": {},
+                "by_verdict": {},
+                "by_checkpoint": {},
+                "cleared": 0,
+                "flagged": 0,
+                "avg_session_risk": 0.0,
+            },
+            "throughput": {
+                "window_minutes": 60,
+                "screens": 0,
+                "sessions_closed": 0,
+                "screenings_count": 0,
+                "per_minute": 0.0,
+            },
         }
 
 
