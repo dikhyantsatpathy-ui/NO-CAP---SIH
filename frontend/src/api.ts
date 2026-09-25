@@ -38,6 +38,12 @@ async function request<T>(url: string, init?: RequestInit, timeoutMs = 45000): P
   try {
     const response = await fetch(url, {
       ...init,
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        ...(init?.headers || {}),
+      },
       credentials: "include",
       signal: init?.signal || controller.signal,
     });

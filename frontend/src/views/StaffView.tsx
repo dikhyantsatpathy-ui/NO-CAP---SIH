@@ -38,6 +38,13 @@ export function StaffView() {
 
   useEffect(() => {
     void load();
+    const handleFocus = () => void load();
+    window.addEventListener("focus", handleFocus);
+    const timer = setInterval(() => void load(), 4000);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      clearInterval(timer);
+    };
   }, [load]);
 
   const assign = async () => {
@@ -53,6 +60,7 @@ export function StaffView() {
       setEmail("");
       setDesignation("");
       setInstitution("");
+      portalCache.signers = null;
       await load();
     } else {
       toast(res.error, "error");
@@ -61,6 +69,11 @@ export function StaffView() {
 
   const handleRevoke = async (targetEmail: string) => {
     if (!window.confirm(`Revoke officer clearance for ${targetEmail}? They will no longer be permitted to screen or sign documents.`)) return;
+    // Optimistic instant UI update
+    setSigners((prev) =>
+      prev.map((s) => (s.email === targetEmail ? { ...s, is_revoked: true, revoked_at: "Just now" } : s))
+    );
+    portalCache.signers = null;
     setBusy(true);
     const res = await revokeOfficer(targetEmail);
     setBusy(false);
@@ -69,10 +82,16 @@ export function StaffView() {
       await load();
     } else {
       toast(res.error, "error");
+      await load();
     }
   };
 
   const handleUnrevoke = async (targetEmail: string) => {
+    // Optimistic instant UI update
+    setSigners((prev) =>
+      prev.map((s) => (s.email === targetEmail ? { ...s, is_revoked: false, revoked_at: null } : s))
+    );
+    portalCache.signers = null;
     setBusy(true);
     const res = await unrevokeOfficer(targetEmail);
     setBusy(false);
@@ -81,11 +100,15 @@ export function StaffView() {
       await load();
     } else {
       toast(res.error, "error");
+      await load();
     }
   };
 
   const handleRemove = async (targetEmail: string) => {
     if (!window.confirm(`Completely remove officer ${targetEmail} from the system? Their identity and revocation history will be purged, allowing them to be re-added fresh if needed.`)) return;
+    // Optimistic instant UI update
+    setSigners((prev) => prev.filter((s) => s.email !== targetEmail));
+    portalCache.signers = null;
     setBusy(true);
     const res = await removeOfficer(targetEmail);
     setBusy(false);
@@ -94,6 +117,7 @@ export function StaffView() {
       await load();
     } else {
       toast(res.error, "error");
+      await load();
     }
   };
 

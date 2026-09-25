@@ -214,43 +214,6 @@ export function useMlKeepAlive() {
   return { hfKeepAlive, mlLatency, isWaking, toggleKeepAlive };
 }
 
-export function FloatingKeepAliveTrigger() {
-  const { hfKeepAlive, mlLatency, isWaking, toggleKeepAlive } = useMlKeepAlive();
-
-  return (
-    <button
-      type="button"
-      className={`floating-keepalive-pill ${
-        isWaking
-          ? "floating-keepalive-pill--waking"
-          : hfKeepAlive
-          ? "floating-keepalive-pill--on"
-          : ""
-      }`}
-      onClick={() => void toggleKeepAlive()}
-      title="Hugging Face Keep-Alive: prevents external AI models from going to sleep or getting rate limited"
-    >
-      <span
-        className={`dot ${
-          isWaking
-            ? "dot--waking"
-            : hfKeepAlive
-            ? "dot--pulse"
-            : "dot--idle"
-        }`}
-      />
-      <span>
-        {isWaking
-          ? "Waking ML Space…"
-          : hfKeepAlive
-          ? mlLatency
-            ? `⚡ ML Warm (${mlLatency}ms)`
-            : "⚡ HF Keep-Alive: ON"
-          : "💤 HF Keep-Alive: OFF"}
-      </span>
-    </button>
-  );
-}
 
 function CommandStatusStrip() {
   const { signOut } = useAuth();
@@ -394,7 +357,6 @@ export function App() {
         <SuperHeader />
         <TriColorRule />
         <SignInGate />
-        <FloatingKeepAliveTrigger />
         <FloatingChatTrigger onClick={() => setChatOpen(true)} />
         <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       </div>
@@ -443,7 +405,6 @@ export function App() {
         <span className="gov-footer__pipe">|</span>
         <span>🛡️ ZERO-RAW-STORAGE PRIVACY</span>
       </footer>
-      <FloatingKeepAliveTrigger />
       <FloatingChatTrigger onClick={() => setChatOpen(true)} />
       <ChatModal isOpen={chatOpen} onClose={() => setChatOpen(false)} />
     </div>
