@@ -28,6 +28,7 @@ tmp/
 *.db
 *.zip
 _srv*.log
+chat_transcripts/
 
 # ---- Data & Training corpora (local GPU runs, datasets, fallback sqlite) ----
 data/
