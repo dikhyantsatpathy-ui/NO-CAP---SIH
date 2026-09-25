@@ -2648,6 +2648,7 @@ async def screen_document(
                     raise HTTPException(403, "ACCESS DENIED.")
                 if not (identity.institution or "").strip() or not (identity.designation or "").strip():
                     raise HTTPException(403, "Role pending: a super admin must approve your post & institution before screening.")
+            sess = None
             if session_owner:
                 sess = db.query(ScreeningSession).filter_by(id=session_owner).first()
                 if not sess:
