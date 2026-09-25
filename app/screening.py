@@ -206,8 +206,11 @@ def _find_pan_robust(source: str) -> str | None:
             l1 = letter_map.get(cand[9], cand[9]) if not cand[9].isalpha() else cand[9]
             if f5[3] == "R":
                 f5 = f5[:3] + "P" + f5[4:]
+            bad_pan_prefixes = {"BIRTH", "INDIA", "VALID", "STATE", "UNION", "ISSUE", "TOTAL", "ORDER", "MONTH", "FIRST", "NORTH", "SOUTH", "UNDER"}
+            if f5 in bad_pan_prefixes:
+                continue
             if f5.isalpha() and m4.isdigit() and l1.isalpha():
-                if f5[3] in _PAN_CATEGORY or f5.isupper():
+                if f5[3] in _PAN_CATEGORY:
                     return f"{f5}{m4}{l1}"
     return None
 
@@ -386,6 +389,9 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
             found["voter_id"] = None
         elif doc_norm == "pan" and not any(v in text.upper() for v in ("ELECTION", "VOTER", "EPIC")):
             found["voter_id"] = None
+    if doc_norm in ("driving_licence", "driving_license", "dl", "rc") and found.get("pan"):
+        if not any(k in text.upper() for k in ("PERMANENT ACCOUNT", "PAN NO", "PAN NUMBER", "PAN:")):
+            found["pan"] = None
 
     # Extract state if present in text
     indian_states = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Delhi", "Jammu and Kashmir", "Ladakh"]
@@ -406,12 +412,23 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
     ]
     vowels = set("AEIOUYaeiouy")
 
+    # Pre-identify lines explicitly adjacent to holder name markers (Name / नाम / Holder)
+    name_indices = [idx for idx, l in enumerate(lines) if re.search(r"(?i)\b(?:Name|नाम|Holder)\b", l) and not any(k in l.upper() for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX", "CARD"))]
+    holder_cands = set()
+    for ni in name_indices:
+        for off in (1, -1, 2):
+            if 0 <= ni + off < len(lines):
+                c_up = re.sub(r"[^A-Za-z ]", " ", lines[ni + off]).strip().upper()
+                c_up = re.sub(r"\s+", " ", c_up)
+                if c_up and not any(bad in c_up for bad in ("INCOME", "TAX", "PERMANENT", "ACCOUNT", "CARD")):
+                    holder_cands.add(c_up)
+
     # Find father's name / guardian name if explicitly labeled
     father_cands = set()
     for i, ln in enumerate(lines):
         up = ln.upper()
         if any(k in up for k in ("FATHER", "पिता", "S/O", "D/O", "W/O", "C/O")) and not any(k in up for k in ("INCOME", "TAX", "CARD", "PERMANENT")):
-            for offset in (0, 1, 2):
+            for offset in (0, 1, 2, -1):
                 idx = i + offset
                 if 0 <= idx < len(lines):
                     cand_ln = lines[idx]
@@ -423,7 +440,8 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                     raw_c = re.sub(r"\s+", " ", raw_c)
                     if len(raw_c) >= 3 and not any(b in raw_c.upper() for b in ("FATHER", "NAME", "पिता", "SIGN", "VALID", "GOVT", "INCOME", "TAX")):
                         fmt_f = _format_glued_name(raw_c)
-                        father_cands.add(fmt_f.upper())
+                        if fmt_f.upper() not in holder_cands and raw_c.upper() not in holder_cands:
+                            father_cands.add(fmt_f.upper())
 
     # 1. Line immediately preceding S/O or D/O or W/O or C/O (e.g. Asutosh Nayak \n S/O ...)
     for i, ln in enumerate(lines):
@@ -463,7 +481,7 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                 if found.get("name"):
                     break
 
-    # 3. Label on same line or immediate next line below Name / नाम (with strict word boundaries)
+    # 3. Label on same line or immediate next/previous line around Name / नाम (with strict word boundaries)
     if not found.get("name"):
         for i, ln in enumerate(lines):
             up = ln.upper()
@@ -479,10 +497,10 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
                         found["name"] = fmt[:80]
                         break
 
-            # Next line check after Name / नाम
+            # Line check around Name / नाम (forward offset 1, 2 or previous line -1 for bottom-labeled/inverted layouts)
             if re.search(r"(?i)\b(?:NAME|नाम|HOLDER)\b", ln) and not any(k in up for k in ("FATHER", "पिता", "PERMANENT", "ACCOUNT", "INCOME", "TAX", "CARD")):
-                for offset in (1, 2):
-                    if i + offset < len(lines):
+                for offset in (1, 2, -1):
+                    if 0 <= i + offset < len(lines):
                         next_ln = lines[i + offset].strip()
                         next_up = next_ln.upper()
                         if not any(bad in next_up for bad in bad_roots) and len(next_ln) >= 3:
@@ -546,9 +564,12 @@ def extract_fields(text: str, doc_type: str = "") -> dict:
             # All caps on official document
             if raw_clean.isupper():
                 score += 10
+            # Bonus for candidate lines adjacent to Name markers
+            if fmt.upper() in holder_cands or raw_clean.upper() in holder_cands:
+                score += 50
             # Non-father preferred
-            if fmt.upper() in father_cands:
-                score -= 40
+            if fmt.upper() in father_cands or raw_clean.upper() in father_cands:
+                score -= 60
             scored_cands.append((score, fmt))
 
         scored_cands.sort(key=lambda x: x[0], reverse=True)
@@ -1096,20 +1117,35 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     ai_raw_kind = (ai_det.get("raw") or {}).get("kind")
     _ai_score = ai_det.get("ai_score", 0) or 0
     has_valid_id = bool(pan or aadhaar_no or passport or fields.get("driving_licence") or fields.get("voter_id"))
-    is_physical_camera = (document_aware is False) or has_valid_id or (doc_type_clean in ("pan", "aadhaar", "voter_id", "driving_licence", "nepal_citizenship", "bhutan_citizenship", "passport"))
     val_passed = (val_res.get("verdict") == "PASS")
+    is_physical_camera = (document_aware is False) or (has_valid_id and val_passed)
     tamper_passed = (tamper_res.get("verdict") == "PASS")
     ela_status = (tamper_res.get("ela") or {}).get("status")
     is_cloud_or_model = ai_det.get("provider") in ("self-hosted", "sightengine", "hive", "vit", "clip", "test")
 
-    if ai_raw_kind in ("ai", "edited"):
+    if ai_raw_kind == "pdf_utility":
+        tool_name = (ai_det.get("raw") or {}).get("match_tool") or "PDF utility"
+        reasons.append(f"Document processed with PDF utility ({tool_name}) — standard document handling.")
+    elif ai_raw_kind == "ai":
         score_val = max(_ai_score, 85)
-        reasons.append(f"CRITICAL AI-ALERT: Visual/metadata scan confirms AI-GENERATED or edited image ({score_val}% confidence) — synthetic documents are a known forgery vector.")
+        tool_name = (ai_det.get("raw") or {}).get("match_tool") or "AI generator"
+        reasons.append(f"CRITICAL AI-ALERT: Visual/metadata scan confirms AI-GENERATED image via {tool_name} ({score_val}% confidence) — synthetic documents are a known forgery vector.")
         risk = max(risk + 55, 82)
         hard_flag = True
         can_clear = False
+    elif ai_raw_kind == "edited":
+        tool_name = (ai_det.get("raw") or {}).get("match_tool") or "editor"
+        if has_valid_id and val_passed and ela_status != "HIGH":
+            reasons.append(f"Document software signature noted ({tool_name}) — legal identifier verified valid with low tampering risk.")
+            risk += 5
+        else:
+            score_val = max(_ai_score, 80)
+            reasons.append(f"CRITICAL TAMPER-ALERT: Metadata confirms image manipulation / editing tool signature via {tool_name} ({score_val}% confidence).")
+            risk = max(risk + 50, 80)
+            hard_flag = True
+            can_clear = False
     elif ai_det.get("ai_suspected") or _ai_score >= 65:
-        if has_valid_id and ela_status != "HIGH":
+        if (has_valid_id or (document_aware is False and _ai_score < 80)) and ela_status != "HIGH":
             reasons.append(f"Physical photo capture advisory: Surface background texture / optical glare noted ({_ai_score}% model variation).")
             risk += 5
         else:
@@ -1286,6 +1322,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "confidence": confidence,
         "masked_fields": {k: (mask(v) if isinstance(v, str) else v)
                           for k, v in fields.items()},
+        "raw_fields": extract_res.get("fields", {}),
         "field_hashes": _fh,
         "session_id": session_id,
         "watchlist_hits": hits,

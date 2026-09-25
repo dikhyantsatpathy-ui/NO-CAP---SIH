@@ -2471,37 +2471,80 @@ textarea::placeholder {
 }
 
 .doc-card .subtable-nav {
-  display: flex;
-  gap: 8px;
-  border-bottom: none;
-  padding-bottom: 0;
+  display: inline-flex;
+  gap: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 4px;
+  border-radius: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
 
 .doc-card .subtable-nav__btn {
-  background: rgba(255, 255, 255, 0.15) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3) !important;
-  color: #ffffff !important;
-  font-size: 12px !important;
-  font-weight: 700 !important;
-  padding: 6px 14px !important;
-  border-radius: 6px !important;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all 0.14s ease;
+  transition: all 0.15s ease;
 }
 
 .doc-card .subtable-nav__btn:hover {
-  background: rgba(255, 255, 255, 0.28) !important;
-  border-color: #93c5fd !important;
-  color: #ffffff !important;
+  background: var(--panel-2);
+  color: var(--ink);
+  border-color: var(--line);
 }
 
 .doc-card .subtable-nav__btn--active {
-  background: #ffffff !important;
-  color: #0b2240 !important;
-  border-color: #ffffff !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+  background: var(--panel) !important;
+  color: var(--seal) !important;
+  border-color: var(--line) !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08) !important;
+}
+
+[data-theme="dark"] .doc-card .subtable-nav {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .doc-card .subtable-nav__btn {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .doc-card .subtable-nav__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .doc-card .subtable-nav__btn--active {
+  background: #1e293b !important;
+  color: #38bdf8 !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+.doc-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.doc-card__foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .subtable-pane {

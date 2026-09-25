@@ -342,6 +342,12 @@ def heuristic_detect(image_bytes: bytes, filename: str = "") -> dict:
         is_ai = True  # Any photo-editing tool marker on an ID document flags it as synthetic/tampered
         leaning = "edited"
         reasons.append(desc)
+    elif kind == "pdf_utility":
+        # Normal electronic document utility (e.g. Acrobat/iLovePDF unlocked e-Aadhaar)
+        is_edited = False
+        is_ai = False
+        leaning = "pdf_utility"
+        reasons.append(desc)
 
     pixel_lean, pixel_reason, ran = _pixel_scan(image_bytes, ext)
     if ran and pixel_lean == "ai" and not is_ai:
@@ -737,6 +743,8 @@ def onnx_detect(image_bytes: bytes, filename: str = "") -> dict:
                 f"Document flagged as {'AI-GENERATED' if kind == 'ai' else 'DIGITALLY EDITED'} "
                 f"({score}% confidence). Signature detected: {tool}."
             )
+        elif kind == "pdf_utility":
+            explanation = f"Electronic document utility detected ({tool})."
         else:
             explanation = (
                 f"The on-device Vision Transformer classified this image as "
@@ -949,9 +957,7 @@ def clean_postgres_dsn(raw_url: str) -> str:
     if not url or "postgres" not in url:
         return url
     if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
-    elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
-        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        url = url.replace("postgres://", "postgresql://", 1)
     if url.count("?") > 1:
         first_q = url.find("?")
         base = url[:first_q]
@@ -1793,19 +1799,24 @@ _EDITING_SIGS = {
     "CapCut": "the media editor CapCut",
     "Adobe Photoshop Express": "the mobile editor Photoshop Express",
     "Photoshop Express": "the mobile editor Photoshop Express",
-    "ILovePDF": "the PDF editing utility iLovePDF",
-    "Sejda": "the PDF editor Sejda",
-    "PDFescape": "the online PDF editor PDFescape",
-    "Smallpdf": "the PDF editing service Smallpdf",
-    "PDF24": "the PDF editing tool PDF24",
-    "Foxit": "the PDF editor Foxit",
-    "Nitro Pro": "the PDF editor Nitro Pro",
-    "PDFelement": "the PDF editor Wondershare PDFelement",
-    "Acrobat": "the document editor Adobe Acrobat",
     "ReportLab": "the programmatic PDF generator ReportLab",
     "wkhtmltopdf": "the HTML-to-PDF synthetic document generator wkhtmltopdf",
     "puppeteer": "the automated browser generator Puppeteer",
     "playwright": "the automated browser generator Playwright",
+}
+
+# Standard PDF utilities & readers (not AI generators, not photo editors).
+# Citizens use these to download, view, sign, and unlock UIDAI e-Aadhaars and official PDFs.
+_PDF_UTILITY_SIGS = {
+    "ILovePDF": "the PDF utility iLovePDF",
+    "Sejda": "the PDF utility Sejda",
+    "PDFescape": "the PDF utility PDFescape",
+    "Smallpdf": "the PDF utility Smallpdf",
+    "PDF24": "the PDF utility PDF24",
+    "Foxit": "the PDF software Foxit",
+    "Nitro Pro": "the PDF software Nitro Pro",
+    "PDFelement": "the PDF software Wondershare PDFelement",
+    "Acrobat": "Adobe Acrobat",
 }
 
 # AI-generator / AI-upscaler signatures that self-tag generated media. This now
@@ -1901,6 +1912,7 @@ _AI_SIGS = {
 # Precomputed lowercase/sanitized lookup keys (no per-call regex/normalization).
 _AI_LOOKUP = {tool.lower().replace("-", " ").replace(".", " "): tool for tool in _AI_SIGS}
 _EDITING_LOOKUP = {tool.lower().replace("-", " ").replace(".", " "): tool for tool in _EDITING_SIGS}
+_PDF_UTILITY_LOOKUP = {tool.lower().replace("-", " ").replace(".", " "): tool for tool in _PDF_UTILITY_SIGS}
 
 
 def _match_tool(text: str) -> tuple:
@@ -1913,12 +1925,16 @@ def _match_tool(text: str) -> tuple:
     t = (text or "").lower().replace("-", " ").replace("_", " ").replace(".", " ")
     found_ai = [k for k in _AI_LOOKUP if k in t]
     found_edit = [k for k in _EDITING_LOOKUP if k in t]
+    found_pdf = [k for k in _PDF_UTILITY_LOOKUP if k in t]
     if found_ai:
         tool = _AI_LOOKUP[max(found_ai, key=len)]
         return ("ai", tool, f"Made by {_AI_SIGS[tool]}.", 0.95)
     if found_edit:
         tool = _EDITING_LOOKUP[max(found_edit, key=len)]
         return ("edited", tool, f"Edited in {_EDITING_SIGS[tool]}.", 0.85)
+    if found_pdf:
+        tool = _PDF_UTILITY_LOOKUP[max(found_pdf, key=len)]
+        return ("pdf_utility", tool, f"Electronic document formatted via {_PDF_UTILITY_SIGS[tool]}.", 0.5)
     return (None, None, None, None)
 
 
@@ -2666,13 +2682,15 @@ async def screen_document(
                         sess.purpose = purpose_txt
             # CPU-heavy screening runs OFF the event loop so concurrent requests
             # (queue polling, health checks, other desks) stay responsive.
+            effective_nat = nat or (sess.nationality if sess else None)
+            effective_purpose = purpose_txt or (sess.purpose if sess else None)
             try:
                 report = await run_in_threadpool(
                     run_screening, db, data, file.filename or "upload",
                     (doc_type or "other").strip(), (checkpoint or "").strip(),
                     declared_map, screener=admin, live_frame=live_bytes,
                     session_id=session_id.strip() or None,
-                    nationality=nat, purpose=purpose_txt,
+                    nationality=effective_nat, purpose=effective_purpose,
                     data_back=data_back, filename_back=filename_back,
                 )
             except Exception as exc:
@@ -2842,6 +2860,7 @@ def _session_docs(db, session_id, include_removed=False):
         base = _screen_row(r)
         base["field_hashes"] = _safe_json(getattr(r, "field_hashes", None)) or {}
         base["masked"] = _safe_json(r.extracted_fields) or {}
+        base["raw_fields"] = _safe_json(getattr(r, "ephemeral_raw_fields", None)) or {}
         base["removed_at"] = getattr(r, "removed_at", None)
         docs.append(base)
     return docs, rows

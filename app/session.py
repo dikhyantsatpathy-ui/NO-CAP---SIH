@@ -137,10 +137,15 @@ def field_hashes(fields: dict) -> dict:
 def _entry(doc: dict, key: str):
     """Normalized comparison record for one field of one document."""
     e = (doc.get("field_hashes") or {}).get(key)
-    if isinstance(e, dict):
+    if isinstance(e, dict) and e.get("h"):
         return e
-    if isinstance(e, str):  # legacy plain-digest rows
+    if isinstance(e, str) and e:  # legacy plain-digest rows
         return {"h": e, "s": "latin"}
+    raw = (doc.get("raw_fields") or {}).get(key) or (doc.get("masked") or {}).get(key)
+    if raw and isinstance(raw, str) and raw.strip():
+        n = norm(raw)
+        if n:
+            return {"h": hashlib.sha256(n.encode("utf-8")).hexdigest(), "s": "latin"}
     return None
 
 from llm import analyze_session_discrepancies
@@ -171,6 +176,25 @@ def bs_to_ad_approx(val: str) -> str:
     return val
 
 
+def normalize_dob(dob: str) -> str:
+    """Normalize Date of Birth across formats and calendar systems (AD / BS)."""
+    import re
+    if not dob:
+        return ""
+    s = devanagari_to_ascii_digits(str(dob)).strip()
+    s = bs_to_ad_approx(s)
+    m1 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', s)
+    if m1:
+        return f"{int(m1.group(1)):04d}-{int(m1.group(2)):02d}-{int(m1.group(3)):02d}"
+    m2 = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', s)
+    if m2:
+        return f"{int(m2.group(3)):04d}-{int(m2.group(2)):02d}-{int(m2.group(1)):02d}"
+    m3 = re.search(r'\b(19\d{2}|20\d{2})\b', s)
+    if m3:
+        return m3.group(1)
+    return s
+
+
 def soundex(name: str) -> str:
     """Classic Soundex indexing for cross-border Indian/Nepali name transliteration."""
     clean = "".join(c for c in (name or "").upper() if c.isalpha())
@@ -190,6 +214,104 @@ def soundex(name: str) -> str:
             res.append(code)
         prev = code
     return ("".join(res) + "0000")[:4]
+
+
+def _primary_ids_agree(docs: list[dict]) -> bool:
+    """True if any primary credential (PAN, Aadhaar, Passport, DL, Voter ID) 
+    matches across documents in the session."""
+    for id_key in ("pan", "aadhaar", "passport", "driving_licence", "voter_id"):
+        vals = []
+        for d in docs:
+            v = (d.get("raw_fields") or {}).get(id_key) or (d.get("masked") or {}).get(id_key)
+            if v and isinstance(v, str) and len(v.strip()) >= 5:
+                vals.append(norm(v.strip()))
+        if len(vals) >= 2:
+            if len(set(vals)) == 1:
+                return True
+    return False
+
+
+def match_names(names: list[str], ids_agree: bool = False) -> tuple[bool, str]:
+    """Determine if extracted names across documents represent the same person.
+    Zero-storage safe: does not print raw names in output explanation.
+    Handles OCR character substitutions, word reordering, initials, and honorific prefixes."""
+    clean_names = [" ".join((n or "").upper().split()) for n in names if n]
+    if len(clean_names) <= 1:
+        return True, "Single name"
+    if len(set(clean_names)) == 1:
+        return True, "Exact match"
+
+    import re
+    from difflib import SequenceMatcher
+
+    token_lists = []
+    for n in clean_names:
+        clean = re.sub(r'[^A-Z\s]', ' ', n)
+        tokens = [t for t in clean.split() if t not in ('MR', 'MS', 'MRS', 'SHRI', 'SMT', 'DR', 'KUMAR')]
+        if not tokens:
+            tokens = clean.split()
+        token_lists.append(tokens)
+
+    all_pairs_match = True
+    match_reasons = []
+
+    for i in range(len(token_lists)):
+        for j in range(i + 1, len(token_lists)):
+            t1, t2 = token_lists[i], token_lists[j]
+            s1, s2 = " ".join(t1), " ".join(t2)
+            
+            # 1. Exact token sets (e.g. "SATAPATHY DIKHYANT" vs "DIKHYANT SATAPATHY")
+            if set(t1) == set(t2):
+                match_reasons.append("token order variation")
+                continue
+                
+            # 2. Subset / Expansion (e.g. "DIKHYANT SATAPATHY" vs "DIKHYANT K SATAPATHY")
+            if set(t1).issubset(set(t2)) or set(t2).issubset(set(t1)):
+                match_reasons.append("name expansion variation")
+                continue
+
+            # 3. Initial matching (e.g. "D SATAPATHY" vs "DIKHYANT SATAPATHY")
+            if len(t1) == len(t2):
+                init_match = True
+                for a, b in zip(t1, t2):
+                    if a == b or (len(a) == 1 and b.startswith(a)) or (len(b) == 1 and a.startswith(b)):
+                        continue
+                    init_match = False
+                    break
+                if init_match:
+                    match_reasons.append("initial abbreviation match")
+                    continue
+
+            # 4. SequenceMatcher fuzzy similarity on string
+            ratio = SequenceMatcher(None, s1, s2).ratio()
+            threshold = 0.70 if ids_agree else 0.80
+            if ratio >= threshold:
+                match_reasons.append(f"high string similarity ({int(ratio * 100)}%)")
+                continue
+
+            # 5. Shared surname + first name similarity
+            if len(t1) >= 2 and len(t2) >= 2:
+                if t1[-1] == t2[-1]:
+                    first_ratio = SequenceMatcher(None, t1[0], t2[0]).ratio()
+                    if first_ratio >= 0.70 or (ids_agree and first_ratio >= 0.50):
+                        match_reasons.append(f"surname concordance with first-name variation ({int(first_ratio * 100)}%)")
+                        continue
+
+            # 6. Soundex phonetic equivalence
+            if soundex(s1) == soundex(s2) and soundex(s1) != "0000":
+                match_reasons.append(f"phonetic Soundex agreement ({soundex(s1)})")
+                continue
+
+            all_pairs_match = False
+            break
+        if not all_pairs_match:
+            break
+
+    if all_pairs_match:
+        reason = match_reasons[0] if match_reasons else "semantic match"
+        return True, reason
+
+    return False, "Names differ beyond acceptable tolerance"
 
 
 def compute_zkp_gates(docs: list[dict]) -> dict:
@@ -245,15 +367,35 @@ def build_comparison(docs: list[dict]) -> dict:
     """
     checks: list[dict] = []
     bump = 0
+    ids_agree = _primary_ids_agree(docs)
+
+    # Compute global document labels in case documents share the same doc_type (e.g. PAN #1, PAN #2)
+    doc_type_counts = {}
+    for d in docs:
+        dt = d.get("doc_type") or "doc"
+        doc_type_counts[dt] = doc_type_counts.get(dt, 0) + 1
+    has_duplicates = any(cnt > 1 for cnt in doc_type_counts.values())
+
+    all_doc_labels = {}
+    type_counters = {}
+    for i, d in enumerate(docs):
+        dt = d.get("doc_type") or "doc"
+        if has_duplicates:
+            count = type_counters.get(dt, 0) + 1
+            type_counters[dt] = count
+            all_doc_labels[i] = f"{dt} #{count}"
+        else:
+            all_doc_labels[i] = dt
+
     for key, label in CMP_FIELDS:
         present = [(i, d) for i, d in enumerate(docs) if _entry(d, key)]
         if len(present) < 2:
             if len(present) == 1:
-                _, d = present[0]
+                orig_i, d = present[0]
                 checks.append({
                     "field": key, "label": label, "status": "single",
                     "detail": f"Only one document carries it ({d.get('doc_type')}) — nothing to compare.",
-                    "docs": [d.get("doc_type")],
+                    "docs": [all_doc_labels.get(orig_i, d.get("doc_type"))],
                     "mask": d.get("masked", {}).get(key),
                 })
             else:
@@ -264,17 +406,17 @@ def build_comparison(docs: list[dict]) -> dict:
                 })
             continue
 
-        kinds = sorted({d.get("doc_type") for _, d in present})
+        kinds = [all_doc_labels.get(orig_i, d.get("doc_type", "doc")) for orig_i, d in present]
+        masks = {all_doc_labels.get(orig_i, d.get("doc_type", "doc")): d.get("masked", {}).get(key) for orig_i, d in present}
         digests = {(_entry(d, key) or {})["h"] for _, d in present}
         scripts = {(_entry(d, key) or {}).get("s", "latin") for _, d in present}
-        masks = {d.get("doc_type"): d.get("masked", {}).get(key) for _, d in present}
 
         if len(digests) == 1:
             mask_val = next((m for m in masks.values() if m), None)
             checks.append({
                 "field": key, "label": label, "status": "agree",
                 "detail": f"Matches across {len(present)} documents ({', '.join(kinds)}).",
-                "docs": kinds, "mask": mask_val,
+                "docs": kinds, "mask": mask_val, "masks": masks,
             })
         elif len(scripts) > 1:
             checks.append({
@@ -285,30 +427,42 @@ def build_comparison(docs: list[dict]) -> dict:
                 "docs": kinds, "masks": masks,
             })
         else:
-            # Check for Bikram Sambat (BS) <-> Gregorian (AD) Date Harmonization
             is_harmonized = False
-            if key == "dob" and any(d.get("doc_type") == "nepali_citizenship" for _, d in present):
+
+            # Check for Date of Birth Concordance (Gregorian, BS, or Year)
+            if key == "dob":
                 raw_dobs = [d.get("raw_fields", {}).get("dob") for _, d in present if d.get("raw_fields", {}).get("dob")]
-                if len(raw_dobs) == len(present):
-                    normalized_ad_dobs = {bs_to_ad_approx(r) for r in raw_dobs if r}
-                    if len(normalized_ad_dobs) == 1:
+                if len(raw_dobs) == len(present) and len(raw_dobs) >= 2:
+                    norm_dobs = [normalize_dob(r) for r in raw_dobs]
+                    if len(set(norm_dobs)) == 1 and norm_dobs[0]:
+                        mask_val = next((m for m in masks.values() if m), None)
                         checks.append({
                             "field": key, "label": label, "status": "agree",
-                            "detail": f"Bikram Sambat (BS) date harmonized with Gregorian (AD) birthdate under Indo-Nepal Bilateral Treaty protocols ({list(normalized_ad_dobs)[0]}).",
-                            "docs": kinds, "masks": masks,
+                            "detail": f"Date of birth concordance across documents ({mask_val or 'verified'}).",
+                            "docs": kinds, "masks": masks, "mask": mask_val,
+                        })
+                        is_harmonized = True
+                    elif all(len(d) >= 4 for d in norm_dobs) and len({d[:4] for d in norm_dobs}) == 1:
+                        mask_val = next((m for m in masks.values() if m), None)
+                        checks.append({
+                            "field": key, "label": label, "status": "agree",
+                            "detail": f"Birth year concordance across documents ({norm_dobs[0][:4]}).",
+                            "docs": kinds, "masks": masks, "mask": mask_val,
                         })
                         is_harmonized = True
 
-            # Check for Phonetic Soundex Match on Name
+            # Check for Name Concordance (Tokens, Initials, SequenceMatcher, Soundex)
             elif key == "name":
-                raw_names = [d.get("raw_fields", {}).get("name") for _, d in present if d.get("raw_fields", {}).get("name")]
-                if len(raw_names) == len(present) and len(set(raw_names)) > 1:
-                    soundex_codes = {soundex(n) for n in raw_names if n and len(n) >= 2}
-                    if len(soundex_codes) == 1 and "0000" not in soundex_codes:
+                raw_names = [d.get("raw_fields", {}).get("name") or _canonical_name(d.get("raw_fields", {})) for _, d in present]
+                raw_names = [n for n in raw_names if n]
+                if len(raw_names) == len(present) and len(raw_names) >= 2:
+                    matched, reason = match_names(raw_names, ids_agree=ids_agree)
+                    if matched:
+                        mask_val = next((m for m in masks.values() if m), None)
                         checks.append({
-                            "field": key, "label": label, "status": "phonetic-match",
-                            "detail": f"Phonetic transliteration agreement across documents (Soundex code: {list(soundex_codes)[0]}).",
-                            "docs": kinds, "masks": masks,
+                            "field": key, "label": label, "status": "phonetic-match" if "Soundex" in reason else "agree",
+                            "detail": f"Holder name agreement across documents: {reason}.",
+                            "docs": kinds, "masks": masks, "mask": mask_val,
                         })
                         is_harmonized = True
 
@@ -316,10 +470,11 @@ def build_comparison(docs: list[dict]) -> dict:
             elif key == "address":
                 pin_checks = [c for c in checks if c["field"] == "pincode" and c["status"] == "agree"]
                 if pin_checks:
+                    mask_val = next((m for m in masks.values() if m), None)
                     checks.append({
                         "field": key, "label": label, "status": "agree",
                         "detail": f"Addresses share matching postal PIN zone ({pin_checks[0].get('mask')}).",
-                        "docs": kinds, "masks": masks,
+                        "docs": kinds, "masks": masks, "mask": mask_val,
                     })
                     is_harmonized = True
 
@@ -330,6 +485,39 @@ def build_comparison(docs: list[dict]) -> dict:
                     "docs": kinds, "masks": masks,
                 })
                 bump += 30
+
+    # Cross-document check for shared primary credentials (PAN, Aadhaar, Driving Licence, Voter ID)
+    for id_key, id_label in (
+        ("pan", "PAN card number"),
+        ("aadhaar", "Aadhaar number"),
+        ("driving_licence", "Driving licence number"),
+        ("voter_id", "Voter ID number"),
+    ):
+        present_id = [
+            (i, d) for i, d in enumerate(docs)
+            if (d.get("raw_fields") or {}).get(id_key) or (d.get("masked") or {}).get(id_key)
+        ]
+        if len(present_id) >= 2:
+            id_vals = [
+                norm(str((d.get("raw_fields") or {}).get(id_key) or (d.get("masked") or {}).get(id_key) or ""))
+                for _, d in present_id
+            ]
+            id_kinds = [all_doc_labels.get(orig_i, d.get("doc_type", "doc")) for orig_i, d in present_id]
+            id_masks = {all_doc_labels.get(orig_i, d.get("doc_type", "doc")): d.get("masked", {}).get(id_key) for orig_i, d in present_id}
+            mask_val = next((m for m in id_masks.values() if m), None)
+            if len(set(id_vals)) == 1 and id_vals[0]:
+                checks.append({
+                    "field": id_key, "label": id_label, "status": "agree",
+                    "detail": f"Identity credential ({id_label}) matches across documents ({mask_val or 'verified'}).",
+                    "docs": id_kinds, "masks": id_masks, "mask": mask_val,
+                })
+            else:
+                checks.append({
+                    "field": id_key, "label": id_label, "status": "disagree",
+                    "detail": f"Identity credential ({id_label}) differs between {', '.join(id_kinds)}.",
+                    "docs": id_kinds, "masks": id_masks,
+                })
+                bump += 35
 
     if any(c["status"] == "disagree" for c in checks):
         verdict = "DISCREPANCY"
