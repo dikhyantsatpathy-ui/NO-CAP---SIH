@@ -49,7 +49,7 @@ import {
 import { generateSpecimenFile, SPECIMEN_PRESETS } from "../app/specimens";
 import { useToast } from "../app/state";
 import { portalCache } from "../app/preloader";
-import { copyText, downloadBlob, shortHash, timeLabelIst } from "../app/util";
+import { copyText, downloadBlob, optimizeUploadFile, shortHash, timeLabelIst } from "../app/util";
 import {
   DESK_STEPS,
   MODULE_PLAIN,
@@ -1334,6 +1334,40 @@ export function DeskView() {
     return out;
   };
 
+  const handleFrontFileSelect = async (rawFile: File | null) => {
+    if (!rawFile) {
+      setFile(null);
+      return;
+    }
+    if (rawFile.size > 4.5 * 1024 * 1024 && rawFile.type === "application/pdf") {
+      toast(`PDF size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds server 4.5 MB cap. Please upload a smaller scan.`, "warn");
+      return;
+    }
+    try {
+      const optimized = await optimizeUploadFile(rawFile);
+      setFile(optimized);
+    } catch {
+      setFile(rawFile);
+    }
+  };
+
+  const handleBackFileSelect = async (rawFile: File | null) => {
+    if (!rawFile) {
+      setFileBack(null);
+      return;
+    }
+    if (rawFile.size > 4.5 * 1024 * 1024 && rawFile.type === "application/pdf") {
+      toast(`PDF size (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds server 4.5 MB cap. Please upload a smaller scan.`, "warn");
+      return;
+    }
+    try {
+      const optimized = await optimizeUploadFile(rawFile);
+      setFileBack(optimized);
+    } catch {
+      setFileBack(rawFile);
+    }
+  };
+
   const screenIntoSession = async () => {
     if (!active) {
       toast("Open a session first.", "warn");
@@ -1345,16 +1379,20 @@ export function DeskView() {
     }
     setBusy(true);
     const decl = declaredMap();
-    const res = await screenDocument(
-      file,
-      docType,
-      active.checkpoint,
-      Object.keys(decl).length ? decl : undefined,
-      null,
-      active.id,
-      fileBack,
-    );
-    setBusy(false);
+    try {
+      const optFront = await optimizeUploadFile(file);
+      const optBack = fileBack ? await optimizeUploadFile(fileBack) : null;
+      const res = await screenDocument(
+        optFront,
+        docType,
+        active.checkpoint,
+        Object.keys(decl).length ? decl : undefined,
+        null,
+        active.id,
+        optBack,
+      );
+      setBusy(false);
+
     if (res.ok) {
       toast(
         res.data.verdict === "CLEAR"
@@ -1371,13 +1409,19 @@ export function DeskView() {
       setDeclaredDob("");
       setModelHint(null);
       await loadDetail(active.id, true);
-    } else {
-      toast(res.error, "error");
-      if (res.error?.toLowerCase().includes("session not found")) {
-        await refreshOpen();
+      } else {
+        toast(res.error, "error");
+        if (res.error?.toLowerCase().includes("session not found")) {
+          await refreshOpen();
+        }
       }
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : "Screening failed. Please check file size.", "error");
+    } finally {
+      setBusy(false);
     }
   };
+
 
   const handleSoftRemove = async (reportId: string) => {
     if (!active) return;
@@ -2033,7 +2077,7 @@ export function DeskView() {
                               key={fileKey}
                               type="file"
                               accept="image/*,.pdf"
-                              onChange={(e) => setFile(e.target.files?.[0] || null)}
+                              onChange={(e) => void handleFrontFileSelect(e.target.files?.[0] || null)}
                             />
                             <div className="dropzone__icon">
                               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2103,7 +2147,7 @@ export function DeskView() {
                               key={fileKeyBack}
                               type="file"
                               accept="image/*,.pdf"
-                              onChange={(e) => setFileBack(e.target.files?.[0] || null)}
+                              onChange={(e) => void handleBackFileSelect(e.target.files?.[0] || null)}
                             />
                             <div className="dropzone__icon">
                               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

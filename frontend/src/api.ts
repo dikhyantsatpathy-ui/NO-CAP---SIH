@@ -49,6 +49,9 @@ async function request<T>(url: string, init?: RequestInit, timeoutMs = 45000): P
     });
     clearTimeout(timeoutId);
     if (response.status === 429) throw new Error("Rate limit exceeded. Please wait.");
+    if (response.status === 413) {
+      throw new Error("Upload payload exceeds server limit (max 4.5 MB). Please select a compressed image or scan under 4.5 MB.");
+    }
 
     let data: unknown = null;
     if ((response.headers.get("content-type") || "").includes("application/json")) {
