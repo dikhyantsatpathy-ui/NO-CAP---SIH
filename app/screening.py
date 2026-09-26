@@ -1296,30 +1296,30 @@ def run_screening(data: bytes, filename: str, doc_type: str | None,
         except Exception:
             pass
 
-            doc_no = fields.get("passport") or fields.get("pan") or fields.get("driving_licence") or fields.get("voter_id")
-            holder = fields.get("mrz_name") or fields.get("holder_name") or (declared or {}).get("name")
-            cur_meta = {
-                "file_hash": file_hash,
-                "checkpoint": checkpoint or "",
-                "doc_number": doc_no,
-                "name": holder,
-                "dob": fields.get("dob"),
-                "verdict": _grade(risk, hard_flag=hard_flag, can_clear=can_clear),
-                "risk_score": risk,
-            }
-            syn_res = analyze_syndicate_patterns(cur_meta, recent_history)
-            if syn_res.get("has_alerts"):
-                syndicate_alerts = syn_res["alerts"]
-                for alert in syndicate_alerts:
-                    reasons.append(f"SYNDICATE ALERT [{alert['type']}]: {alert['detail']}")
-                risk += syn_res.get("syndicate_risk_bump", 0)
-                # Only individual recidivism / identity clash alerts block CLEAR;
-                # an ambient sector burst alert alone (general checkpoint volume alert)
-                # does not block an otherwise genuine document from clearing.
-                if any(a.get("type") in ("IDENTITY_CLASH", "CROSS_CHECKPOINT_REPRESENTATION", "PREVIOUSLY_FLAGGED_IDENTIFIER") for a in syndicate_alerts):
-                    can_clear = False
-        except Exception:
-            pass
+        doc_no = fields.get("passport") or fields.get("pan") or fields.get("driving_licence") or fields.get("voter_id")
+        holder = fields.get("mrz_name") or fields.get("holder_name") or (declared or {}).get("name")
+        cur_meta = {
+            "file_hash": file_hash,
+            "checkpoint": checkpoint or "",
+            "doc_number": doc_no,
+            "name": holder,
+            "dob": fields.get("dob"),
+            "verdict": _grade(risk, hard_flag=hard_flag, can_clear=can_clear),
+            "risk_score": risk,
+        }
+        syn_res = analyze_syndicate_patterns(cur_meta, recent_history)
+        if syn_res.get("has_alerts"):
+            syndicate_alerts = syn_res["alerts"]
+            for alert in syndicate_alerts:
+                reasons.append(f"SYNDICATE ALERT [{alert['type']}]: {alert['detail']}")
+            risk += syn_res.get("syndicate_risk_bump", 0)
+            # Only individual recidivism / identity clash alerts block CLEAR;
+            # an ambient sector burst alert alone (general checkpoint volume alert)
+            # does not block an otherwise genuine document from clearing.
+            if any(a.get("type") in ("IDENTITY_CLASH", "CROSS_CHECKPOINT_REPRESENTATION", "PREVIOUSLY_FLAGGED_IDENTIFIER") for a in syndicate_alerts):
+                can_clear = False
+    except Exception:
+        pass
 
     risk = max(0, min(100, risk))
     verdict = _grade(risk, hard_flag=hard_flag, can_clear=can_clear)
