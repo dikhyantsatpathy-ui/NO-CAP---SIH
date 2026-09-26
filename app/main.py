@@ -282,8 +282,9 @@ def _pixel_scan(file_bytes: bytes, ext: str):
         fine_noise = noise_std
         ratio = fine_noise / (gross_std + 1e-6)
         content = gross_std > 25.0
-        # Synthetic AI renders without sensor noise have near-zero fine noise
-        suspicious_noise = content and (ratio < 0.04 and fine_noise < 1.5)
+        # Tightened: only fire on *unnaturally* smooth, not just smooth
+        # (phone computational denoising produces ratio ~0.02-0.04 on real photos)
+        suspicious_noise = content and (ratio < 0.018 and fine_noise < 0.8)
 
         uniform_reencode = False
         if ext in ("jpg", "jpeg") and file_bytes[:2] == b"\xff\xd8":
@@ -302,11 +303,24 @@ def _pixel_scan(file_bytes: bytes, ext: str):
             except Exception:
                 uniform_reencode = False
 
+        # EXIF-camera provenance gating: real phone photos carry Make/Model/
+        # DateTimeOriginal; AI output and screenshots almost never do.
+        # When camera EXIF IS present, downgrade to advisory only.
+        has_exif = False
+        try:
+            _exif_img = Image.open(io.BytesIO(file_bytes))
+            _exif = _exif_img.getexif()
+            if _exif and any(tag in _exif for tag in (0x010F, 0x0110, 0x9003)):
+                has_exif = True
+        except Exception:
+            pass
+
         suspicious = (content and suspicious_noise) or uniform_reencode
-        if suspicious:
+        if suspicious and not has_exif:
             return ("ai", ("Pixel-level scan found tonal content but an unnaturally smooth "
-                           "low-noise pattern (or uniform re-compression error) â€” a hallmark "
+                           "low-noise pattern (or uniform re-compression error) — a hallmark "
                            "of AI generation or heavy automated processing."), True)
+        # Camera EXIF present — downgrade to advisory, not a hard "ai" flag
         return None, None, True
     except Exception:
         return None, None, False

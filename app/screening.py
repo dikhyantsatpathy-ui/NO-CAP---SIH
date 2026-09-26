@@ -1173,16 +1173,19 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         risk += 8
         can_clear = False
 
-    # Module verdicts fold into the risk score
+    # Module verdicts fold into the risk score — use each module's own
+    # weighted verdict rather than re-deriving a separate any(ok is False)
+    # check (which double-counted noisy signals and was inconsistent with
+    # the has_real_tamper logic immediately below it).
     for mod_key, mod_res in (("validation", val_res), ("tampering", tamper_res),
                              ("face", face_res)):
-        mod_fail = any(c.get("ok") is False for c in mod_res.get("checks", []))
-        if mod_key == "validation" and (mod_fail or mod_res.get("verdict") == "FAIL"):
+        mod_verdict = mod_res.get("verdict", "")
+        if mod_key == "validation" and mod_verdict == "FAIL":
             reasons.append("CRITICAL VALIDATION FAILURE: Module 2 (validation) failed deterministic check — see modules.")
             risk = max(risk + 35, 70)
             hard_flag = True
             can_clear = False
-        elif mod_key == "tampering" and (mod_fail or mod_res.get("verdict") == "FAIL"):
+        elif mod_key == "tampering" and mod_verdict == "FAIL":
             # Only trigger CRITICAL FORENSIC ALERT when there is actual tampering detected
             ela_status = (tamper_res.get("ela") or {}).get("status")
             has_real_tamper = (
@@ -1199,6 +1202,9 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
             else:
                 reasons.append("Forensic check advisory: Soft image focus or physical capture note — see tampering module.")
                 risk = max(risk, 25)
+        elif mod_key == "tampering" and mod_verdict == "REVIEW":
+            reasons.append("Forensic check advisory: Module 3 (tampering) returned REVIEW — see tampering module.")
+            risk = max(risk, 25)
         elif mod_key == "face" and mod_res.get("match") is False:
             reasons.append("CRITICAL BIOMETRIC ALERT: Module 4 reports the document portrait does NOT match the "
                            "captured holder — a very strong fraud signal.")
@@ -1225,10 +1231,10 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         can_clear = False
         risk = max(risk, 35)
 
-    # Any check with ok is False disables CLEAR
-    for m in (val_res, tamper_res, face_res):
-        if any(c.get("ok") is False for c in m.get("checks", [])):
-            can_clear = False
+    # Removed: blanket "any check with ok is False disables CLEAR" loop.
+    # This was the root cause of mass false-positives — it vetoed can_clear
+    # even when the weighted verdict said PASS/REVIEW. Each module's own
+    # weighted verdict (above) now governs whether can_clear is disabled.
 
     # ---- Feature 5: Devanagari ↔ Latin name divergence check ---------------
     mrz_name = fields.get("mrz_name") or fields.get("holder_name") or ""
