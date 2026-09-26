@@ -9,6 +9,27 @@ honest "not applicable" rows, never to a silent pass.
 """
 
 import io
+import os
+
+_TAMPER_CLF_SESSION = None
+_TAMPER_CLF_ATTEMPTED = False
+
+def _load_tamper_classifier():
+    global _TAMPER_CLF_SESSION, _TAMPER_CLF_ATTEMPTED
+    if _TAMPER_CLF_ATTEMPTED:
+        return _TAMPER_CLF_SESSION
+    _TAMPER_CLF_ATTEMPTED = True
+    path = os.getenv("TAMPER_CLF_ONNX_PATH", os.path.join(os.path.dirname(__file__), "models", "tamper_classifier.onnx"))
+    if not os.path.exists(path):
+        return None
+    try:
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        _TAMPER_CLF_SESSION = ort.InferenceSession(path, sess_options=opts, providers=["CPUExecutionProvider"])
+        return _TAMPER_CLF_SESSION
+    except Exception:
+        return None
 
 # ---------------------------------------------------------------------------
 # Weighted-evidence scoring (replaces boolean AND-gate that compounded
@@ -294,7 +315,38 @@ def tamper_analysis(image_bytes: bytes | None, ai_detection: dict | None = None,
             "detail": "No copy-move cloning or duplicate-block stamp artifacts detected.",
         })
 
-    verdict = _weighted_verdict(checks)
+    has_exif = _has_camera_exif(image_bytes) if image_bytes else False
+    
+    clf = _load_tamper_classifier()
+    if clf is not None:
+        try:
+            feat = [
+                float(ela.get("damage_ratio", 0.0) or 0.0),
+                float(ela.get("mean_diff", 0.0) or 0.0),
+                float(spectral.get("papr", 0.0) or 0.0),
+                float(spectral.get("high_freq_ratio", 0.0) or 0.0),
+                float(noise.get("noise_ratio", 0.0) or 0.0),
+                float(copy_move.get("duplicate_ratio", 0.0) or 0.0),
+                float((forgery_res or {}).get("dead_block_ratio", 0.0) or 0.0),
+                float((forgery_res or {}).get("largest_component", 0.0) or 0.0),
+                float((ai_detection.get("raw") or {}).get("fine_noise", 0.0) or 0.0),
+                float((ai_detection.get("raw") or {}).get("pixel_ratio", 0.0) or 0.0),
+                1.0 if has_exif else 0.0
+            ]
+            import numpy as np
+            inp = np.array([feat], dtype=np.float32)
+            pred = clf.run(None, {clf.get_inputs()[0].name: inp})
+            is_tampered = int(pred[0][0]) == 1
+            verdict = "FAIL" if is_tampered else "PASS"
+            checks.append({
+                "label": "onnx-classifier",
+                "ok": not is_tampered,
+                "detail": f"Joint machine-learning classifier evaluated features ({'tampered' if is_tampered else 'genuine'}).",
+            })
+        except Exception:
+            verdict = _weighted_verdict(checks)
+    else:
+        verdict = _weighted_verdict(checks)
 
     return {"checks": checks, "ela": ela, "qa": qa, "roi": roi, "liveness": liveness,
             "spectral": spectral, "noise_consistency": noise, "copy_move": copy_move,

@@ -710,7 +710,7 @@ def _grade(score: int, hard_flag: bool = False, can_clear: bool = True) -> str:
     return "CLEAR"
 
 
-def run_screening(db, data: bytes, filename: str, doc_type: str | None,
+def run_screening(data: bytes, filename: str, doc_type: str | None,
                   checkpoint: str | None, declared: dict | None,
                   screener: str | None = None,
                   live_frame: bytes | None = None,
@@ -795,15 +795,17 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         if val:
             needed[sha256(val)] = (key, val)
     watched = set()
-    if needed and db is not None:
+    if needed:
         try:
-            watched = {h for (h,) in db.query(WatchlistEntry.identifier_hash)
-                       .filter(WatchlistEntry.identifier_hash.in_(list(needed))).all()}
-        except Exception:
             try:
-                db.rollback()
-            except Exception:
-                pass
+                from app.main import WatchlistEntry, _get_db_for_session
+            except ImportError:
+                from main import WatchlistEntry, _get_db_for_session
+            with _get_db_for_session(session_id) as temp_db:
+                watched = {h for (h,) in temp_db.query(WatchlistEntry.identifier_hash)
+                           .filter(WatchlistEntry.identifier_hash.in_(list(needed))).all()}
+        except Exception:
+            pass
     hits = [{"field": key, "mask": mask(val)} for key, val in
             (needed[h] for h in needed if h in watched)]
 
@@ -813,14 +815,18 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     )
 
     # ---- Module 3: Tampering (visual forensics on images) ------------------
-    if is_image:
+    timeout_hit = False
+    if time.monotonic() - started > 40.0:
+        timeout_hit = True
+        tamper_res = {"ran": False, "verdict": "SKIP", "ela": {"status": "skipped", "quality": 0}, "checks": [{"label": "timeout", "ok": False, "detail": "Timeout exceeded before tampering check."}]}
+    elif is_image:
         tamper_res = tamper_analysis(data, {**ai_det, "document_aware": document_aware},
                                      document_aware, doc_type or "")
     else:
         tamper_res = tamper_analysis(None, ai_det, document_aware, doc_type or "")
 
     # Back side tamper check if back image is present
-    if data_back and len(data_back) > 0 and (data_back.startswith((b"\x89PNG", b"\xff\xd8", b"RIFF")) or "jpg" in (filename_back or "").lower() or "png" in (filename_back or "").lower()):
+    if not timeout_hit and data_back and len(data_back) > 0 and (data_back.startswith((b"\x89PNG", b"\xff\xd8", b"RIFF")) or "jpg" in (filename_back or "").lower() or "png" in (filename_back or "").lower()):
         try:
             tamper_back = tamper_analysis(data_back, ai_det, document_aware, doc_type or "")
             if tamper_back.get("verdict") == "FAIL":
@@ -837,24 +843,31 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
     # route); other document types keep the whole-document face ROI crop that
     # face_verification computes internally. dob/issue_date feed the age-aware
     # threshold logic ('Age Drift Compensation Active').
-    face_res = face_verification(
-        document_bytes=data if is_image else None,
-        live_frame=live_frame,
-        doc_type=doc_type or "",
-        document_photo_b64=extract_res.get("aadhaar_photo"),
-        dob=fields.get("dob"),
-        issue_date=(
-            (declared or {}).get("issue_date") or
-            (
-                f"{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[0] - (5 if 'visa' in (doc_type or '').lower() else 10):04d}-{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[1]:02d}-{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[2]:02d}"
-                if _parse_date(fields.get('expiry') or (declared or {}).get('expiry_date')) and (doc_type or "").lower() in ("passport", "visa")
-                else None
-            )
-        ),
-    )
+    if time.monotonic() - started > 40.0 or timeout_hit:
+        timeout_hit = True
+        face_res = {"ran": False, "verdict": "SKIP", "match": None, "score": 0.0, "method": "timeout", "signals": ["Face verification skipped due to timeout."]}
+    else:
+        face_res = face_verification(
+            document_bytes=data if is_image else None,
+            live_frame=live_frame,
+            doc_type=doc_type or "",
+            document_photo_b64=extract_res.get("aadhaar_photo"),
+            dob=fields.get("dob"),
+            issue_date=(
+                (declared or {}).get("issue_date") or
+                (
+                    f"{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[0] - (5 if 'visa' in (doc_type or '').lower() else 10):04d}-{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[1]:02d}-{_parse_date(fields.get('expiry') or (declared or {}).get('expiry_date'))[2]:02d}"
+                    if _parse_date(fields.get('expiry') or (declared or {}).get('expiry_date')) and (doc_type or "").lower() in ("passport", "visa")
+                    else None
+                )
+            ),
+        )
 
     # ---- Analyze: signals, each one explainable ----------------------------
     reasons = []
+    if timeout_hit:
+        reasons.append("Report degraded due to processing timeout.")
+    
     # Face-verification signals (e.g. 'Age Drift Compensation Active') surface
     # any threshold adjustment here, so the desk and the saved report both see
     # why the ArcFace threshold moved for an aged document photo.
@@ -1255,12 +1268,17 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
 
     # ---- Syndicate & Recidivism Graph Analytics (SIH26188) ----------------
     syndicate_alerts = []
-    if db is not None:
+    try:
+        from syndicate import analyze_syndicate_patterns
         try:
-            from syndicate import analyze_syndicate_patterns
-            recent_history = []
-            try:
-                rows = db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc()).limit(50).all()
+            from app.main import ScreeningReport, _get_db_for_session
+        except ImportError:
+            from main import ScreeningReport, _get_db_for_session
+            
+        recent_history = []
+        try:
+            with _get_db_for_session(session_id) as temp_db:
+                rows = temp_db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc()).limit(50).all()
                 for r in rows:
                     ef = {}
                     try:
@@ -1275,8 +1293,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                         "verdict": r.verdict,
                         "created_at": r.created_at,
                     })
-            except Exception:
-                pass
+        except Exception:
+            pass
 
             doc_no = fields.get("passport") or fields.get("pan") or fields.get("driving_licence") or fields.get("voter_id")
             holder = fields.get("mrz_name") or fields.get("holder_name") or (declared or {}).get("name")
@@ -1326,6 +1344,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         "syndicate_alerts": syndicate_alerts,
         "risk_score": risk,
         "confidence": confidence,
+        "degraded": timeout_hit,
         "masked_fields": {k: (mask(v) if isinstance(v, str) else v)
                           for k, v in fields.items()},
         "raw_fields": extract_res.get("fields", {}),
@@ -1376,17 +1395,7 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
 
     # Hash-chain linkage: compute block hash linking to the previous report
     prev_hash = "GENESIS"
-    if db is not None:
-        try:
-            prev_row = db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc()).first()
-            prev_hash = prev_row.ledger_hash if (prev_row and getattr(prev_row, "ledger_hash", None)) else "GENESIS"
-        except Exception:
-            prev_hash = "GENESIS"
-    block_payload = f"{prev_hash}:{file_hash}:{verdict}:{risk}:{report['created_at']}:{screener or 'unknown'}"
-    ledger_hash = hashlib.sha256(block_payload.encode("utf-8")).hexdigest()
-    report["block_hash"] = ledger_hash
-    report["prev_hash"] = prev_hash
-
+    
     # Module snapshot persisted for the desk/review surfaces. Compact leaf shape
     # (no raw bytes, no heatmaps): M1 medium/MRZ/OCR, M2 verdict, M3 verdict +
     # ELA status, M4 verdict/match/score/method.
@@ -1416,9 +1425,27 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
         modules_snapshot = None
     _wl_hits = report.get("watchlist_hits") or []
 
-    if db is not None:
-        try:
-            db.add(ScreeningReport(
+    # We must compute hash block AFTER the payload values are ready, but we
+    # do it inside the DB context so we can pull the previous row's hash.
+    try:
+        from app.main import ScreeningReport, _get_db_for_session
+    except ImportError:
+        from main import ScreeningReport, _get_db_for_session
+
+    try:
+        with _get_db_for_session(session_id) as temp_db:
+            try:
+                prev_row = temp_db.query(ScreeningReport).order_by(ScreeningReport.created_at.desc(), ScreeningReport.id.desc()).first()
+                prev_hash = prev_row.ledger_hash if (prev_row and getattr(prev_row, "ledger_hash", None)) else "GENESIS"
+            except Exception:
+                prev_hash = "GENESIS"
+                
+            block_payload = f"{prev_hash}:{file_hash}:{verdict}:{risk}:{report['created_at']}:{screener or 'unknown'}"
+            ledger_hash = hashlib.sha256(block_payload.encode("utf-8")).hexdigest()
+            report["block_hash"] = ledger_hash
+            report["prev_hash"] = prev_hash
+            
+            temp_db.add(ScreeningReport(
                 id=report["id"], file_hash=file_hash, filename=report["filename"],
                 doc_type=report["doc_type"], checkpoint=report["checkpoint"],
                 verdict=verdict, risk_score=risk, confidence=confidence,
@@ -1438,10 +1465,8 @@ def run_screening(db, data: bytes, filename: str, doc_type: str | None,
                 nationality=nationality,
                 purpose=purpose,
             ))
-            db.commit()
-        except Exception:
-            try:
-                db.rollback()
-            except Exception:
-                pass
+            temp_db.commit()
+    except Exception:
+        pass
+
     return report

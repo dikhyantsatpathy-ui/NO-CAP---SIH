@@ -202,6 +202,11 @@ builds to the tracked `app/static/index.html`, served with `Cache-Control: no-st
 4. Cold starts: Neon + dependency import can take a few seconds on the first hit — the engine
    retries DNS/connect and treats table bootstrap as best-effort.
 
+### Offline / Border Deployments (SQLite)
+
+In edge deployments with low or no connectivity, the application automatically falls back to a local SQLite database using WAL (Write-Ahead Logging) mode. 
+While reads are concurrent in WAL mode, **SQLite serializes all writes**. During high-traffic shift bursts, simultaneous officer submissions will queue behind each other on the SQLite writer lock. The application is configured with a 15-second `busy_timeout` to handle this queuing automatically without raising exceptions. Officers may experience up to a 5-15 second submission latency during peak bursts while the background queuing resolves write contention.
+
 ## 10. Judge Q&A
 
 **Q: How does this beat a forged document that already fooled an officer?**

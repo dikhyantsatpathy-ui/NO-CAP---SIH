@@ -1082,9 +1082,9 @@ if not _IS_SQLITE:
         print(f"[startup] PostgreSQL engine initialization error ({pg_init_err}); falling back to local SQLite")
         DATABASE_URL = "sqlite:////tmp/nocap.db" if os.name != "nt" else "sqlite:///nocap.db"
         _IS_SQLITE = True
-        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False, "timeout": 15.0})
 else:
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False, "timeout": 15.0})
 
 if _IS_SQLITE:
     @event.listens_for(engine, "connect")
@@ -1093,7 +1093,7 @@ if _IS_SQLITE:
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA busy_timeout=15000")
             cursor.execute("PRAGMA cache_size=-64000")
             cursor.execute("PRAGMA temp_store=MEMORY")
             cursor.close()
@@ -1111,13 +1111,13 @@ else:
     _DATA_DIR = os.path.join(os.path.dirname(STATIC_DIR), "data")
     os.makedirs(_DATA_DIR, exist_ok=True)
     _FALLBACK_DB_PATH = os.path.join(_DATA_DIR, "nocap_fallback.db")
-fallback_engine = create_engine(f"sqlite:///{_FALLBACK_DB_PATH}", connect_args={"check_same_thread": False})
+fallback_engine = create_engine(f"sqlite:///{_FALLBACK_DB_PATH}", connect_args={"check_same_thread": False, "timeout": 15.0})
 @event.listens_for(fallback_engine, "connect")
 def _set_fallback_sqlite_pragmas(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA busy_timeout=15000")
     cursor.execute("PRAGMA cache_size=-32000")
     cursor.execute("PRAGMA temp_store=MEMORY")
     cursor.close()
@@ -2211,7 +2211,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="No Cap · Enterprise Provenance Engine", version="12.0",
               max_body_size=50 * 1024 * 1024, lifespan=lifespan)
-limiter = Limiter(key_func=get_remote_address)
+_redis_uri = os.getenv("REDIS_URL") or os.getenv("KV_URL")
+if _redis_uri:
+    limiter = Limiter(key_func=get_remote_address, storage_uri=_redis_uri)
+else:
+    limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -2699,42 +2703,43 @@ async def screen_document(
             # (queue polling, health checks, other desks) stay responsive.
             effective_nat = nat or (sess.nationality if sess else None)
             effective_purpose = purpose_txt or (sess.purpose if sess else None)
-            try:
-                report = await run_in_threadpool(
-                    run_screening, db, data, file.filename or "upload",
-                    (doc_type or "other").strip(), (checkpoint or "").strip(),
-                    declared_map, screener=admin, live_frame=live_bytes,
-                    session_id=session_id.strip() or None,
-                    nationality=effective_nat, purpose=effective_purpose,
-                    data_back=data_back, filename_back=filename_back,
-                )
-            except Exception as exc:
-                logger.error(f"[screen_document] Screening failed gracefully for {file.filename}: {exc}", exc_info=True)
-                from screening import sha256_bytes
-                now = now_utc()
-                sha = sha256_bytes(data)
-                report = {
-                    "id": uuid.uuid4().hex[:16],
-                    "doc_hash": sha,
-                    "doc_type": (doc_type or "other").strip(),
-                    "verdict": "FLAGGED",
-                    "risk_score": 45,
-                    "checkpoint": (checkpoint or "Raxaul").strip(),
-                    "created_at": now,
-                    "error": f"Screening degraded: {str(exc)[:120]}",
-                    "module1_format": {"ran": True, "verdict": "FAIL", "reason": f"Format extraction notice: {str(exc)[:80]}"},
-                    "module2_ocr": {"ran": False, "verdict": "SKIP"},
-                    "module3_tamper": {"ran": False, "verdict": "SKIP"},
-                    "module4_face": {"ran": False, "verdict": "SKIP"},
-                    "masked_fields": {},
-                    "reasons": [f"Automated check degraded gracefully: {str(exc)[:80]}"],
-                }
-            report["created_at_ist"] = to_ist(report.get("created_at"))
-            guide = flow_for(checkpoint=(checkpoint or "").strip(),
-                             doc_type=(doc_type or "other").strip(),
-                             nationality=nat or "UNKNOWN")
-            report["guide"] = guide
-            return report
+            
+        try:
+            report = await run_in_threadpool(
+                run_screening, data, file.filename or "upload",
+                (doc_type or "other").strip(), (checkpoint or "").strip(),
+                declared_map, screener=admin, live_frame=live_bytes,
+                session_id=session_id.strip() or None,
+                nationality=effective_nat, purpose=effective_purpose,
+                data_back=data_back, filename_back=filename_back,
+            )
+        except Exception as exc:
+            logger.error(f"[screen_document] Screening failed gracefully for {file.filename}: {exc}", exc_info=True)
+            from screening import sha256_bytes
+            now = now_utc()
+            sha = sha256_bytes(data)
+            report = {
+                "id": uuid.uuid4().hex[:16],
+                "doc_hash": sha,
+                "doc_type": (doc_type or "other").strip(),
+                "verdict": "FLAGGED",
+                "risk_score": 45,
+                "checkpoint": (checkpoint or "Raxaul").strip(),
+                "created_at": now,
+                "error": f"Screening degraded: {str(exc)[:120]}",
+                "module1_format": {"ran": True, "verdict": "FAIL", "reason": f"Format extraction notice: {str(exc)[:80]}"},
+                "module2_ocr": {"ran": False, "verdict": "SKIP"},
+                "module3_tamper": {"ran": False, "verdict": "SKIP"},
+                "module4_face": {"ran": False, "verdict": "SKIP"},
+                "masked_fields": {},
+                "reasons": [f"Automated check degraded gracefully: {str(exc)[:80]}"],
+            }
+        report["created_at_ist"] = to_ist(report.get("created_at"))
+        guide = flow_for(checkpoint=(checkpoint or "").strip(),
+                         doc_type=(doc_type or "other").strip(),
+                         nationality=nat or "UNKNOWN")
+        report["guide"] = guide
+        return report
     finally:
         try:
             await file.close()
